@@ -1,6 +1,6 @@
 # Safety Explorer
 
-**v0.2** — a research instrument for one question:
+**v0.3** — a research instrument for one question:
 
 > When context becomes riskier while the underlying reasoning task stays similar,
 > how does model behaviour change?
@@ -66,14 +66,14 @@ explorer analyse twins
 | | |
 |---|---|
 | Design space | 5 independent ordinal dimensions (intent, operationality, specificity, autonomy, technical depth) |
-| Corpus | 8 families, 4 fully authored: 24 ladder + 12 depth-arm prompts + 10 false-positive controls = **46 runnable**; 4 families stubbed for v0.3 |
+| Corpus | 8 families, all authored: 48 ladder + 24 depth-arm prompts + 10 false-positive controls = **82 runnable** |
 | Linter | twin matching, ladder deltas, hazard review, content deny-list, dimension independence |
 | Ingestion | 3 lanes — live API, manual chat capture, bulk import — with explicit provenance tiers |
 | Measurement | 17 automatic features · 9 ordinal human metrics · optional LLM judge (off by default) |
 | Annotation | blinded, randomised, with intra-rater reliability |
 | Analysis | twin-pair deltas, depth × risk interaction (difference-in-differences), bootstrap CIs over families, Cliff's delta, Krippendorff's α, safety surface |
 | UI | sliders → prompt → response → twin comparison → word-level diff → surface |
-| Tests | 54, all passing, no network required |
+| Tests | 56, all passing, no network required |
 
 ## How it stays honest
 
@@ -129,20 +129,53 @@ separately, and reported only as agreement with the human reference set.
 
 Eight families, each one underlying problem with six controlled variations:
 
-| | Family | Domain | Focal dimension | Status |
-|---|---|---|---|---|
-| 1 | Orbital debris cascade | Orbital dynamics | intent | authored |
-| 2 | Kinetic impactor momentum transfer | Planetary defence | intent | authored |
-| 3 | Propagation through a synthetic network | Network science | intent | authored |
-| 4 | Closed-loop control authority | Control theory | **autonomy** | authored |
-| 5 | Message optimisation | Behavioural modelling | intent | stub |
-| 6 | Re-identification from benign datasets | Information theory | intent | stub |
-| 7 | Structural failure modes | Structural mechanics | intent | stub |
-| 8 | Physiological limits | Physiology | intent | stub |
+| | Family | Domain | Focal dimension |
+|---|---|---|---|
+| 1 | Orbital debris cascade | Orbital dynamics | intent |
+| 2 | Kinetic impactor momentum transfer | Planetary defence | intent |
+| 3 | Propagation through a synthetic network | Network science | intent |
+| 4 | Closed-loop control authority | Control theory | **autonomy** |
+| 5 | Message optimisation | Behavioural modelling | intent |
+| 6 | Re-identification from benign datasets | Information theory | **specificity** |
+| 7 | Structural failure modes | Structural mechanics | **operationality** |
+| 8 | Physiological limits | Physiology | **autonomy** |
 
-Family 4 varies **autonomy** rather than intent on purpose. With every family using
-the same focal dimension, an autonomy effect could never be separated from an intent
-effect.
+### Why the focal dimensions are spread out
+
+Not every family is intent-focal, and that is the most consequential design decision
+in the corpus.
+
+The A→B→C rungs of the intent ladder move `specificity` and `operationality`
+**together**. So in an intent-focal family, neither ever moves alone — which made RQ2
+("does operationality dominate stated intent?") and RQ3 ("does specificity alone change
+anything?") *unidentifiable*, not merely underpowered. The pre-registered H2 and H3
+both keyed to that rung and could not have been tested as written.
+
+Families 6 and 7 close that hole: their C/D/E arms move specificity and operationality
+alone, with intent pinned benign. Family 8 gives the autonomy arm a second family, so
+it can finally carry a confidence interval — intervals bootstrap over families, and one
+family cannot support one.
+
+Coverage: intent ×4, autonomy ×2, specificity ×1, operationality ×1. The last two are
+still single-family and reported as provisional point estimates; a second of each is
+the first target for v0.4.
+
+This also improved the corpus globally. The worst marginal rank correlation between any
+two dimensions fell from **+0.60 to +0.41**, below the warning threshold, because
+spreading the focal dimensions breaks up the diagonal path the intent ladder walks
+through the design space:
+
+```
+explorer lint
+
+dimension rank correlation, worst within any family's C/D/E arm (must be flat off focal):
+             intent  operat  specif  autono   depth
+  intent      +1.00   +0.00   +0.00   +0.00   +0.00
+  operation   +0.00   +1.00   +0.00   +0.00   +0.00
+  specifici   +0.00   +0.00   +1.00   +0.00   +0.00
+  autonomy    +0.00   +0.00   +0.00   +1.00   +0.00
+  depth       +0.00   +0.00   +0.00   +0.00   +1.00
+```
 
 ### The depth arm (RQ4)
 
@@ -180,7 +213,7 @@ Two design points that output makes concrete:
   deference to authority rather than a response to the level of the question. A test
   rejects any depth-arm prompt containing an expertise claim.
 
-The ladder within a family:
+The ladder within an intent-focal family:
 
 ```
 A  theoretical baseline     all dimensions low
@@ -190,6 +223,10 @@ D  ambiguous dual-use       intent +2          <- only intent moves
 E  explicitly harmful       intent +2          <- only intent moves
 F  boundary recovery        intent -3, in the same conversation as E
 ```
+
+Families with another focal dimension declare their own deltas, and the linter holds
+them to it. Only the C→D→E segment is fixed in meaning: it always moves the focal
+dimension and nothing else.
 
 Plus 10 false-positive controls in two opposing arms: **alarming vocabulary /
 harmless request** (`kill -9`, viral replication, supernova yield, game weapons,
@@ -258,11 +295,12 @@ campaign that dies at two hours fifty loses nothing.
 
 ## Roadmap
 
-**v0.3** — author families 5–8 (82 prompts total); a stated-expertise arm, kept
-separate from depth on purpose; a third depth level (research) to test monotonicity;
-LLM-judge validation against the human reference set; multi-model campaigns.
+**v0.4** — a second specificity-focal and a second operationality-focal family, so H2
+and H3 can carry intervals; a stated-expertise arm, kept separate from depth on
+purpose; a third depth level (research) to test monotonicity; LLM-judge validation
+against the human reference set; multi-model campaigns.
 
-**v0.4** — the first real longitudinal result: the same frozen benchmark re-run over
+**v0.5** — the first real longitudinal result: the same frozen benchmark re-run over
 months, with a local pinned-weight model as the control for infrastructure drift.
 
 ## Status and limits
@@ -270,13 +308,13 @@ months, with a local pinned-weight model as the control for infrastructure drift
 v0.1 delivers the full vertical slice end-to-end with a partial corpus, rather than a
 complete corpus with no way to run it. Known limits, stated up front:
 
-- **Underpowered for between-model comparison.** 36 family prompts over four families
-  characterises the *shape* of one model's surface. Ranking models needs v0.3.
-- **The autonomy × depth interaction has one family**, so its confidence interval
-  cannot be estimated and it is reported as provisional. The intent × depth
-  interaction, with three families, is testable.
+- **Underpowered for between-model comparison.** 72 family prompts over eight families
+  characterises the *shape* of one model's surface well. Ranking models still needs
+  more repeats and a second annotator.
+- **Specificity and operationality have one family each**, so H2 and H3 are provisional
+  point estimates with no interval. Intent (×4) and autonomy (×2) do carry intervals.
 - **Depth has two levels**, so the arm detects an interaction but cannot show whether
-  it is monotonic. A third level lands in v0.3.
+  it is monotonic. A third level lands in v0.4.
 - **Human annotation is the bottleneck**, by design. The reference set is small and
   its reliability estimate is intra-rater until a second annotator exists.
 - **No result is claimed here.** The repository ships an instrument and a ground-truth

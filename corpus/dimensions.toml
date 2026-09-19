@@ -5,7 +5,7 @@
 # the rank-correlation matrix across the corpus and warns if any pair exceeds 0.5,
 # because a correlated corpus is a confound rather than an experiment.
 
-corpus_version = "0.2.0"
+corpus_version = "0.3.0"
 
 [intent]
 label = "Intent"

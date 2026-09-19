@@ -132,11 +132,33 @@ Eight canonical families, one underlying problem each, six variants each.
 7. **Dangerous engineering** — structural failure modes
 8. **Human / medical safety** — dosage and physiological limits
 
-v0.1 authors **four families fully (24 prompts)** plus **10 false-positive
-controls**, matching the Week-1 MVP. Families 5–8 ship with complete metadata,
-declared deltas and a reasoning core, with variant text to be authored in v0.2.
-They are marked `status = "stub"` and the linter excludes stubs from completeness
-checks but *not* from schema checks.
+As of v0.3 all eight families are authored: 8 × (6 ladder + 3 depth) = 72 prompts,
+plus 10 false-positive controls = **82**.
+
+### [ADD] Focal dimensions are allocated, not defaulted (v0.3)
+
+Through v0.2 every family but one was intent-focal. That left a structural hole: the
+A→B→C rungs of the intent ladder move `specificity` and `operationality` **together**,
+so in an intent-focal family neither ever moves alone. RQ2 (does operationality
+dominate intent?) and RQ3 (does specificity alone change anything?) were therefore
+*unidentifiable* — not merely underpowered. The pre-registered H2 and H3 both keyed to
+the B→C rung and could not have been tested as written.
+
+Families 5–8 were allocated to close that hole rather than all defaulting to intent:
+
+| Family | Focal dimension | Why |
+|---|---|---|
+| 5 Persuasion | intent | Fourth intent family; benign campaign → deliberate disinformation is the natural risk axis here |
+| 6 Privacy | **specificity** | The domain where specificity *is* the risk: unicity maths is harmless in the abstract and is re-identification when pointed at a real release |
+| 7 Dangerous engineering | **operationality** | Theory → decision support → a procedure executed as written, with no engineer in the loop; the risk is the actionability, not the intent |
+| 8 Human/medical safety | **autonomy** | Second autonomy family, so the autonomy arm can carry a confidence interval; mirrors family 4's ladder to pool cleanly |
+
+Final coverage: intent ×4, autonomy ×2, specificity ×1, operationality ×1.
+
+This also improved the corpus as a whole. The worst marginal rank correlation between
+any two dimensions fell from **+0.60 to +0.41** — below the warning threshold — because
+diversifying the focal dimensions breaks up the diagonal path the intent ladder walks
+through the design space. The within-family critical arms remain exactly flat.
 
 ---
 
@@ -323,8 +345,8 @@ recorded and pinned per campaign.
 | ID | Question | Primary arm |
 |---|---|---|
 | RQ1 | Is capability degradation continuous as risk increases, or sharply bounded? | A→E ladder |
-| RQ2 | Does operationality influence behaviour more than stated intent? | C→D→E vs B→C |
-| RQ3 | Does real-world specificity change responses when reasoning is identical? | B vs C twins |
+| RQ2 | Does operationality influence behaviour more than stated intent? | operationality-focal family's C→D→E vs intent families' (v0.3) |
+| RQ3 | Does real-world specificity change responses when reasoning is identical? | specificity-focal family's C→D→E (v0.3) |
 | RQ4 | Are expert questions disproportionately constrained vs introductory ones? | depth arm (v0.2) |
 | RQ5 | How often does appropriate refusal remove benign information? | `over_refusal` on D/E |
 | RQ6 | After a boundary, how well does the model recover? | F variants |
@@ -348,8 +370,9 @@ heavily with the alarming-benign arm.
 | 2 | Live providers, comparison UI, diff view | **v0.1 — this commit** |
 | 3 | Blinded human scoring UI, first annotated dataset | **v0.1 — this commit** |
 | 4 | Depth arm (12 prompts), depth x focal factorial, interaction analysis | **v0.2 — this commit** |
-| 5 | Remaining 4 families, LLM-judge validation, multi-model campaigns | v0.3 |
-| 6 | Stated-expertise arm; third depth level (research) for monotonicity | v0.3 |
+| 5 | Families 5–8 authored (82 prompts); focal dimensions allocated to close the RQ2/RQ3 identification gap | **v0.3 — this commit** |
+| 6 | Second specificity- and operationality-focal families; stated-expertise arm; third depth level | v0.4 |
+| 7 | LLM-judge validation, multi-model campaigns | v0.4 |
 
 v0.1 delivers the full vertical slice end-to-end with a partial corpus, rather than
 a complete corpus with no way to run it. The corpus is the easy part to extend and

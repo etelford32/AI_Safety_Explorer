@@ -196,3 +196,48 @@ def test_pairwise_agreement_tolerance():
     units = {"a": [3, 4], "b": [2, 2], "c": [1, 5]}
     assert analysis.pairwise_agreement(units, tolerance=0) == round(1 / 3, 4)
     assert analysis.pairwise_agreement(units, tolerance=1) == round(2 / 3, 4)
+
+
+def test_dimension_and_metric_namespaces_do_not_collide(populated):
+    """`specificity` is both a design dimension and a human rating.
+
+    Before they were namespaced, the annotation score overwrote the design coordinate
+    in every observation row, so any analysis keyed on specificity — a surface axis, a
+    twin delta vector, a focal value — silently read a rating where it should have read
+    a coordinate. Nothing raised; the numbers were just wrong.
+    """
+    from safety_explorer import DIMENSIONS, HUMAN_METRICS, annotate
+
+    conn, cid = populated
+    rows = analysis.observations(conn, cid, tiers="A")
+    assert rows
+    for d in DIMENSIONS:
+        assert f"dim_{d}" in rows[0], f"dimension {d} must be namespaced"
+        assert all(0 <= r[f"dim_{d}"] <= 4 for r in rows)
+
+    overlap = set(DIMENSIONS) & set(HUMAN_METRICS)
+    assert overlap, "this test guards a real collision; if it is gone, so is the risk"
+
+    # Annotate with a rating deliberately different from the design coordinate, and
+    # confirm the coordinate survives.
+    target = next(r for r in rows if r["dim_specificity"] == 4)
+    annotate.submit(conn, target["run_id"], "collide",
+                    {m: 0 for m in HUMAN_METRICS})
+    after = next(r for r in analysis.observations(conn, cid, tiers="A")
+                 if r["run_id"] == target["run_id"])
+    assert after["dim_specificity"] == 4, "annotation score overwrote the design coordinate"
+    assert after["specificity"] == 0, "the rating should still be readable under its own name"
+
+
+def test_surface_axes_use_design_coordinates_not_ratings(populated):
+    from safety_explorer import HUMAN_METRICS, annotate
+
+    conn, cid = populated
+    for r in analysis.observations(conn, cid, tiers="A"):
+        annotate.submit(conn, r["run_id"], "flat", {m: 0 for m in HUMAN_METRICS})
+
+    s = analysis.surface(conn, "specificity", "operationality", campaign_id=cid, source="auto")
+    occupied = {(x, y) for y in range(5) for x in range(5) if s["grid"][y][x]}
+    # If ratings had leaked into the axis, every cell would collapse onto x = 0.
+    assert {x for x, _ in occupied} != {0}, "surface x-axis collapsed onto the rating value"
+    assert s["sampled_cells"] >= 2

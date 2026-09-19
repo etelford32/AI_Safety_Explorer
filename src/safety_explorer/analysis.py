@@ -184,7 +184,12 @@ def pairwise_agreement(units: dict[Any, list[float]], tolerance: int = 0) -> flo
 
 def observations(conn: sqlite3.Connection, campaign_id: str | None = None,
                  tiers: str = "A", include_controls: bool = True) -> list[dict[str, Any]]:
-    """Flatten runs joined to prompts, features and mean human annotation."""
+    """Flatten runs joined to prompts, features and mean human annotation.
+
+    Design-space coordinates come back as `dim_intent`, `dim_specificity` and so on;
+    human ratings keep their bare names (`specificity` is a rating here, not a
+    coordinate). The two namespaces overlap and must not be conflated.
+    """
     allowed = [t for t in tiers.upper() if t in TIER_ORDER]
     placeholders = ",".join("?" for _ in allowed)
     params: list[Any] = list(allowed)
@@ -195,7 +200,14 @@ def observations(conn: sqlite3.Connection, campaign_id: str | None = None,
                r.model_alias_risk, r.response, r.error, r.latency_ms, r.captured_at,
                p.family_id, p.twin_group_id, p.variant, p.arm, p.sub_arm, p.control_arm,
                p.title, p.text AS prompt_text, p.expected_benign,
-               p.intent, p.operationality, p.specificity, p.autonomy, p.depth,
+               -- Dimensions are namespaced because `specificity` is BOTH a design
+               -- dimension and a human metric. Without the prefix the annotation score
+               -- silently overwrites the design coordinate below, and any analysis
+               -- keyed on specificity (a surface axis, a twin delta vector, a focal
+               -- value) reads a rating where it should read a coordinate.
+               p.intent AS dim_intent, p.operationality AS dim_operationality,
+               p.specificity AS dim_specificity, p.autonomy AS dim_autonomy,
+               p.depth AS dim_depth,
                f.n_words, f.n_equations, f.n_quantities, f.n_steps, f.n_code_blocks,
                f.n_citations, f.refusal_hits, f.hedge_hits, f.safety_framing,
                f.refusal_signal, f.technical_density
@@ -261,7 +273,10 @@ def twin_deltas(conn: sqlite3.Connection, corpus, campaign_id: str | None = None
             "repeat_index": o["repeat_index"],
             "focal_dimension": (corpus.family(o["family_id"]).focal_dimension
                                 if corpus.family(o["family_id"]) else None),
-            "delta_vector": {d: o[d] - base[d] for d in DIMENSIONS if o[d] != base[d]},
+            "delta_vector": {
+                d: o[f"dim_{d}"] - base[f"dim_{d}"]
+                for d in DIMENSIONS if o[f"dim_{d}"] != base[f"dim_{d}"]
+            },
             "metric": metric,
             "test": test_val,
             "baseline": base_val,
@@ -385,7 +400,7 @@ def depth_interaction(conn: sqlite3.Connection, corpus, campaign_id: str | None 
                 g["gaps"][expert_variant].append({
                     "family_id": fam.id, "repeat_index": rep, "gap": round(gap, 3),
                     "intro": iv, "expert": ev,
-                    "focal_value": (expert[focal] if expert else None),
+                    "focal_value": (expert[f"dim_{focal}"] if expert else None),
                 })
             # Difference-in-differences, reported for EVERY level against the benign
             # baseline rather than for the top of the ladder alone.
@@ -509,7 +524,7 @@ def surface(conn: sqlite3.Connection, x: str = "intent", y: str = "operationalit
         val = o.get(metric) if source == "human" else o.get("technical_density")
         if val is None:
             continue
-        cells[(o[x], o[y])].append(float(val))
+        cells[(o[f"dim_{x}"], o[f"dim_{y}"])].append(float(val))
 
     grid = []
     for yi in range(5):

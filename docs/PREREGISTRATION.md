@@ -1,8 +1,10 @@
 # Pre-registration — Safety Explorer v1 benchmark
 
-**Status:** frozen at corpus version `0.2.0`.
-**History:** `0.1.0` froze H1–H3, H5–H7, H9. `0.2.0` adds the depth arm and
-restates H4 as an interaction (below). Additive only; nothing above was edited.
+**Status:** frozen at corpus version `0.3.0`.
+**History:** `0.1.0` froze H1–H3, H5–H7, H9. `0.2.0` added the depth arm and
+restated H4 as an interaction. `0.3.0` completes families 5–8 and restates H2 and
+H3, which were not testable as originally written (below). Additive only; nothing
+above was edited.
 **Rule:** anything analysed outside this document is labelled *exploratory* in
 outputs. This document may be extended for future versions, never retroactively
 edited; changes are additive and versioned.
@@ -23,6 +25,29 @@ Stated as directional predictions so they can be wrong.
 | H6 | Recovery is good but incomplete | F-variant `capability_retention` recovers to ≥ 80% of the A baseline but < 100% |
 | H7 | Boundaries are stochastic near the edge | Across 3 repeats, refusal-taxonomy label disagreement is concentrated at D (highest entropy of any variant) |
 | H9 | Alarming vocabulary is not the driver | `alarming_benign` controls show `over_refusal` ≤ variant-A levels |
+
+### H2 and H3 restated (corpus 0.3.0)
+
+As written at `0.1.0`, both H2 and H3 were keyed to the **B→C** rung of the intent
+ladder. That rung moves `specificity` **and** `operationality` together (+2 each), so
+neither hypothesis was testable: any effect attributed to one belonged equally to the
+other. The hypotheses were not wrong, they were unidentifiable.
+
+Corpus `0.3.0` fixes this by giving two families a focal dimension other than intent,
+so their C/D/E arms move one of these dimensions alone with everything else pinned:
+
+| ID | Hypothesis | Clean contrast | Prediction |
+|---|---|---|---|
+| H2 | Operationality dominates stated intent | `structural_failure` C→D→E (operationality +2 per step) vs the intent families' C→D→E (intent +2 per step) | The operationality effect on `capability_retention` is at least as large as the intent effect |
+| H3 | Specificity alone is near-free | `privacy_aggregation` C→D→E (specificity +2 per step) | Median `capability_retention` differs by < 1.0 across the whole arm, intent pinned at 0 |
+
+**Single-family caveat, registered in advance.** H2 rests on one operationality-focal
+family and H3 on one specificity-focal family. Confidence intervals bootstrap over
+families, so neither can carry an interval at `0.3.0` and both are reported as
+**provisional point estimates**. They become properly testable when a second family of
+each focal type exists. The intent effect they are compared against has four families
+and does carry an interval — so an H2 comparison is between an interval and a point,
+and must be read as such.
 
 ### H4 restated (corpus 0.2.0)
 
@@ -86,15 +111,23 @@ refusal taxonomy distribution, and the automatic feature vector.
 
 ## 5. Sample size
 
-v0.2: 4 families × (6 ladder + 3 depth) + 10 controls = 46 prompts × 3 repeats = 138
+v0.3: 8 families × (6 ladder + 3 depth) + 10 controls = 82 prompts × 3 repeats = 246
 runs per campaign. Human reference set: 60 blinded annotations, plus a 20% re-serve for
 intra-rater reliability.
 
-The depth arm contributes 3 intent-focal families to H4b and 1 autonomy-focal family.
+Focal-dimension coverage at `0.3.0`:
+
+| Focal dimension | Families | Interval estimable? |
+|---|---|---|
+| intent | 4 | yes |
+| autonomy | 2 | yes |
+| specificity | 1 | no — provisional |
+| operationality | 1 | no — provisional |
+
 **One family cannot support a confidence interval**, since intervals bootstrap over
-families — so the autonomy × depth interaction is reported as provisional at v0.2 and
-is not pre-registered as testable until a second autonomy-focal family exists. The
-intent × depth interaction, with three families, is.
+families. The autonomy arm reached two families at `0.3.0` and is now estimable; it was
+provisional at `0.2.0`. Specificity and operationality remain provisional and are the
+first target for `0.4.0`.
 
 This is **underpowered for between-model comparison** and is not intended to support
 one. It is powered to characterise the *shape* of the within-model surface, which is
