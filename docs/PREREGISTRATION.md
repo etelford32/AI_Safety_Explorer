@@ -107,7 +107,14 @@ refusal taxonomy distribution, and the automatic feature vector.
 - **Tier policy:** primary analysis uses Tier A only. Tier B analyses are reported
   separately and never pooled without an explicit label.
 - **Exclusions:** responses flagged `escalate`; runs with transport errors; variants
-  failing lint at the corpus version used.
+  failing lint at the corpus version used; and **responses truncated at `max_tokens`**.
+
+  The truncation exclusion is registered in advance because it is the one exclusion
+  that would otherwise look like a result. A truncated response is short, light on
+  equations and missing its conclusion — indistinguishable from a degraded response to
+  every metric here. It is a corrupted measurement, not evidence of capability loss.
+  Truncation counts are reported alongside any analysis; if more than 5% of a cell is
+  truncated, the campaign is re-run at a higher `max_tokens` rather than analysed.
 
 ## 5. Sample size
 

@@ -147,16 +147,51 @@ A `--format chatml` adapter handles message-list transcripts.
 The minimum that produces a publishable-quality result:
 
 1. `explorer init && explorer lint` — verify the corpus is sound.
-2. `explorer run --provider mock --campaign smoke` — verify the pipeline end to end.
-3. `explorer run --provider anthropic --model <pinned-id> --campaign v1-baseline --repeats 3`
-   — Tier A, 24 prompts + 10 controls × 3 repeats = 102 responses.
-4. `explorer annotate --blind --limit 60` — the human reference set. Roughly two
-   evenings of work.
-5. `explorer annotate --reliability` — re-serve 20% blind for intra-rater α.
-6. Optionally repeat step 3 against a chat surface via the manual lane for a
+2. `explorer run --provider mock --campaign smoke` — verify the pipeline end to end,
+   free and offline.
+3. `explorer preflight --model claude-opus-5 --repeats 3` — validate credentials and
+   parameter legality, count input tokens exactly, make **one** real call, and print a
+   cost estimate. Ten seconds that prevents discovering a bad parameter on cell 1 of
+   246.
+4. `explorer run --provider anthropic --model claude-opus-5 --campaign v1-baseline --repeats 3`
+   — Tier A, 82 prompts × 3 repeats = 246 responses.
+5. `explorer annotate --plan --limit 60` — inspect what will be served, then
+   `explorer serve` and annotate through the blinded UI. Roughly two evenings.
+6. `explorer annotate --reliability` — re-serve 20% blind for intra-rater α.
+7. Optionally repeat step 4 against a chat surface via the manual lane for a
    Tier A / Tier B comparison. That comparison is itself an interesting result: it
    measures how much of "the model feels different" is the model versus the harness
    around it.
 
-Step 6 is the one most people skip and the one most likely to explain the original
+Step 7 is the one most people skip and the one most likely to explain the original
 complaint that motivated this project.
+
+## Two things that would waste the run
+
+**Sampling parameters are removed on the current frontier models.** Sending
+`temperature` to Opus 5, Sonnet 5, Opus 4.8/4.7 or the Fable family returns a 400 —
+on every call, so a campaign fails entirely rather than degrading. The provider refuses
+to send one to those models and says so; `preflight` catches it before any spend.
+
+**Hosted model ids carry no date suffix.** `claude-opus-5` *is* the id; there is no
+dated variant to pin. So a hosted id cannot pin weights for longitudinal purposes. The
+honest response is not to pretend otherwise: every run records `model_reported` (what
+the server says it served) and `captured_at`, and a local pinned-weight model via
+`--provider local` remains the only true control for drift.
+
+## Spending the annotation budget
+
+Human annotation is the scarce resource, and **which** responses get annotated matters
+more than how many. A twin delta needs *both* members of a pair rated, so sampling runs
+uniformly at random is close to the worst possible use of the budget: 60 annotations
+drawn at random from a 246-run campaign complete about **7** twin pairs out of ~123,
+because the chance of catching both members of a pair is roughly (60/246)².
+
+`explorer annotate` selects for coverage instead, which completes about **42** pairs
+from the same 60 ratings. Baselines are shared — within a family, rating
+{C, D, E, C_intro, D_intro, E_intro} is 6 ratings that complete 5 pairs, because C is
+the baseline for D, E and C_intro at once. Selection round-robins across families so
+none is starved, and reserves a share for controls, which have no twins and would
+otherwise never be selected.
+
+Run `explorer annotate --plan` to see the selection before committing an evening to it.

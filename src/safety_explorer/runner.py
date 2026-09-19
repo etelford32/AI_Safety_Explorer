@@ -181,6 +181,7 @@ def execute(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus, provider
             "messages": messages, "response": completion.text or None,
             "error": completion.error, "retries": completion.retries,
             "latency_ms": completion.latency_ms, "finish_reason": completion.finish_reason,
+            "stop_details": (completion.raw or {}).get("stop_details", {}),
             "usage": completion.usage, "prompt_hash": v.prompt_hash,
             "match_confidence": 1.0, "captured_at": now_iso(),
             "corpus_version": corpus.version,

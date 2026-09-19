@@ -93,11 +93,14 @@ def cmd_run(args) -> int:
     conn = db.init_db(args.db)
     runner.snapshot_corpus(conn, c, report.clean)
 
-    provider = get_provider(
-        args.provider, args.model,
-        temperature=args.temperature, max_tokens=args.max_tokens,
-        system=args.system,
-    )
+    provider_kwargs: dict = {"max_tokens": args.max_tokens, "system": args.system}
+    if args.temperature is not None:
+        provider_kwargs["temperature"] = args.temperature
+    if getattr(args, "thinking", None):
+        provider_kwargs["thinking"] = args.thinking
+    if getattr(args, "effort", None):
+        provider_kwargs["effort"] = args.effort
+    provider = get_provider(args.provider, args.model, **provider_kwargs)
 
     existing = db.query_one(conn, "SELECT id FROM campaign WHERE name = ?", (args.campaign,))
     if existing and args.resume:
@@ -130,6 +133,101 @@ def cmd_run(args) -> int:
     )
     print(f"\n{stats['ok']} ok, {stats['errors']} error(s), "
           f"{stats['skipped']} already present, {stats['total']} cells total")
+    return 0
+
+
+def cmd_preflight(args) -> int:
+    """Validate credentials, cost the campaign, and make exactly one real call.
+
+    246 cells is enough that discovering a bad parameter on call 1 and a bad model id
+    on call 2 is worth ten seconds up front.
+    """
+    from . import pricing
+
+    c, report = _corpus_and_lint(args)
+    _require_clean(c, report, args.force)
+
+    provider_kwargs: dict = {"max_tokens": args.max_tokens, "system": args.system}
+    if args.temperature is not None:
+        provider_kwargs["temperature"] = args.temperature
+    if args.thinking:
+        provider_kwargs["thinking"] = args.thinking
+    if args.effort:
+        provider_kwargs["effort"] = args.effort
+
+    try:
+        provider = get_provider(args.provider, args.model, **provider_kwargs)
+    except ValueError as exc:
+        print(f"provider error: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"corpus {c.version} ({c.content_hash[:16]}) — {len(c.runnable)} runnable prompts")
+    print(f"provider {provider.name}  model {args.model}  repeats {args.repeats}")
+    cells = len(c.runnable) * args.repeats
+    print(f"campaign size: {cells} cells\n")
+
+    # 1. parameter legality, before anything is spent
+    try:
+        provider.complete.__self__  # noqa: B018 — touch to confirm binding
+        if hasattr(provider, "_build_kwargs"):
+            kw = provider._build_kwargs([{"role": "user", "content": "x"}], {})
+            shown = {k: v for k, v in kw.items() if k != "messages"}
+            print(f"request parameters: {shown}")
+    except ValueError as exc:
+        print(f"\nFAIL — illegal parameters for this model:\n  {exc}", file=sys.stderr)
+        return 2
+
+    if provider.alias_risk():
+        print("note: this model id looks like a moving alias.")
+    print("note: hosted Claude model ids carry no date suffix, so the id alone cannot")
+    print("      pin weights. model_reported is recorded per run; a local pinned-weight")
+    print("      model is the only true control for drift (see docs/PLAN.md §8).\n")
+
+    # 2. exact input token count
+    total_input = 0
+    counted = 0
+    for v in c.runnable:
+        n = provider.count_tokens([{"role": "user", "content": v.text}]) if hasattr(
+            provider, "count_tokens") else None
+        if n is None:
+            total_input += len(v.text) // 4
+        else:
+            total_input += n
+            counted += 1
+    label = "exact" if counted == len(c.runnable) else f"{counted}/{len(c.runnable)} exact, rest approximate"
+    print(f"input tokens per sweep: {total_input:,} ({label})")
+
+    # 3. one real call, to measure output length rather than guess it
+    probe = c.runnable[0]
+    print(f"\nprobe call: {probe.id} ...", flush=True)
+    result = provider.complete([{"role": "user", "content": probe.text}], vector=probe.vector)
+    if result.error:
+        print(f"\nFAIL — probe call errored:\n  {result.error}", file=sys.stderr)
+        return 2
+
+    out_tokens = (result.usage or {}).get("output_tokens") or max(1, len(result.text) // 4)
+    print(f"  ok — {result.latency_ms} ms, {out_tokens} output tokens, "
+          f"stop_reason={result.finish_reason}")
+    print(f"  model_reported: {result.model_reported}")
+    if result.finish_reason == "max_tokens":
+        print("  WARNING: the probe hit max_tokens. Raise --max-tokens: a truncated "
+              "response scores as capability loss.")
+
+    est = pricing.estimate(args.model, total_input * args.repeats, out_tokens * cells)
+    if est.get("known"):
+        print(f"\nestimated cost (list prices as of {est['as_of']}):")
+        print(f"  input   {est['input_tokens']:>9,} tok x ${est['input_rate']}/M  = ${est['cost_input']}")
+        print(f"  output  {est['output_tokens']:>9,} tok x ${est['output_rate']}/M = ${est['cost_output']}")
+        print(f"  total                                    ~ ${est['cost_total']}")
+        batch = pricing.estimate(args.model, total_input * args.repeats, out_tokens * cells, batch=True)
+        print(f"  (the Batch API would run this asynchronously at ~${batch['cost_total']})")
+        print("\n  An estimate from one probe response. Refusals are short and cost less;")
+        print("  long derivations cost more.")
+    else:
+        print(f"\nno cached price for '{args.model}' — cannot estimate cost.")
+
+    print(f"\nready. run it with:\n  explorer run --campaign <name> --provider {args.provider} "
+          f"--model {args.model} --repeats {args.repeats}")
     return 0
 
 
@@ -206,9 +304,22 @@ def cmd_annotate(args) -> int:
         return 0
 
     pass_index = 1 if args.reliability else 0
+    c, _ = _corpus_and_lint(args)
+
+    if args.plan:
+        plan = annotate.plan_set(conn, c, budget=args.limit, campaign_id=args.campaign,
+                                 repeat_index=args.repeat, tiers=args.tiers)
+        print(f"budget {plan['budget']} -> {plan['n_selected']} runs "
+              f"({plan['n_family']} family + {plan['n_controls']} controls)")
+        print(f"complete twin pairs: {plan['complete_twin_pairs']}")
+        print(f"families covered: {plan['families_covered']}")
+        print(f"\n{plan['note']}")
+        return 0
+
     ids = annotate.queue(
         conn, args.annotator, limit=args.limit, campaign_id=args.campaign,
         seed=args.seed, pass_index=pass_index, tiers=args.tiers,
+        strategy=args.strategy, corpus=c, repeat_index=args.repeat,
     )
     if not ids:
         print("nothing to annotate")
@@ -365,8 +476,20 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--model", default="mock-1")
     r.add_argument("--repeats", type=int, default=3)
     r.add_argument("--only", nargs="*", help="variant ids, family ids, or 'control'")
-    r.add_argument("--temperature", type=float, default=0.0)
-    r.add_argument("--max-tokens", type=int, default=2048)
+    # Default None, not 0.0: sampling parameters are REMOVED on the current frontier
+    # models (Opus 5, Sonnet 5, Opus 4.8/4.7, Fable) and sending one returns a 400 on
+    # every call. Omitting it means the model's own sampling applies, which is both
+    # legal everywhere and an honest record of what was run.
+    r.add_argument("--temperature", type=float, default=None,
+                   help="only legal on older models; omit on Opus 5 / Sonnet 5")
+    # Generous, because a response truncated at max_tokens looks exactly like a
+    # degraded one to every metric here. Better to pay for headroom than to score
+    # truncation as capability loss.
+    r.add_argument("--max-tokens", type=int, default=8000)
+    r.add_argument("--thinking", default=None, choices=["adaptive", "off"],
+                   help="omit to use the model's own default (adaptive on Opus 5)")
+    r.add_argument("--effort", default=None,
+                   choices=["low", "medium", "high", "xhigh", "max"])
     r.add_argument("--system", default=None, help="system prompt (recorded with the run)")
     r.add_argument("--surface", default="api")
     r.add_argument("--notes", default="")
@@ -374,6 +497,18 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-resume", dest="resume", action="store_false")
     r.add_argument("--force", action="store_true", help="run despite lint errors")
     r.set_defaults(func=cmd_run)
+
+    pf = sub.add_parser("preflight", help="validate credentials, cost the campaign, make one real call")
+    pf.add_argument("--provider", default="anthropic")
+    pf.add_argument("--model", required=True)
+    pf.add_argument("--repeats", type=int, default=3)
+    pf.add_argument("--max-tokens", type=int, default=8000)
+    pf.add_argument("--temperature", type=float, default=None)
+    pf.add_argument("--thinking", default=None, choices=["adaptive", "off"])
+    pf.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"])
+    pf.add_argument("--system", default=None)
+    pf.add_argument("--force", action="store_true")
+    pf.set_defaults(func=cmd_preflight)
 
     cap = sub.add_parser("capture", help="record a response pasted from a chat surface (Tier B)")
     cap.add_argument("--prompt", required=True)
@@ -401,6 +536,11 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--campaign", default=None)
     a.add_argument("--seed", type=int, default=20260919)
     a.add_argument("--tiers", default="AB")
+    a.add_argument("--strategy", default="coverage", choices=["coverage", "random"],
+                   help="coverage selects for twin-pair yield; random is the old behaviour")
+    a.add_argument("--repeat", type=int, default=0,
+                   help="which repeat index to annotate (coverage beats repeats at this budget)")
+    a.add_argument("--plan", action="store_true", help="show what would be selected, annotate nothing")
     a.add_argument("--reliability", action="store_true", help="re-serve a 20%% subset for intra-rater alpha")
     a.add_argument("--unblind", action="store_true", help="not the reference set; recorded as unblinded")
     a.add_argument("--progress", action="store_true")

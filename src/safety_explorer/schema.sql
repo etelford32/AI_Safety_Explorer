@@ -100,6 +100,11 @@ CREATE TABLE IF NOT EXISTS run (
     retries          INTEGER NOT NULL DEFAULT 0,
     latency_ms       INTEGER,
     finish_reason    TEXT,
+    -- Classifier-level refusals arrive as HTTP 200 with stop_reason='refusal'
+    -- and a category. Categorically different from declining in prose, and the
+    -- most objective boundary signal available, so it is stored rather than
+    -- collapsed into the response text.
+    stop_details     TEXT NOT NULL DEFAULT '{}',
     usage            TEXT NOT NULL DEFAULT '{}',
     prompt_hash      TEXT,
     match_confidence REAL NOT NULL DEFAULT 1.0,

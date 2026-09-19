@@ -55,11 +55,31 @@ Against a real model:
 
 ```bash
 export ANTHROPIC_API_KEY=...
+
+explorer preflight --model claude-opus-5 --repeats 3   # validates + costs, 1 real call
 explorer run --campaign v1-baseline --provider anthropic \
-             --model <pinned-version-id> --repeats 3
-explorer annotate --annotator you --limit 60    # or use the blinded web UI
-explorer analyse twins
+             --model claude-opus-5 --repeats 3         # 246 cells, ~$4.50
+
+explorer annotate --plan --limit 60                    # see what will be served
+explorer serve                                         # annotate blind in the UI
+explorer analyse twins && explorer analyse depth
 ```
+
+`preflight` exists because 246 cells is enough that discovering a bad parameter on the
+first call is worth ten seconds up front. It checks credentials, verifies the request
+parameters are legal for that model, counts input tokens exactly, makes one real call
+to measure response length, and prints a cost estimate.
+
+Two model-API facts it guards against:
+
+- **Sampling parameters are removed on current frontier models.** `temperature` to
+  Opus 5 or Sonnet 5 is a 400 — on *every* call, so the campaign fails entirely rather
+  than degrading. Omit it; the model's own sampling applies and that is what gets
+  recorded.
+- **Hosted model ids carry no date suffix.** `claude-opus-5` is the id; there is no
+  dated variant to pin to, so a hosted id cannot pin weights. Every run records
+  `model_reported`, and a local pinned-weight model (`--provider local`) is the only
+  true control for drift.
 
 ## What is in v0.1
 
@@ -70,10 +90,10 @@ explorer analyse twins
 | Linter | twin matching, ladder deltas, hazard review, content deny-list, dimension independence |
 | Ingestion | 3 lanes — live API, manual chat capture, bulk import — with explicit provenance tiers |
 | Measurement | 17 automatic features · 9 ordinal human metrics · optional LLM judge (off by default) |
-| Annotation | blinded, randomised, with intra-rater reliability |
+| Annotation | blinded, randomised, coverage-planned, with intra-rater reliability |
 | Analysis | twin-pair deltas, depth × risk interaction (difference-in-differences), bootstrap CIs over families, Cliff's delta, Krippendorff's α, safety surface |
 | UI | sliders → prompt → response → twin comparison → word-level diff → surface |
-| Tests | 56, all passing, no network required |
+| Tests | 68, all passing, no network required |
 
 ## How it stays honest
 
@@ -100,6 +120,19 @@ retention" measures prompt-writing drift as much as model behaviour.
 instead: every figure in the question unchanged. Different wording is the manipulation;
 different numbers are a different question. This caught a real authoring slip, a
 "60-second window" against "a minute".
+
+**The annotation budget is spent on coverage, not at random.** A twin delta needs
+*both* members rated, so uniform sampling wastes most of it: 60 random annotations from
+a 246-run campaign complete about **7** twin pairs; selecting for coverage completes
+about **42**. Baselines are shared — rating {C, D, E, C_intro, D_intro, E_intro} in a
+family is 6 ratings that complete 5 pairs. Selection round-robins across families so
+none is starved, because intervals bootstrap over families and a family with zero
+ratings contributes nothing. `explorer annotate --plan` shows the selection first.
+
+**A truncated response is not a degraded one.** A reply cut off at `max_tokens` is
+short, light on equations and missing its conclusion — indistinguishable from
+capability loss to every metric here. Truncated runs are excluded by default and
+counted, rather than left to depress a cell average.
 
 **The surface shows its own sparsity.** Five dimensions over 34 prompts is sparse.
 Every cell reports its `n`, unsampled cells are drawn empty and never interpolated,
@@ -267,6 +300,7 @@ is the model versus the harness around it.
 ```
 explorer lint                     validate the corpus (rank correlations, twin matching)
 explorer init                     create the database, snapshot the corpus
+explorer preflight                validate credentials + parameters, cost a campaign
 explorer corpus [--show ID]       list or print prompts
 explorer run                      execute a campaign (resumable)
 explorer capture                  record a pasted chat response (Tier B)

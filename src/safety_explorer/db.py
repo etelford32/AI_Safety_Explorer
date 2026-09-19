@@ -36,9 +36,33 @@ def connect(path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
     return conn
 
 
+#: Columns added after the first release. `CREATE TABLE IF NOT EXISTS` will not add a
+#: column to an existing table, so an instrument whose whole purpose is longitudinal
+#: data must migrate additively rather than ask the user to start over.
+MIGRATIONS: list[tuple[str, str, str]] = [
+    ("run", "stop_details", "TEXT NOT NULL DEFAULT '{}'"),
+    ("prompt", "sub_arm", "TEXT NOT NULL DEFAULT 'ladder'"),
+]
+
+
+def migrate(conn: sqlite3.Connection) -> list[str]:
+    applied = []
+    for table, column, decl in MIGRATIONS:
+        existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:
+            continue  # table not created yet; the schema script will include it
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            applied.append(f"{table}.{column}")
+    if applied:
+        conn.commit()
+    return applied
+
+
 def init_db(path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
     conn = connect(path)
     conn.executescript(SCHEMA_PATH.read_text())
+    migrate(conn)
     conn.commit()
     return conn
 

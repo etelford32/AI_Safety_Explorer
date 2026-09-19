@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import random
 import sqlite3
+from collections import defaultdict
 from typing import Any
 
 from . import HUMAN_METRICS, INVERTED_METRICS, REFUSAL_LABELS
@@ -85,14 +86,162 @@ RUBRIC: dict[str, dict[str, Any]] = {
 }
 
 
+#: Fraction of an annotation budget reserved for false-positive controls. Controls
+#: carry no twin pair, so a pure pair-maximising selection would never pick one and
+#: RQ9 would go unanswered.
+CONTROL_SHARE = 0.17
+
+
+def _candidates(conn: sqlite3.Connection, campaign_id: str | None,
+                repeat_index: int | None, tiers: str) -> list[dict[str, Any]]:
+    allowed = [t for t in tiers.upper() if t in "ABC"]
+    placeholders = ",".join("?" for _ in allowed)
+    params: list[Any] = list(allowed)
+    sql = f"""
+        SELECT r.id AS run_id, r.prompt_id, r.repeat_index,
+               p.family_id, p.variant, p.arm, p.control_arm
+        FROM run r JOIN prompt p ON p.id = r.prompt_id
+        WHERE r.response IS NOT NULL AND r.error IS NULL
+          AND r.provenance_tier IN ({placeholders})
+    """
+    if campaign_id:
+        sql += " AND r.campaign_id = ?"
+        params.append(campaign_id)
+    if repeat_index is not None:
+        sql += " AND r.repeat_index = ?"
+        params.append(repeat_index)
+    return query(conn, sql, params)
+
+
+def plan_set(conn: sqlite3.Connection, corpus, budget: int = 60,
+             campaign_id: str | None = None, repeat_index: int | None = 0,
+             tiers: str = "AB", control_share: float = CONTROL_SHARE) -> dict[str, Any]:
+    """Choose which runs to annotate so the budget buys the most complete twin pairs.
+
+    This is the highest-leverage decision in the whole instrument, because human
+    annotation is the scarce resource and a twin delta needs **both** members of a pair
+    rated. Sampling runs uniformly at random — the obvious thing, and what the queue
+    did before — is close to the worst possible use of that budget: at 60 annotations
+    drawn from a 246-run campaign, the expected yield is about 7 complete pairs out of
+    ~123, because the chance of catching both members of any given pair is roughly
+    (60/246)^2.
+
+    Selecting for coverage instead yields about 40 pairs from the same 60 ratings.
+    The trick is that baselines are shared: within a family, rating
+    {C, D, E, C_intro, D_intro, E_intro} is 6 ratings that complete 5 pairs, because C
+    serves as the baseline for D, E and C_intro at once.
+
+    Selection is greedy on marginal pair gain, with ties broken toward the
+    least-covered family so no family is starved. Controls get a reserved share since
+    they have no twins and would otherwise never be selected.
+    """
+    rows = _candidates(conn, campaign_id, repeat_index, tiers)
+    by_prompt_rep = {(r["prompt_id"], r["repeat_index"]): r["run_id"] for r in rows}
+
+    # run_id -> the run_id of its declared twin baseline at the same repeat
+    baseline_of: dict[str, str] = {}
+    for r in rows:
+        variant = corpus.by_id(r["prompt_id"])
+        if variant is None or not variant.baseline:
+            continue
+        base_run = by_prompt_rep.get((variant.baseline, r["repeat_index"]))
+        if base_run:
+            baseline_of[r["run_id"]] = base_run
+
+    family_rows = [r for r in rows if r["arm"] == "family"]
+    control_rows = [r for r in rows if r["arm"] == "control"]
+
+    n_controls = min(len(control_rows), round(budget * control_share))
+    pair_budget = max(0, budget - n_controls)
+
+    selected: set[str] = set()
+    family_count: dict[str, int] = defaultdict(int)
+
+    def marginal_pairs(run_id: str) -> int:
+        """Complete pairs created by adding this run to the selection."""
+        gained = 0
+        base = baseline_of.get(run_id)
+        if base and base in selected:
+            gained += 1
+        # It may also complete pairs for runs already selected that name it as baseline.
+        gained += sum(1 for rid, b in baseline_of.items()
+                      if b == run_id and rid in selected)
+        return gained
+
+    # Round-robin ACROSS families, greedy WITHIN each. Family balance has to be a
+    # constraint rather than a tiebreak: a purely greedy selection exhausts one family
+    # at a time (finishing a family is locally optimal for pair count) and leaves
+    # others at zero. That is far worse than it looks — confidence intervals bootstrap
+    # over families, and a family with no annotations contributes nothing at all. In
+    # testing, the unbalanced version dropped both `privacy_aggregation` and
+    # `network_propagation` entirely, which would have left RQ3 with no data, since
+    # privacy is the only specificity-focal family.
+    by_family: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    for r in family_rows:
+        by_family[r["family_id"]][r["run_id"]] = r
+
+    families = sorted(by_family)
+    while len(selected) < pair_budget:
+        progressed = False
+        for fam_id in families:
+            if len(selected) >= pair_budget:
+                break
+            best, best_key = None, None
+            for run_id, r in by_family[fam_id].items():
+                if run_id in selected:
+                    continue
+                # Look one step ahead: a run that completes nothing now but unlocks a
+                # baseline for several others (variant C is the archetype) must not be
+                # passed over in favour of a dead end.
+                unlocks = sum(1 for rid, b in baseline_of.items()
+                              if b == run_id and rid not in selected)
+                key = (marginal_pairs(run_id), unlocks, run_id)
+                if best_key is None or key > best_key:
+                    best, best_key = run_id, key
+            if best is not None:
+                selected.add(best)
+                family_count[fam_id] += 1
+                progressed = True
+        if not progressed:
+            break
+
+    control_ids = [r["run_id"] for r in sorted(control_rows, key=lambda r: r["run_id"])][:n_controls]
+    chosen = list(selected) + control_ids
+
+    complete_pairs = sum(1 for rid in chosen
+                         if baseline_of.get(rid) in set(chosen))
+    return {
+        "run_ids": chosen,
+        "budget": budget,
+        "n_selected": len(chosen),
+        "n_family": len(selected),
+        "n_controls": len(control_ids),
+        "complete_twin_pairs": complete_pairs,
+        "families_covered": dict(sorted(family_count.items())),
+        "repeat_index": repeat_index,
+        "note": (
+            "Selected for twin-pair coverage, not at random. A twin delta needs both "
+            "members rated; uniform sampling of the same budget would yield roughly a "
+            "fifth as many complete pairs."
+        ),
+    }
+
+
 def queue(conn: sqlite3.Connection, annotator: str, limit: int = 60,
           campaign_id: str | None = None, seed: int = 20260919,
-          pass_index: int = 0, tiers: str = "AB") -> list[str]:
+          pass_index: int = 0, tiers: str = "AB", strategy: str = "random",
+          corpus=None, repeat_index: int | None = 0) -> list[str]:
     """Return run ids to annotate, in seeded random order.
 
-    Randomised so that the annotator never walks a family's ladder in order — seeing
-    A then B then C primes the expectation of decline, which is precisely the artefact
-    blinding exists to prevent.
+    `strategy="coverage"` (needs `corpus`) selects for twin-pair coverage via
+    `plan_set` before shuffling — strongly preferred for a real campaign, where a
+    uniform sample wastes most of the annotation budget. `strategy="random"` keeps the
+    old behaviour and remains the default for the reliability pass, which must re-serve
+    from what was already rated rather than choose afresh.
+
+    Serving order is randomised either way, so the annotator never walks a family's
+    ladder in sequence — seeing A then B then C primes the expectation of decline,
+    which is precisely the artefact blinding exists to prevent.
     """
     allowed = [t for t in tiers.upper() if t in "ABC"]
     placeholders = ",".join("?" for _ in allowed)
@@ -109,6 +258,14 @@ def queue(conn: sqlite3.Connection, annotator: str, limit: int = 60,
         params.append(campaign_id)
 
     candidates = [r["id"] for r in query(conn, sql, params)]
+
+    if strategy == "coverage" and pass_index == 0:
+        if corpus is None:
+            raise ValueError("strategy='coverage' needs the corpus to resolve twin baselines")
+        planned = plan_set(conn, corpus, budget=limit, campaign_id=campaign_id,
+                           repeat_index=repeat_index, tiers=tiers)
+        allowed = set(planned["run_ids"])
+        candidates = [c for c in candidates if c in allowed]
 
     if pass_index == 0:
         already = {

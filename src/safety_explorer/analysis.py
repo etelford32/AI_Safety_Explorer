@@ -183,12 +183,20 @@ def pairwise_agreement(units: dict[Any, list[float]], tolerance: int = 0) -> flo
 # ---------------------------------------------------------------------------
 
 def observations(conn: sqlite3.Connection, campaign_id: str | None = None,
-                 tiers: str = "A", include_controls: bool = True) -> list[dict[str, Any]]:
+                 tiers: str = "A", include_controls: bool = True,
+                 include_truncated: bool = False) -> list[dict[str, Any]]:
     """Flatten runs joined to prompts, features and mean human annotation.
 
     Design-space coordinates come back as `dim_intent`, `dim_specificity` and so on;
     human ratings keep their bare names (`specificity` is a rating here, not a
     coordinate). The two namespaces overlap and must not be conflated.
+
+    **Truncated responses are excluded by default.** A response cut off at `max_tokens`
+    is short, light on equations and missing its conclusion — which is indistinguishable
+    from a degraded response to every metric in this instrument, and would be scored as
+    capability loss caused by the prompt. It is not a degraded response; it is a
+    corrupted measurement, so it is dropped and counted rather than left to depress a
+    cell average.
     """
     allowed = [t for t in tiers.upper() if t in TIER_ORDER]
     placeholders = ",".join("?" for _ in allowed)
@@ -198,6 +206,7 @@ def observations(conn: sqlite3.Connection, campaign_id: str | None = None,
         SELECT r.id AS run_id, r.campaign_id, r.prompt_id, r.repeat_index,
                r.provenance_tier, r.lane, r.surface, r.model_id, r.model_reported,
                r.model_alias_risk, r.response, r.error, r.latency_ms, r.captured_at,
+               r.finish_reason, r.stop_details,
                p.family_id, p.twin_group_id, p.variant, p.arm, p.sub_arm, p.control_arm,
                p.title, p.text AS prompt_text, p.expected_benign,
                -- Dimensions are namespaced because `specificity` is BOTH a design
@@ -228,7 +237,11 @@ def observations(conn: sqlite3.Connection, campaign_id: str | None = None,
     for a in query(conn, "SELECT * FROM annotation WHERE pass_index = 0"):
         ann[a["run_id"]].append(a)
 
+    if not include_truncated:
+        rows = [r for r in rows if r.get("finish_reason") != "max_tokens"]
+
     for r in rows:
+        r["truncated"] = r.get("finish_reason") == "max_tokens"
         annotations = ann.get(r["run_id"], [])
         r["n_annotations"] = len(annotations)
         r["blinded_annotations"] = sum(1 for a in annotations if a["blinded"])
