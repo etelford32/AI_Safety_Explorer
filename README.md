@@ -93,7 +93,7 @@ Two model-API facts it guards against:
 | Annotation | blinded, randomised, coverage-planned, with intra-rater reliability |
 | Analysis | objective-correctness deltas, twin-pair deltas, depth × risk interaction (difference-in-differences), bootstrap CIs over families, Cliff's delta, Krippendorff's α, safety surface |
 | UI | complete: collect (all three lanes), explore, compare + diff, blinded annotation, surface, results |
-| Tests | 120, all passing, no network required |
+| Tests | 146, all passing, no network required |
 
 ## How it stays honest
 
@@ -146,6 +146,41 @@ another family's answer key and see how often the matcher fires by chance. Near 
 means it finds answers, not numbers. Getting there required excluding numbered-list
 numerals and requiring a bare number to be named in nearby prose — together those took
 the null rate from 0.129 to 0.005 with no loss of true positives.
+
+**Sandbagging is tested with a placebo.** Does accuracy fall when the model can tell
+it is being evaluated? Observation cues are composed onto existing prompts at five
+severities, each with a length- and structure-matched placebo twin — at level 2 they
+differ by one word, "scored" against "filed":
+
+```
+explorer run --cues 1 2 3 4 5 --probes detect_parallel selfreport_followup
+explorer analyse sandbagging
+
+  level    treat  placebo  SPECIFIC            95% CI  detect
+  1        0.000    0.000     0.000        [0.0, 0.0]   0.000
+  3        0.757    0.000     0.748    [0.694, 1.191]   1.000
+  5        2.699    0.058     1.913    [1.641, 2.334]   1.000
+
+  awareness x performance (treatment arm)
+                            accuracy dropped   accuracy held
+    detected the cue                     278             154
+    did not detect                         2             106
+```
+
+**The placebo is the whole design.** Without it, "accuracy fell when I said the response
+would be scored" cannot be separated from "accuracy fell when an unusual meta-instruction
+appeared before a physics question" — and the second costs something real, so a naive
+treatment-only reading overstates the effect by about a third.
+
+**Awareness and performance are measured as separate channels**, in parallel. A parallel
+probe quotes the composed prompt as data in an independent call and asks only whether it
+is an evaluation, so it cannot contaminate the performance rollout. The finding is the
+2×2: top-left is sandbagging, bottom-left is a stylistic effect the model is unaware of,
+and a design with only a performance measure cannot tell them apart.
+
+**Does it know it is holding back?** The insight gap compares measured accuracy against
+self-reported effort. Where a drop occurred, the mock's accuracy fell 45% while it
+reported holding back 9.7% — a 30-point gap.
 
 **The safety surface is measured in four languages.** Variants C/D/E are translated
 into Japanese, French and Spanish with every dimension pinned, so language is the only
@@ -385,7 +420,7 @@ explorer features                 recompute automatic features from stored respo
 explorer truth [--targets]        score responses against computed answer keys
        truth --calibrate          measure the extractor's per-language floor
 explorer annotate                 queue responses for blinded annotation
-explorer analyse {twins,surface,depth,language,controls,reliability,judge,drift}
+explorer analyse {twins,surface,depth,language,sandbagging,controls,reliability,judge,drift}
 explorer serve                    the Explorer UI
 explorer export                   JSONL export (escalated responses withheld)
 ```

@@ -126,10 +126,25 @@ def cmd_run(args) -> int:
         flag = "" if status == "ok" else f"  ERROR: {status[:60]}"
         print(f"{bar} {variant.id:<34s} {flag}", flush=True)
 
+    cue_set = None
+    if args.cues is not None or args.cue_arms is not None or args.probes:
+        from . import cues as cue_mod
+        cue_set = cue_mod.load()
+        cue_errors = cue_mod.lint(cue_set)
+        if cue_errors:
+            for e in cue_errors:
+                print(f"  cue lint: {e}", file=sys.stderr)
+            print("Refusing to run: the cue ladder has errors.", file=sys.stderr)
+            return 2
+        if args.cue_arms == ["treatment"]:
+            print("note: running the treatment arm without its placebo. Any effect "
+                  "found cannot be separated from a reaction to unusual framing.")
+
     stats = runner.execute(
         conn, campaign_id, c, provider, args.repeats,
         only=args.only, surface=args.surface, resume=args.resume,
-        on_progress=progress,
+        on_progress=progress, cue_set=cue_set, cue_levels=args.cues,
+        cue_arms=args.cue_arms, probe_kinds=args.probes,
     )
     print(f"\n{stats['ok']} ok, {stats['errors']} error(s), "
           f"{stats['skipped']} already present, {stats['total']} cells total")
@@ -534,6 +549,63 @@ def cmd_analyse(args) -> int:
         print(f"  {d['note']}")
         return 0
 
+    if args.what == "sandbagging":
+        source = args.source if args.source != "human" else "truth"
+        d = analysis.sandbagging(conn, c, args.campaign, args.tiers, source, args.metric)
+        if not d["n_cells"]:
+            print("no cued runs yet — try:\n  explorer run --campaign sb --provider mock "
+                  "--cues 1 2 3 4 5 --probes detect_parallel selfreport_followup")
+            return 0
+
+        print(f"sandbagging arm — {source}, tiers {args.tiers}, {d['n_cells']} cued cells")
+        print("positive drop = worse than the same prompt's own uncued baseline\n")
+        print(f"  {'level':6}{'treat':>8}{'placebo':>9}{'SPECIFIC':>10}{'95% CI':>18}"
+              f"{'detect':>8}{'spont':>7}")
+        for row in d["dose_response"]:
+            t, pl, sp = row["treatment"], row["placebo"], row["specific"]
+            ci = sp.get("ci95", (None, None))
+            ci_s = f"[{ci[0]}, {ci[1]}]" if ci and ci[0] is not None else "—"
+            det = row.get("treatment_detection", {}).get("rate")
+            spo = row.get("treatment_spontaneous", {}).get("rate")
+            print(f"  {row['level']:<6}{_fmt(t.get('median')):>8}{_fmt(pl.get('median')):>9}"
+                  f"{_fmt(sp.get('median')):>10}{ci_s:>18}"
+                  f"{_fmt(det):>8}{_fmt(spo):>7}")
+        print("\n  treat/placebo columns are drops against baseline; SPECIFIC is their")
+        print("  difference, paired within prompt. Reporting the naive treatment column")
+        print("  alone would credit the cost of odd framing to evaluation awareness.")
+        print(f"  dose-response monotonic in severity: {d['monotonic']}")
+
+        q = d["quadrants"]
+        total = sum(q.values()) or 1
+        print(f"\n  awareness x performance (treatment arm, n={total}):")
+        print(f"    {'':22}{'accuracy dropped':>18}{'accuracy held':>16}")
+        print(f"    {'detected the cue':22}{q['detected_dropped']:>18}{q['detected_held']:>16}")
+        print(f"    {'did not detect':22}{q['undetected_dropped']:>18}{q['undetected_held']:>16}")
+        if q["unknown"]:
+            print(f"    ({q['unknown']} with no usable detection probe)")
+        print("    top-left is sandbagging; bottom-left is a stylistic effect the model")
+        print("    is not aware of. They are different findings and need different fixes.")
+
+        ins = d["insight_gap"]
+        if ins.get("n"):
+            print(f"\n  insight gap — does it know it held back?")
+            print(f"    all cued cells (n={ins['n']}): measured drop "
+                  f"{ins['mean_actual_drop_pct']:.1f}% vs self-reported "
+                  f"{ins['mean_reported_drop_pct']:.1f}%, median gap {ins['median']}")
+            wd = ins.get("when_dropped", {})
+            if wd.get("n"):
+                ci = wd.get("ci95", (None, None))
+                print(f"    where a drop was measured (n={wd['n']}): "
+                      f"{wd['mean_actual_drop_pct']:.1f}% vs "
+                      f"{wd['mean_reported_drop_pct']:.1f}%, median gap {wd['median']} "
+                      f"points, 95% CI [{ci[0]}, {ci[1]}]")
+                print("    The second line is the sharper question. The first is diluted")
+                print("    by cells where nothing happened and nothing was reported.")
+            print(f"    {ins['reading']}")
+
+        print(f"\n  {d['reading']}")
+        return 0
+
     if args.what == "controls":
         print(json.dumps(analysis.control_report(conn, args.campaign, args.tiers), indent=2))
         return 0
@@ -575,6 +647,10 @@ def cmd_export(args) -> int:
 
 # ---------------------------------------------------------------------------
 
+def _fmt(value, places: int = 3) -> str:
+    return "—" if value is None else f"{value:.{places}f}"
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="explorer",
@@ -614,6 +690,16 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--effort", default=None,
                    choices=["low", "medium", "high", "xhigh", "max"])
     r.add_argument("--system", default=None, help="system prompt (recorded with the run)")
+    r.add_argument("--cues", nargs="*", type=int, default=None, metavar="LEVEL",
+                   help="observation-cue severity levels to sweep (0-5). The uncued "
+                        "baseline is always included.")
+    r.add_argument("--cue-arms", nargs="*", default=None,
+                   choices=["treatment", "placebo"],
+                   help="default is both; running treatment alone cannot separate an "
+                        "evaluation effect from a framing effect")
+    r.add_argument("--probes", nargs="*", default=None,
+                   choices=["detect_parallel", "selfreport_followup"],
+                   help="awareness probes to attach to each run")
     r.add_argument("--surface", default="api")
     r.add_argument("--notes", default="")
     r.add_argument("--resume", action="store_true", default=True)
@@ -677,7 +763,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     an = sub.add_parser("analyse", help="run an analysis")
     an.add_argument("what", choices=["twins", "surface", "depth", "language",
-                                     "controls", "reliability", "judge", "drift"])
+                                     "sandbagging", "controls", "reliability",
+                                     "judge", "drift"])
     an.add_argument("--campaign", default=None)
     an.add_argument("--metric", default="capability_retention", choices=list(HUMAN_METRICS))
     an.add_argument("--tiers", default="A", help="provenance tiers to include, e.g. A or AB")

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from . import UNOBSERVABLE
+from .cues import Cue, CueSet
 from .corpus import Corpus, Variant
 from .db import insert, new_id, now_iso, query, query_one, upsert
 from .metrics import extract
@@ -28,6 +29,7 @@ from .providers import Provider
 class RunPlan:
     variant: Variant
     repeat_index: int
+    cue: Cue | None = None
 
 
 def snapshot_corpus(conn: sqlite3.Connection, corpus: Corpus, lint_clean: bool) -> None:
@@ -88,7 +90,9 @@ def create_campaign(conn: sqlite3.Connection, name: str, provider: Provider,
     return cid
 
 
-def plan(corpus: Corpus, n_repeats: int, only: list[str] | None = None) -> list[RunPlan]:
+def plan(corpus: Corpus, n_repeats: int, only: list[str] | None = None,
+         cue_set: CueSet | None = None, cue_levels: list[int] | None = None,
+         cue_arms: list[str] | None = None) -> list[RunPlan]:
     """Order the cells so that a conversational predecessor always runs first."""
     variants = corpus.runnable
     if only:
@@ -119,19 +123,35 @@ def plan(corpus: Corpus, n_repeats: int, only: list[str] | None = None) -> list[
     # variant's predecessor is pulled in regardless, because measuring recovery from a
     # boundary requires that the boundary actually happened.
     #
-    # Repeats outermost: a full sweep completes before the second sweep starts, so an
-    # interrupted campaign yields a balanced design rather than three copies of family 1.
-    return [RunPlan(v, r) for r in range(n_repeats) for v in ordered]
+    selected_cues = (cue_set.select(cue_levels, cue_arms) if cue_set else [None])
+
+    # Repeats outermost, then cues, then prompts: a full sweep across every cue
+    # completes before the second repeat starts. An interrupted campaign then yields a
+    # balanced design rather than every repeat of the baseline and none of the
+    # treatment, which would make the central contrast unavailable.
+    return [
+        RunPlan(v, r, cue)
+        for r in range(n_repeats)
+        for cue in selected_cues
+        for v in ordered
+    ]
 
 
-def existing_cells(conn: sqlite3.Connection, campaign_id: str) -> set[tuple[str, int]]:
-    rows = query(conn, "SELECT prompt_id, repeat_index FROM run WHERE campaign_id = ?", (campaign_id,))
-    return {(r["prompt_id"], r["repeat_index"]) for r in rows}
+def existing_cells(conn: sqlite3.Connection, campaign_id: str) -> set[tuple[str, int, str]]:
+    rows = query(conn, "SELECT prompt_id, repeat_index, cue_id FROM run WHERE campaign_id = ?",
+                 (campaign_id,))
+    return {(r["prompt_id"], r["repeat_index"], r["cue_id"] or "none") for r in rows}
 
 
 def build_messages(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus,
-                   variant: Variant, repeat_index: int) -> list[dict[str, str]]:
-    """Build the message list, replaying a real predecessor exchange for multi-turn variants."""
+                   variant: Variant, repeat_index: int,
+                   cue: Cue | None = None) -> list[dict[str, str]]:
+    """Build the message list, replaying a real predecessor exchange for multi-turn variants.
+
+    An observation cue is composed onto the final user turn only. Putting it on the
+    replayed predecessor as well would change the exchange the recovery variant is
+    recovering from, so the boundary being recovered from would differ by cue.
+    """
     messages: list[dict[str, str]] = []
     if variant.conversation_with:
         parent = corpus.by_id(variant.conversation_with)
@@ -149,18 +169,72 @@ def build_messages(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus,
                 # is recorded in the stored messages so the gap is visible in analysis.
                 "content": (prior or {}).get("response") or "[predecessor response unavailable]",
             })
-    messages.append({"role": "user", "content": variant.text})
+    final = cue.apply(variant.text) if cue is not None else variant.text
+    messages.append({"role": "user", "content": final})
     return messages
+
+
+def run_probes(conn: sqlite3.Connection, provider: Provider, run_id: str,
+               composed_prompt: str, messages: list[dict[str, str]],
+               answer: str | None, kinds: list[str],
+               context: dict[str, Any] | None = None) -> int:
+    """Attach awareness probes to a performance run.
+
+    Parallel probes are independent calls carrying the composed prompt as quoted data,
+    so they cannot contaminate the performance rollout — that independence is the whole
+    reason the two channels can be measured at once. Follow-up probes continue the
+    performance conversation, which is safe only because the answer is already committed.
+    """
+    from . import probes as probe_mod
+
+    written = 0
+    for kind in kinds:
+        spec = probe_mod.PROBES.get(kind)
+        if spec is None:
+            continue
+        if spec.mode == "followup" and not answer:
+            continue   # nothing was said, so there is nothing to ask about
+
+        if spec.mode == "parallel":
+            probe_messages = [{"role": "user", "content": probe_mod.build(kind, composed_prompt)}]
+        else:
+            probe_messages = [
+                *messages,
+                {"role": "assistant", "content": answer or ""},
+                {"role": "user", "content": spec.template},
+            ]
+
+        # The cell's context travels with the probe. A follow-up probe asks about the
+        # response just given, so a provider that cannot see which cue produced it
+        # cannot answer honestly about it — and the self-report channel silently
+        # reports full effort for every cell, which looks like perfect calibration.
+        completion = provider.complete(probe_messages, probe_kind=kind, **(context or {}))
+        insert(conn, "probe", {
+            "id": new_id("prb"), "run_id": run_id, "kind": kind, "mode": spec.mode,
+            "provider": provider.name, "model_id": provider.model,
+            "prompt": probe_messages[-1]["content"],
+            "response": completion.text or None,
+            "parsed": probe_mod.parse(kind, completion.text),
+            "error": completion.error, "latency_ms": completion.latency_ms,
+            "captured_at": now_iso(),
+        })
+        written += 1
+    return written
 
 
 def execute(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus, provider: Provider,
             n_repeats: int, only: list[str] | None = None, surface: str = "api",
             resume: bool = True,
             on_progress: Callable[[int, int, Variant, str], None] | None = None,
-            should_stop: Callable[[], bool] | None = None) -> dict[str, Any]:
-    cells = plan(corpus, n_repeats, only)
+            should_stop: Callable[[], bool] | None = None,
+            cue_set: "CueSet | None" = None, cue_levels: list[int] | None = None,
+            cue_arms: list[str] | None = None,
+            probe_kinds: list[str] | None = None) -> dict[str, Any]:
+    cells = plan(corpus, n_repeats, only, cue_set, cue_levels, cue_arms)
     done = existing_cells(conn, campaign_id) if resume else set()
-    todo = [c for c in cells if (c.variant.id, c.repeat_index) not in done]
+    todo = [c for c in cells
+            if (c.variant.id, c.repeat_index,
+                c.cue.id if c.cue else "none") not in done]
 
     stats: dict[str, Any] = {
         "total": len(cells), "skipped": len(cells) - len(todo),
@@ -174,10 +248,13 @@ def execute(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus, provider
             stats["cancelled"] = True
             break
         v = cell.variant
-        messages = build_messages(conn, campaign_id, corpus, v, cell.repeat_index)
+        cue = cell.cue
+        messages = build_messages(conn, campaign_id, corpus, v, cell.repeat_index, cue)
         completion = provider.complete(
             messages, vector=v.vector, repeat_index=cell.repeat_index,
             family_id=v.family_id, language=v.language,
+            cue_level=(cue.level if cue else 0),
+            cue_arm=(cue.arm if cue else "none"),
         )
 
         run_id = new_id("run")
@@ -193,7 +270,11 @@ def execute(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus, provider
             "error": completion.error, "retries": completion.retries,
             "latency_ms": completion.latency_ms, "finish_reason": completion.finish_reason,
             "stop_details": (completion.raw or {}).get("stop_details", {}),
-            "usage": completion.usage, "prompt_hash": v.prompt_hash,
+            "usage": completion.usage,
+            "cue_id": cue.id if cue else "none",
+            "cue_level": cue.level if cue else 0,
+            "cue_arm": cue.arm if cue else "none",
+            "prompt_hash": v.prompt_hash,
             "match_confidence": 1.0, "captured_at": now_iso(),
             "corpus_version": corpus.version,
         })
@@ -205,6 +286,21 @@ def execute(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus, provider
         # English conventions, "1,292e+20" reads as 1.292e23, and the arm reports a
         # dramatic cross-lingual capability collapse that is entirely a parser artefact.
         store_truth(conn, run_id, v.family_id, completion.text, language=v.language)
+
+        if probe_kinds and not completion.error:
+            try:
+                run_probes(conn, provider, run_id, messages[-1]["content"],
+                           messages, completion.text, probe_kinds,
+                           context={"vector": v.vector,
+                                    "repeat_index": cell.repeat_index,
+                                    "family_id": v.family_id, "language": v.language,
+                                    "cue_level": cue.level if cue else 0,
+                                    "cue_arm": cue.arm if cue else "none"})
+            except Exception as exc:  # noqa: BLE001 — a probe failure must not lose the run
+                stats.setdefault("probe_errors", 0)
+                stats["probe_errors"] += 1
+                if on_progress:
+                    on_progress(i, len(todo), v, f"probe failed: {exc}")
         conn.commit()
 
         if completion.error:

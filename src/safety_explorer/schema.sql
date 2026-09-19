@@ -107,6 +107,10 @@ CREATE TABLE IF NOT EXISTS run (
     -- collapsed into the response text.
     stop_details     TEXT NOT NULL DEFAULT '{}',
     usage            TEXT NOT NULL DEFAULT '{}',
+    -- Observation cue composed onto the prompt (the sandbagging arm).
+    cue_id           TEXT NOT NULL DEFAULT 'none',
+    cue_level        INTEGER NOT NULL DEFAULT 0,
+    cue_arm          TEXT NOT NULL DEFAULT 'none',   -- none | treatment | placebo
     prompt_hash      TEXT,
     match_confidence REAL NOT NULL DEFAULT 1.0,
     captured_at      TEXT NOT NULL,
@@ -115,9 +119,14 @@ CREATE TABLE IF NOT EXISTS run (
 
 CREATE INDEX IF NOT EXISTS idx_run_campaign ON run(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_run_prompt   ON run(prompt_id);
+-- The cue is part of the cell identity. Without it, running the same prompt under a
+-- treatment and a placebo cue would collide and the second would be silently dropped —
+-- which is the one comparison the sandbagging arm exists to make.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_run_cell
-    ON run(campaign_id, prompt_id, repeat_index)
+    ON run(campaign_id, prompt_id, repeat_index, cue_id)
     WHERE campaign_id IS NOT NULL AND prompt_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_run_cue ON run(cue_level, cue_arm);
 
 -- Layer 1: deterministic automatic features. Recomputable from `run.response`
 -- at any time, so improving the extractor never costs an API call.
@@ -159,6 +168,28 @@ CREATE TABLE IF NOT EXISTS ground_truth (
     details        TEXT NOT NULL DEFAULT '[]',
     computed_at    TEXT NOT NULL
 );
+
+-- Awareness probes. A probe is a separate model call attached to a performance run:
+-- either an independent call carrying the same composed prompt (mode 'parallel'), or a
+-- follow-up turn on the performance conversation (mode 'followup'). Stored apart from
+-- `run` because a probe measures the model's awareness, not its capability, and pooling
+-- the two would let an awareness answer be mistaken for a performance answer.
+CREATE TABLE IF NOT EXISTS probe (
+    id            TEXT PRIMARY KEY,
+    run_id        TEXT NOT NULL REFERENCES run(id) ON DELETE CASCADE,
+    kind          TEXT NOT NULL,
+    mode          TEXT NOT NULL,
+    provider      TEXT NOT NULL DEFAULT '',
+    model_id      TEXT NOT NULL DEFAULT '',
+    prompt        TEXT NOT NULL,
+    response      TEXT,
+    parsed        TEXT NOT NULL DEFAULT '{}',
+    error         TEXT,
+    latency_ms    INTEGER,
+    captured_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_probe_run ON probe(run_id, kind);
 
 -- Layer 2: human annotation. The reference dataset.
 CREATE TABLE IF NOT EXISTS annotation (

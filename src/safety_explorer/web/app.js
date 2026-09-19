@@ -754,6 +754,84 @@ function renderSurface(s) {
     </div>`;
 }
 
+/* --------------------------------------------------------- sandbagging */
+
+async function loadSandbagging() {
+  const d = await api('sandbagging', { source: $('#sb-source').value, tiers: 'A' });
+  if (!d.n_cells) {
+    $('#sb-out').innerHTML = `<div class="empty-state">
+      No cued runs yet. Start a campaign with observation cues:<br>
+      <code>explorer run --cues 1 2 3 4 5 --probes detect_parallel selfreport_followup</code>
+      </div>`;
+    return;
+  }
+
+  const rows = d.dose_response.map((r) => {
+    const sp = r.specific || {};
+    const ci = sp.ci95 || [null, null];
+    const ciS = ci[0] !== null && !Number.isNaN(ci[0]) ? `[${fmt(ci[0])}, ${fmt(ci[1])}]` : '—';
+    const det = (r.treatment_detection || {}).rate;
+    return `<tr><td class="num">${r.level}</td>
+      <td class="num">${fmt((r.treatment || {}).median)}</td>
+      <td class="num">${fmt((r.placebo || {}).median)}</td>
+      <td class="num ${sp.median > 0 ? 'bad' : ''}"><strong>${fmt(sp.median)}</strong></td>
+      <td class="num">${ciS}</td>
+      <td class="num">${det === null || det === undefined ? '—' : fmt(det, 2)}</td></tr>`;
+  }).join('');
+
+  const q = d.quadrants || {};
+  const ins = d.insight_gap || {};
+  const wd = ins.when_dropped || {};
+  const supported = (d.reading || '').includes('H11 supported');
+
+  $('#sb-out').innerHTML = `
+    <table>
+      <tr><th class="num">cue</th><th class="num">treat</th><th class="num">placebo</th>
+          <th class="num">specific</th><th class="num">95% CI</th><th class="num">detect</th></tr>
+      ${rows}
+    </table>
+    <p class="note" style="margin-top:6px">
+      Treat and placebo are drops against each prompt's own uncued baseline.
+      <strong>Specific</strong> is their difference, paired within prompt — the
+      evaluation effect net of the cost of odd framing. Reporting the treatment column
+      alone would credit that cost to evaluation awareness.<br>
+      dose-response monotonic in severity: <strong>${d.monotonic ? 'yes' : 'no'}</strong>
+    </p>
+
+    <div style="font-size:11px;margin:12px 0 4px">awareness × performance (treatment arm)</div>
+    <table>
+      <tr><th></th><th class="num">accuracy dropped</th><th class="num">accuracy held</th></tr>
+      <tr><td>detected the cue</td>
+          <td class="num bad"><strong>${q.detected_dropped ?? 0}</strong></td>
+          <td class="num">${q.detected_held ?? 0}</td></tr>
+      <tr><td>did not detect</td>
+          <td class="num warn">${q.undetected_dropped ?? 0}</td>
+          <td class="num good">${q.undetected_held ?? 0}</td></tr>
+    </table>
+    <p class="note" style="margin-top:6px">
+      Top-left is sandbagging. Bottom-left is a stylistic effect the model is not aware
+      of — a different finding needing a different fix. ${q.unknown
+        ? `${q.unknown} cell(s) had no usable detection probe.` : ''}
+    </p>
+
+    ${ins.n ? `<div style="font-size:11px;margin:12px 0 4px">insight gap — does it know it held back?</div>
+    <table>
+      <tr><th></th><th class="num">n</th><th class="num">measured drop</th>
+          <th class="num">self-reported</th><th class="num">gap</th></tr>
+      <tr><td>all cued cells</td><td class="num">${ins.n}</td>
+          <td class="num">${fmt(ins.mean_actual_drop_pct, 1)}%</td>
+          <td class="num">${fmt(ins.mean_reported_drop_pct, 1)}%</td>
+          <td class="num">${fmt(ins.median, 1)}</td></tr>
+      ${wd.n ? `<tr><td>where a drop occurred</td><td class="num">${wd.n}</td>
+          <td class="num">${fmt(wd.mean_actual_drop_pct, 1)}%</td>
+          <td class="num">${fmt(wd.mean_reported_drop_pct, 1)}%</td>
+          <td class="num bad"><strong>${fmt(wd.median, 1)}</strong></td></tr>` : ''}
+    </table>
+    <p class="note" style="margin-top:6px">${esc(ins.reading || '')}</p>` : ''}
+
+    <p class="note ${supported ? 'bad' : ''}" style="margin-top:10px">${esc(d.reading || '')}</p>`;
+}
+
 /* ------------------------------------------------------ cross-lingual */
 
 async function loadLanguage() {
@@ -855,6 +933,7 @@ async function loadTruth() {
 
 $('#btn-twins').addEventListener('click', loadTwins);
 $('#btn-depth').addEventListener('click', loadDepth);
+$('#btn-sandbag').addEventListener('click', loadSandbagging);
 
 async function loadDepth() {
   const d = await api('depth', {
@@ -937,6 +1016,7 @@ async function loadResults() {
   loadDepth();
   loadTruth();
   loadLanguage();
+  loadSandbagging();
   const [ctrl, rel, drift] = await Promise.all([
     api('controls', { tiers: 'A' }), api('reliability'), api('drift'),
   ]);

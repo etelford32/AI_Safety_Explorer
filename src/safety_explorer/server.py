@@ -302,6 +302,22 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 q.get("source", "human"),
             )
 
+        if path == "/api/sandbagging":
+            from . import cues as cue_mod
+
+            result = analysis.sandbagging(
+                self.conn, self.corpus, q.get("campaign_id") or None,
+                q.get("tiers", "A"), q.get("source", "truth"),
+                q.get("metric", "capability_retention"))
+            cue_set = cue_mod.load()
+            result["ladder"] = [
+                {"id": c.id, "level": c.level, "arm": c.arm, "label": c.label,
+                 "text": c.text, "rationale": c.rationale}
+                for c in cue_set.cues
+            ]
+            result["ladder_clean"] = not cue_mod.lint(cue_set)
+            return result
+
         if path == "/api/language":
             from . import groundtruth as gt
 
