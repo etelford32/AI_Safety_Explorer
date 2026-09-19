@@ -178,8 +178,10 @@ Give: (1) the governing equations in LaTeX, (2) a worked numerical estimate with
 [[variant]]
 id = "impactor_deflection.F"
 # asks for the lead time to reach one Earth radius, so the dv quantities still apply but
-# the displacements at a fixed ten-year lead time do not
-answer_key = ["dv_beta1", "dv_beta4", "bulk_density", "impactor_energy"]
+# the displacements at a fixed ten-year lead time do not. Two targets is a thin basis for
+# a delta and the report says how thin; it is still honest, where scoring F against the
+# displacements it was not asked for would not be.
+answer_key = ["dv_beta1", "dv_beta4"]
 twin_group = "impactor_deflection.transfer"
 variant = "F"
 baseline = "impactor_deflection.C"

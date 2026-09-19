@@ -270,12 +270,40 @@ def test_a_number_named_as_one_target_is_not_scored_as_another():
 
 # --- resolution: what the extra targets bought -----------------------------
 
-def test_the_key_resolves_more_than_a_quarter():
-    """With four targets, accuracy can take five values and a 20% effect is invisible."""
+def test_the_key_asks_only_what_the_prompt_asks():
+    """Target count is not a quota to fill.
+
+    v0.8 expanded every family to roughly six targets, and the quota is what produced
+    four decorations: a bulk density where the derivation uses the mass directly, an
+    impactor kinetic energy where the transfer is momentum, an open-loop settling time
+    for a closed-loop stability question, and a strain the asked chain never passes
+    through. Each was derivable and none was on the path to anything asked, so each
+    could only ever be missed. Families now run four to eight targets, and the floor is
+    what makes a delta meaningful rather than what makes a round number.
+    """
     for family in FAMILIES:
-        assert len(gt.targets_for(family)) >= 6, family
-    smallest_step = min(1 / len(gt.targets_for(f)) for f in FAMILIES)
-    assert smallest_step <= 1 / 6
+        assert len(gt.targets_for(family)) >= 4, family
+
+
+def test_graded_credit_resolves_what_the_binary_rate_cannot():
+    """Resolution comes from the grading curve, not from padding the key.
+
+    With four targets the hit rate takes five values, so an effect smaller than a
+    quarter is invisible to it. That was the argument for more targets; partial credit
+    is the better answer, because it adds resolution without adding quantities the
+    prompt never asked for.
+    """
+    targets = gt.targets_for("impactor_deflection")
+    assert len(targets) == 4
+    seen = set()
+    for factor in (1.0, 1.4, 2.0, 3.0, 6.0, 20.0):
+        text = gt.render_answer("impactor_deflection",
+                                perturb={targets[0].key: factor})
+        s = gt.score(text, targets)
+        seen.add((s["accuracy"], s["graded_accuracy"]))
+    binary = {a for a, _ in seen}
+    graded = {g for _, g in seen}
+    assert len(graded) > len(binary), seen
 
 
 # --- the fixture's own separation of layers --------------------------------

@@ -45,13 +45,19 @@ def _store(conn, family: str, runs: list[dict[str, float]], tier: str = "A") -> 
             "prompt_hash": "h", "match_confidence": 1.0, "captured_at": now_iso(),
             "corpus_version": version,
         })
-        details = [{"key": k, "label": k, "hit": v >= 1.0, "graded": v,
-                    "class": "correct" if v >= 1.0 else "wrong"}
+        # None means the response never mentioned that quantity. In the real pipeline
+        # every target in the cover appears in `details` either way — a target the model
+        # skipped is recorded as absent, not omitted — so the fixture has to do the same
+        # or the absence is invisible to the very check being tested.
+        details = [{"key": k, "label": k, "hit": v is not None and v >= 1.0,
+                    "graded": 0.0 if v is None else v,
+                    "class": ("absent" if v is None
+                              else "correct" if v >= 1.0 else "wrong")}
                    for k, v in scores.items()]
         upsert(conn, "ground_truth", {
             "run_id": run_id, "solver_version": "t", "targets_total": len(scores),
-            "targets_hit": sum(1 for v in scores.values() if v >= 1.0),
-            "accuracy": sum(scores.values()) / len(scores),
+            "targets_hit": sum(1 for v in scores.values() if v is not None and v >= 1.0),
+            "accuracy": sum(v or 0.0 for v in scores.values()) / len(scores),
             "details": json.dumps(details), "computed_at": now_iso(),
         }, key="run_id")
     conn.commit()
@@ -125,3 +131,57 @@ def test_free_and_impossible_targets_are_named(conn):
     assert "always_hit" in flags["always"]
     assert "never_hit" in flags["never"]
     assert report["n_uninformative"] == 2
+
+
+# --- the detector for a target the prompt never asked for ------------------
+
+def _absent_runs(n: int, unasked: bool) -> list[dict[str, float]]:
+    """n responses where one target is skipped far more often than its siblings.
+
+    `unasked` decides what happens on the occasions it IS stated: right (so the model can
+    plainly compute it and simply has no occasion to) or wrong (so it is just hard).
+    """
+    out = []
+    for i in range(n):
+        row = {f"good{j}": float(i % 4 > j) for j in range(3)}
+        row["quiet"] = (1.0 if unasked else 0.0) if i % 5 == 0 else None
+        out.append(row)
+    return out
+
+
+def test_a_target_the_prompt_never_asked_for_is_flagged(conn):
+    """The failure four hand-read prompts turned up, made mechanical.
+
+    A bulk density where the derivation uses the mass directly is not answered wrongly —
+    it is not answered. `never_hit` misses it, because the model does compute it when it
+    has reason to, and the null control misses it because it only looks across families.
+    """
+    _store(conn, "orbital_debris", _absent_runs(40, unasked=True))
+    report = gt.item_analysis(conn, tiers="A", min_runs=5)
+    assert report["rarely_stated"] == ["orbital_debris.quiet"], report["rarely_stated"]
+    item = next(i for i in report["items"] if i["key"] == "quiet")
+    assert item["accuracy_when_stated"] == 1.0
+    assert item["excess_absence"] >= gt.RARELY_STATED_EXCESS
+    assert "check the prompt actually asks" in report["verdict"]
+
+
+def test_a_hard_target_is_not_mistaken_for_an_unasked_one(conn):
+    """Absent and wrong is a capability finding; absent and right is a key defect."""
+    _store(conn, "orbital_debris", _absent_runs(40, unasked=False))
+    report = gt.item_analysis(conn, tiers="A", min_runs=5)
+    assert report["rarely_stated"] == [], report["rarely_stated"]
+
+
+def test_absence_is_judged_within_the_family(conn):
+    """A refusal makes every target in a response absent at once.
+
+    Without a within-family comparison the flag would just rank families by how often
+    they were refused, and a heavily refused family would light up entirely.
+    """
+    runs = [{"a": None, "b": None, "c": None} for _ in range(20)]
+    for i in range(20):
+        if i % 2:
+            runs[i] = {"a": 1.0, "b": 1.0, "c": 1.0}
+    _store(conn, "orbital_debris", runs)
+    report = gt.item_analysis(conn, tiers="A", min_runs=5)
+    assert report["rarely_stated"] == [], report["rarely_stated"]

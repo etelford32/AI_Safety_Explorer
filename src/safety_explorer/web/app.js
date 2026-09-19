@@ -927,6 +927,8 @@ async function loadTruth() {
       <td class="num">${i.n}</td><td class="num">${fmt(i.hit_rate)}</td>
       <td class="num">${fmt(i.mean_graded)}</td>
       <td class="num">${i.discrimination === null ? '—' : fmt(i.discrimination)}</td>
+      <td class="num">${fmt(i.absent_rate)}</td>
+      <td class="num">${i.accuracy_when_stated === null ? '—' : fmt(i.accuracy_when_stated)}</td>
       <td class="note ${cls}">${esc((i.flags || []).join(', ') || '—')}</td></tr>`;
   }).join('');
 
@@ -1001,11 +1003,14 @@ async function loadTruth() {
       <div class="note" style="margin-bottom:4px">item analysis — is the key itself any
         good? ${flagged.length ? `${flagged.length} flagged` : 'nothing flagged'}</div>
       <table><tr><th>family</th><th>target</th><th class="num">n</th><th class="num">hit</th>
-        <th class="num">graded</th><th class="num">disc</th><th>flags</th></tr>${itemRows}</table>
+        <th class="num">graded</th><th class="num">disc</th><th class="num">absent</th>
+        <th class="num">if said</th><th>flags</th></tr>${itemRows}</table>
       <p class="note">${esc(t.items.verdict || '')} A target hit more often as the rest of
         the answer gets worse (negative <em>disc</em>) is matching numbers rather than
         answers — a defect in the key that the null control cannot see, because it only
-        looks across families.</p>
+        looks across families. A target skipped far more than its siblings yet right
+        whenever it <em>is</em> stated (<em>absent</em> high, <em>if said</em> high) is one
+        the prompt never asked for.</p>
     </div>` : ''}
     ${cov.length ? `<div style="margin-top:10px">
       <div class="note" style="margin-bottom:4px">variants scored on less than the whole

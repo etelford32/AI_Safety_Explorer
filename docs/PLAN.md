@@ -397,10 +397,10 @@ draw.
 | **0d** | `consistency` | Do the model's own numbers agree with each other? No answer key required. |
 | **0e** | `item_analysis` | Is the answer key itself any good? |
 
-**The corpus grew from 23 targets to 50**, six or more per family, which is what the
-finer readings need to be worth computing. Every family now also carries two to six
-**relations** — identities its outputs must satisfy, drawn from the prompt's own stated
-parameters.
+**The corpus grew from 23 targets to 46** (50 at first — see the quota note below, which
+removed four), which is what the finer readings need to be worth computing. Every family
+also carries two to six **relations** — identities its outputs must satisfy, drawn from
+the prompt's own stated parameters.
 
 **0b, graded credit, has its own control.** Partial credit that flatters a wrong answer
 would undo the single thing this arm exists to do. The decay is deliberately steep — a
@@ -436,10 +436,12 @@ Two rules keep it honest, and both were learned the hard way:
 Its validation mirrors `calibrate()`, in both directions. `consistency_floor()` checks
 that every identity holds on a correct answer in all four study languages — **0.00 false
 incoherence** — and that moving any constrained quantity by a factor of ten is caught —
-**39 of 39**. Mis-reading a figure can only ever manufacture incoherence, never conceal
-it, so measured inconsistency is a *lower bound*. The report also names the 11 targets no
-relation constrains, because that is a gap in the relation set rather than a result about
-any model.
+**46 of 46**, every target in the corpus. Mis-reading a figure can only ever manufacture
+incoherence, never conceal it, so measured inconsistency is a *lower bound*. The report
+also names any target no relation constrains — a gap in the relation set rather than a
+result about any model. That count started at eleven and is now zero, which is what makes
+the 46-of-46 figure mean anything: a perturbation to an unconstrained target is not
+missed, it is never even attempted.
 
 **0e, item analysis, checks the instrument rather than the model.** Every other layer
 assumes the answer key is sound. This one asks whether each target actually carries
@@ -509,6 +511,53 @@ It also emitted one kind of error, a fixed hundredfold miss, so `graded_accuracy
 fails a figure as a near miss, a unit slip or plain arithmetic in a documented 40/20/40
 mix, placed relative to each target's own band — and the test suite requires the scorer
 to recover that mix exactly.
+
+### [ADD] Target count is not a quota (v0.8.2)
+
+v0.8 said "expand every family to roughly six targets". That sentence is the bug. A key
+is as long as the question is, and padding it to a round number produced four targets
+that no prompt asks for and no asked derivation passes through:
+
+| removed | why it was there | why it is gone |
+|---|---|---|
+| `bulk_density` | derivable from the stated mass and diameter | `dv = beta*m*u/M` uses the mass directly; density is a dead end |
+| `impactor_energy` | a natural-looking intermediate | the transfer is momentum, not energy |
+| `settling_time` | a standard control quantity | it is the OPEN-loop response; the question is closed-loop stability |
+| `buckling_strain` | derivable as `sigma_cr/E` | the asked chain runs stress → slenderness → inelastic correction and never touches strain |
+
+Each was derivable, and each could only ever be missed — so each shifted every score in
+its family by a constant and shrank the scale the rest of the key worked in. The corpus
+is now 46 targets over families of four to eight, each one either asked by the prompt or
+on the path to something asked.
+
+**The resolution argument that motivated the quota was already answered.** With four
+targets the hit rate takes five values, so an effect smaller than a quarter is invisible
+to it — that was the case for more targets. Graded credit is the better answer to it:
+it adds resolution without adding quantities the prompt never asked for. The test suite
+now asserts that directly, on the four-target family.
+
+One target was kept and demoted rather than removed. The network family's `critical_p`
+is an operational intervention where the prompt asks for a structural one — but the
+prompt asks which intervention *most* reduces the threshold, and answering "most" means
+computing both branches. It carries half weight, and the note says why.
+
+### [ADD] Reading prompts by hand does not scale (v0.8.2)
+
+Four decorations were found by reading eight prompts against fifty targets. That is not
+a method. The failure has a signature, and `item_analysis` now looks for it:
+
+> **`rarely_stated`** — a target skipped far more often than its siblings, and *right
+> whenever it is not skipped*.
+
+Absent and wrong is a capability finding. Absent and right is a key defect: the model can
+plainly compute the quantity and simply has no occasion to, which is what a question the
+prompt never asked looks like from the outside. Neither existing check sees it — the null
+control only looks across families, and `never_hit` misses it precisely because the model
+*does* get it right when it has reason to state it.
+
+Absence is measured as **excess over the family's own median**, because a refusal makes
+every target in a response absent at once. An absolute threshold would rank families by
+how often they were refused rather than by how well their targets were chosen.
 
 ### [ADD] The discrimination flag needed a sample size (v0.8.1)
 

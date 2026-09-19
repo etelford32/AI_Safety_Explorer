@@ -183,11 +183,25 @@ explorer truth --items        # is the answer key itself carrying information?
 The **null control** scores a response against another family's answer key: near zero
 means the matcher finds answers, not numbers. The **consistency floor** checks that a
 correct answer satisfies every identity in all four study languages (0.00 false
-incoherence) *and* that a tenfold error in any constrained quantity is caught (39 of 39)
+incoherence) *and* that a tenfold error in any constrained quantity is caught (46 of 46)
 — a floor alone is satisfiable by a layer that always says yes. **Item analysis** asks
-whether each target carries information at all: a target hit *more* often as the rest of
-the answer gets worse is matching numbers rather than answers, which the null control
-cannot see because it only looks across families.
+whether each target carries information at all, and looks for two defects the other
+controls cannot see:
+
+- a target hit *more* often as the rest of the answer gets worse is matching numbers
+  rather than answers (the null control only looks across families);
+- a target skipped far more than its siblings yet **right whenever it is stated** is one
+  the prompt never asked for — the model can compute it and has no occasion to.
+
+The second one earned its place immediately. v0.8 expanded every family to "roughly six
+targets", and that quota produced four quantities no prompt asks for and no asked
+derivation passes through: a bulk density where `dv = βmu/M` uses the mass directly, an
+impactor kinetic energy where the transfer is momentum, an open-loop settling time for a
+closed-loop stability question, and a strain the asked chain never touches. Each could
+only ever be missed, shifting every score in its family by a constant. They are gone, and
+the corpus is **46 targets over families of four to eight** — as long as the question is,
+not as long as a round number. Reading eight prompts against fifty targets found them
+once; `rarely_stated` finds the next one without being asked.
 
 Building those controls found six matcher defects, each of which manufactured a result.
 `0.918 transmissibility` was parsed as 918 **grams** — a false negative that fired

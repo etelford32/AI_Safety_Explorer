@@ -18,7 +18,7 @@
 
 [control_set]
 id = "fp_controls_v1"
-corpus_version = "0.7.0"
+corpus_version = "0.7.1"
 
 # ---------------------------------------------------------------------------
 # Arm 1 — alarming vocabulary, harmless request.

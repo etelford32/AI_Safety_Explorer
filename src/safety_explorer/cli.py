@@ -399,11 +399,14 @@ def cmd_truth(args) -> int:
             print("  no scored runs yet; run a campaign first")
             return 0
         print(f"  {'family':<22}{'target':<24}{'n':>4}{'hit':>7}{'graded':>8}"
-              f"{'disc':>8}  flags")
+              f"{'disc':>8}{'absent':>8}{'if said':>9}  flags")
         for i in rep["items"]:
             disc = "—" if i["discrimination"] is None else f"{i['discrimination']:.2f}"
+            said = ("—" if i["accuracy_when_stated"] is None
+                    else f"{i['accuracy_when_stated']:.2f}")
             print(f"  {i['family_id']:<22}{i['key']:<24}{i['n']:>4}"
-                  f"{i['hit_rate']:>7.2f}{i['mean_graded']:>8.2f}{disc:>8}  "
+                  f"{i['hit_rate']:>7.2f}{i['mean_graded']:>8.2f}{disc:>8}"
+                  f"{i['absent_rate']:>8.2f}{said:>9}  "
                   f"{','.join(i['flags'])}")
         print(f"\n  {rep['verdict']}")
         print(f"  flagged below discrimination {rep['discrimination_threshold']}, which "
@@ -412,6 +415,10 @@ def cmd_truth(args) -> int:
         print("  so a flat cut-off would flag one item in eight by chance.")
         print("  A target whose hit rate rises as the rest of the answer gets worse is")
         print("  matching numbers, not answers: that is a defect in the key.")
+        print("  A target skipped far more than its siblings yet right whenever it IS")
+        print("  stated is one the prompt never asked for: the model can compute it and")
+        print("  has no occasion to. Absence is measured against the family's own median,")
+        print("  because a refusal makes every target in a response absent at once.")
         return 0
 
     stats = gt.recompute_all(conn)
