@@ -731,6 +731,35 @@ def cmd_analyse(args) -> int:
     if args.what == "reliability":
         print(json.dumps(analysis.reliability(conn, args.annotator), indent=2))
         return 0
+    if args.what == "coanalysis":
+        from . import coanalyse
+        cov = coanalyse.coverage(conn)
+        rep = coanalyse.agreement(conn)
+        print(f"span co-analysis — {cov['n_human']} label(s) by hand "
+              f"({cov['n_human_blinded']} blind), {cov['n_model']} proposal(s), "
+              f"{cov['runs_touched']} conversation(s)\n")
+        print(f"  {'':10}{'pairs':>7}{'exact':>8}{'alpha':>8}")
+        for name in ("blinded", "unblinded"):
+            b = rep["by_blinding"][name]
+            exact = "—" if b["exact"] is None else f"{b['exact']:.3f}"
+            alpha = "—" if b["alpha"] is None else f"{b['alpha']:.3f}"
+            print(f"  {name:10}{b['n']:>7}{exact:>8}{alpha:>8}")
+        blind = rep["by_blinding"]["blinded"]
+        rows = [(k, v) for k, v in blind["per_label"].items()
+                if v["n_human"] or v["n_model"]]
+        if rows:
+            print(f"\n  {'label':<18}{'n':>4}{'recall':>8}{'precision':>11}")
+            for k, v in rows:
+                rc = "—" if v["recall"] is None else f"{v['recall']:.2f}"
+                pr = "—" if v["precision"] is None else f"{v['precision']:.2f}"
+                print(f"  {k:<18}{v['n_human']:>4}{rc:>8}{pr:>11}")
+        print(f"\n  {rep['verdict']}")
+        print("  Only the blind row says anything about the proposer. An analyst shown")
+        print("  a proposal before judging agrees with it more often, and that is")
+        print("  anchoring, not accuracy — so the two are reported apart and never")
+        print("  pooled.")
+        return 0
+
     if args.what == "judge":
         print(json.dumps(analysis.judge_agreement(conn, args.metric), indent=2))
         return 0
@@ -891,7 +920,7 @@ def build_parser() -> argparse.ArgumentParser:
     an = sub.add_parser("analyse", help="run an analysis")
     an.add_argument("what", choices=["twins", "surface", "depth", "language",
                                      "sandbagging", "controls", "reliability",
-                                     "judge", "drift"])
+                                     "judge", "coanalysis", "drift"])
     an.add_argument("--campaign", default=None)
     an.add_argument("--metric", default="capability_retention", choices=list(HUMAN_METRICS))
     an.add_argument("--tiers", default="A", help="provenance tiers to include, e.g. A or AB")

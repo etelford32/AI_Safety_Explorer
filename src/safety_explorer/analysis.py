@@ -108,11 +108,20 @@ def holm_bonferroni(pvalues: dict[str, float], alpha: float = 0.05) -> dict[str,
     return out
 
 
-def krippendorff_alpha(units: dict[Any, list[float]], levels: Sequence[float] | None = None) -> float:
-    """Krippendorff's alpha with the ordinal difference function.
+def krippendorff_alpha(units: dict[Any, list[float]], levels: Sequence[float] | None = None,
+                       nominal: bool = False) -> float:
+    """Krippendorff's alpha, ordinal by default and nominal on request.
 
-    `units` maps a unit (a run) to the ratings it received. Units with fewer than two
-    ratings contribute nothing, which is correct: they carry no agreement information.
+    `units` maps a unit (a run, or a span) to the ratings it received. Units with fewer
+    than two ratings contribute nothing, which is correct: they carry no agreement
+    information.
+
+    **The difference function has to match the scale.** The human metrics are ordinal —
+    a 4 against a 5 is a smaller disagreement than a 1 against a 5, and the ordinal
+    delta says so. Span labels are *nominal*: `capability`, `refusal` and `hedge` have
+    no order, and scoring them ordinally would make a disagreement's size depend on
+    where each label happened to sit in a tuple. That is not a subtle bias, it is an
+    arbitrary one, so nominal work passes `nominal=True` and gets the 0/1 delta.
 
     Returns nan when there is nothing to estimate, rather than a misleading 0.0.
     """
@@ -145,13 +154,18 @@ def krippendorff_alpha(units: dict[Any, list[float]], levels: Sequence[float] | 
         s = sum(n_c[g] for g in range(lo, hi + 1)) - (n_c[c] + n_c[k]) / 2
         return s * s
 
+    def nominal_delta_sq(c: int, k: int) -> float:
+        return 0.0 if c == k else 1.0
+
+    delta_sq = nominal_delta_sq if nominal else ordinal_delta_sq
+
     d_o = sum(
-        coincidence[c][k] * ordinal_delta_sq(c, k)
+        coincidence[c][k] * delta_sq(c, k)
         for c in range(size) for k in range(size)
     ) / n_total
 
     d_e = sum(
-        n_c[c] * n_c[k] * ordinal_delta_sq(c, k)
+        n_c[c] * n_c[k] * delta_sq(c, k)
         for c in range(size) for k in range(size)
     ) / (n_total * (n_total - 1))
 

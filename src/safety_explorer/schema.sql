@@ -262,6 +262,39 @@ CREATE TABLE IF NOT EXISTS judgement (
 
 CREATE INDEX IF NOT EXISTS idx_judgement_run ON judgement(run_id);
 
+-- Span-level co-analysis. One row per (span, source, author), so a model's proposal and
+-- a human's adjudication of the same span sit side by side and can be compared rather
+-- than one overwriting the other.
+--
+-- `blinded` records whether the human labelled the span BEFORE seeing the model's
+-- proposal. That single column is what separates measuring agreement from measuring
+-- anchoring: a human shown a proposal first will agree with it more often, and a
+-- co-analysis that did not record which happened could not tell the two apart.
+--
+-- `span_hash` and `segmenter_version` travel with every label because a label points at
+-- an index, and an index means nothing if the segmenter is later changed. A label whose
+-- hash no longer matches the span at that index is reported as stale, never silently
+-- re-pointed at different words.
+CREATE TABLE IF NOT EXISTS span_label (
+    id                TEXT PRIMARY KEY,
+    run_id            TEXT NOT NULL REFERENCES run(id) ON DELETE CASCADE,
+    span_index        INTEGER NOT NULL,
+    span_hash         TEXT NOT NULL,
+    segmenter_version TEXT NOT NULL,
+    source            TEXT NOT NULL,          -- human | model
+    author            TEXT NOT NULL,          -- annotator name, or the judge model id
+    label             TEXT NOT NULL,
+    confidence        REAL,                   -- model proposals only
+    rationale         TEXT NOT NULL DEFAULT '',
+    quote             TEXT NOT NULL DEFAULT '',
+    blinded           INTEGER NOT NULL DEFAULT 1,
+    created_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_span_label_run ON span_label(run_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_span_label_cell
+    ON span_label(run_id, span_index, source, author);
+
 -- Blinding bookkeeping: which runs have been served to which annotator, in what
 -- order, so the queue is reproducible and re-serves are deliberate.
 CREATE TABLE IF NOT EXISTS serve_log (

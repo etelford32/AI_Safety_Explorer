@@ -650,6 +650,65 @@ re-serves a **20% random subset** for a second blind pass after a cooling-off pe
 and computes **intra-rater** agreement (Krippendorff's α, ordinal). When a second
 annotator exists, the same machinery gives inter-rater α with no code changes.
 
+### [ADD] Layer 2.5 — span-level co-analysis (v0.9)
+
+Layer 2 is the binding constraint on this whole instrument. Sixty responses is a long
+evening, and every arm added since has multiplied what there is to annotate. Layer 3 was
+meant to relieve that and has sat unused since v0.1 — a table and an agreement statistic
+with nothing writing to them — because a judge that scores a whole response returns a
+number whose only audit is re-reading the response yourself, which is the work it was
+supposed to save.
+
+The unit was the problem, not the judge. A run is re-presented as what it actually is: a
+short conversation, with the assistant's turn cut into **spans** that carry the evidence
+already computed about them — the refusal phrase that fired, the figure that matched
+`critical_population` and its error class, whether the span remarks on being observed. A
+proposal attached to one span, with a quote and a reason, is checkable at a glance.
+
+This also answers a question no run-level measure can. A reply that works three
+sub-questions and declines the fourth has one refusal signal and one capability score,
+and neither says *which part was which*.
+
+**The blinding rule is the design, not a setting.** An analyst shown a proposal before
+judging agrees with it more often, and that agreement measures anchoring, not accuracy.
+So:
+
+- the proposal stays hidden until the span has been labelled;
+- `blinded` is stored per label, and recorded as *observed* rather than intended — a
+  proposal already on screen makes the label unblind whatever the checkbox says;
+- blind and unblind agreement are reported apart and **never pooled**;
+- the gap between them is only narrated once both sides carry 20 pairs, because a
+  twenty-point difference on eight against nine is noise.
+
+**Span labels are nominal**, so agreement uses the nominal difference function.
+`capability`, `refusal` and `hedge` have no order, and the ordinal delta would make a
+disagreement's size depend on where a label sat in a tuple — on the same data the two
+estimates differ by roughly half an alpha. `krippendorff_alpha` grew a `nominal` flag
+for this; passing the ordinal one would have been an arbitrary bias, not a subtle one.
+
+**Identity survives re-segmentation.** A label points at an index, which means nothing
+once the segmenter changes, so every label stores a hash of the text it was made
+against. A label whose hash no longer matches is reported stale and excluded from
+agreement, never re-pointed at words its author never read.
+
+**A follow-up probe is a turn; a parallel probe is not.** The self-report probe is a real
+second turn in this conversation and is shown as one. The detection probe is a *different*
+conversation that quotes this one, and is shown beside the exchange — folding it in would
+put words in the model's mouth that it never said here.
+
+**What it caught on the first response it rendered.** A span of pure refusal came up with
+no refusal chip. `REFUSAL_PATTERNS` opened with `\bi (?:can't|cannot|won't|am not able
+to|'m not able to)\b`, which requires a literal space after "i" — so the contraction
+branch was dead code, and *"I'm not able to help with this one"* scored zero refusal hits
+while *"I am not able to help"* scored one. The mock's own refusal text opens exactly that
+way, so `refusal_signal` had been dead for every refusal in the fixture and for the most
+common phrasing a real model uses. `EXTRACTOR_VERSION` moves to 2; features recompute
+from stored responses, so the fix costs a re-derivation and no API call.
+
+That find is the argument for the view. A whole-response refusal signal of 0.0 reads as a
+quiet response and invites no scrutiny. A span of pure refusal displaying no refusal is
+obviously wrong to anyone looking at it.
+
 ### Layer 3 — LLM evaluator (optional, never authoritative)
 
 An LLM judge is itself an experimental subject with its own safety preferences. It

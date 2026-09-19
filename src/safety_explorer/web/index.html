@@ -21,6 +21,7 @@
     <button data-view="collect">Collect</button>
     <button data-view="compare">Compare</button>
     <button data-view="annotate">Annotate</button>
+    <button data-view="coanalyse">Co-analyse</button>
     <button data-view="surface">Surface</button>
     <button data-view="results">Results</button>
   </nav>
@@ -268,6 +269,57 @@
     </div>
     <div>
       <div id="ann-body"><div class="panel"><div class="empty-state">Press start.</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ CO-ANALYSE ============================ -->
+<section id="v-coanalyse" class="view">
+  <div class="cols">
+    <div>
+      <div class="panel">
+        <h2>Session</h2>
+        <div style="display:grid;gap:8px">
+          <label class="check">analyst
+            <input type="text" id="co-name" value="local" style="width:120px">
+          </label>
+          <label class="check">
+            <input type="checkbox" id="co-blind" checked> label blind
+          </label>
+          <button class="ghost" id="btn-co-refresh">Reload conversations</button>
+        </div>
+        <div id="co-progress" class="note" style="margin-top:10px"></div>
+        <div class="kbd" style="margin-top:8px">
+          <b>1</b>–<b>8</b> label · <b>j</b>/<b>k</b> move · <b>u</b> next unlabelled
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Conversations</h2>
+        <div id="co-list" class="co-list"><div class="empty-state">Loading…</div></div>
+      </div>
+      <div class="panel">
+        <h2>Why label blind</h2>
+        <p class="note">
+          A model can propose a label for every span in seconds, which is the only way
+          past the annotation bottleneck. But an analyst shown the proposal before
+          judging will agree with it more often, and that agreement is not evidence the
+          proposal was right — it is evidence the analyst was anchored.
+        </p>
+        <p class="note">
+          So the proposal stays hidden until you have labelled the span yourself, and
+          whether it was hidden is stored with your label. Agreement is reported
+          separately for blind and unblind labels and never pooled. Unblind labelling is
+          still useful for triage; it is just not a measurement of the model.
+        </p>
+      </div>
+      <div class="panel">
+        <h2>Agreement</h2>
+        <div id="co-agree"><div class="empty-state">No adjudicated spans yet.</div></div>
+      </div>
+    </div>
+    <div>
+      <div id="co-body"><div class="panel"><div class="empty-state">
+        Pick a conversation on the left.</div></div></div>
     </div>
   </div>
 </section>

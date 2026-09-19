@@ -199,3 +199,87 @@ label.check { display: inline-flex; align-items: center; gap: 6px; font-size: 11
 .bar { height: 3px; background: var(--line); margin-top: 8px; }
 .bar > div { height: 100%; background: var(--accent); }
 .empty-state { color: var(--ink-faint); font-size: 12px; padding: 20px 0; }
+
+/* ---------------------------------------------------- co-analysis */
+/* A span is the unit of argument here, so it gets a hit area and a resting state
+   that reads as "not yet decided" without shouting. */
+.co-list { max-height: 340px; overflow-y: auto; margin: -4px -4px 0; }
+.co-row {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 3px 6px; cursor: pointer; border-radius: 2px;
+  border-left: 2px solid transparent;
+}
+.co-row:hover { background: var(--panel-2); }
+.co-row.on { background: var(--panel-2); border-left-color: var(--accent); }
+.co-row .who { color: var(--ink-dim); flex: 1; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.co-row .tally { color: var(--ink-faint); font-size: 11px; }
+.co-row .tally b { color: var(--good); font-weight: 500; }
+
+.turn { border: 1px solid var(--line); border-radius: 3px; margin-bottom: 10px; }
+.turn > .turn-head {
+  padding: 4px 8px; border-bottom: 1px solid var(--line);
+  color: var(--ink-faint); font-size: 11px; letter-spacing: 0.08em;
+  display: flex; gap: 10px; align-items: baseline;
+}
+.turn.user > .turn-head { background: var(--panel-2); }
+.turn.assistant > .turn-head { background: var(--panel); }
+.turn .turn-note { color: var(--warn); margin-left: auto; }
+.turn pre.plain {
+  margin: 0; padding: 8px; white-space: pre-wrap; word-break: break-word;
+  color: var(--ink-dim); max-height: 260px; overflow-y: auto;
+}
+
+.span { border-top: 1px solid var(--line); padding: 6px 8px; }
+.span:first-child { border-top: none; }
+.span.done { background: linear-gradient(90deg, var(--panel-2) 0 3px, transparent 3px); }
+.span .span-head {
+  display: flex; gap: 8px; align-items: baseline; color: var(--ink-faint);
+  font-size: 11px; margin-bottom: 3px;
+}
+.span .span-kind { letter-spacing: 0.08em; }
+.span .span-text { white-space: pre-wrap; word-break: break-word; }
+.span .span-text.quiet { color: var(--ink-faint); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chip {
+  font-size: 11px; padding: 0 5px; border-radius: 2px;
+  border: 1px solid var(--line); color: var(--ink-dim); background: var(--panel-2);
+}
+.chip.refusal { border-color: var(--bad); color: var(--bad); }
+.chip.safety_framing { border-color: var(--warn); color: var(--warn); }
+.chip.qty { border-color: var(--accent); color: var(--accent); }
+.chip.qty.wrong, .chip.qty.absent { border-color: var(--bad); color: var(--bad); }
+.chip.qty.near, .chip.qty.scale { border-color: var(--warn); color: var(--warn); }
+.chip.aware { border-color: var(--good); color: var(--good); }
+
+.lbls { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 5px; }
+.lbl {
+  font: inherit; font-size: 11px; padding: 1px 6px; cursor: pointer;
+  background: transparent; color: var(--ink-faint);
+  border: 1px solid var(--line); border-radius: 2px;
+}
+.lbl:hover { color: var(--ink); border-color: var(--ink-faint); }
+.lbl.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+
+.proposal { margin-top: 5px; font-size: 11px; color: var(--ink-faint); }
+.proposal.hidden-until { font-style: italic; }
+.proposal .agree { color: var(--good); }
+.proposal .differ { color: var(--warn); }
+.proposal .said { color: var(--ink-dim); }
+.stale { color: var(--bad); }
+
+/* At rest a span shows its verdict; the eight controls appear when it is the one being
+   worked on. Both occupy the same height, so nothing jumps under the cursor. */
+.span .verdict, .span .lbls { min-height: 19px; }
+.span .lbls { display: none; }
+.span:hover .lbls, .span.focus .lbls { display: flex; }
+.span:hover .verdict, .span.focus .verdict { display: none; }
+.span .chosen {
+  font-size: 11px; padding: 0 5px; border-radius: 2px;
+  background: var(--accent); color: var(--bg);
+}
+.span .unset { font-size: 11px; color: var(--ink-faint); }
+.span.focus { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
+.kbd { color: var(--ink-faint); font-size: 11px; }
+.kbd b { color: var(--ink-dim); font-weight: 500; }

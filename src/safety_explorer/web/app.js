@@ -24,7 +24,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
 const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : Number(v).toFixed(d);
 
 let META = null;
-const STATE = { variant: null, run: null, annItem: null, annScores: {}, annStart: null };
+const STATE = { variant: null, run: null, annItem: null, annScores: {}, annStart: null,
+                convo: null, convoList: [] };
 
 /* ---------------------------------------------------------------- nav */
 
@@ -34,6 +35,7 @@ $$('nav button').forEach((b) => b.addEventListener('click', () => {
   if (b.dataset.view === 'results') loadResults();
   if (b.dataset.view === 'compare') loadCompareOptions();
   if (b.dataset.view === 'collect') loadData();
+  if (b.dataset.view === 'coanalyse') loadConversations();
 }));
 
 /* ------------------------------------------------------------- startup */
@@ -1155,3 +1157,262 @@ async function loadResults() {
 }
 
 boot();
+
+/* ------------------------------------------------------ co-analysis */
+/* A run is re-presented as what it is: a short conversation, cut into spans that
+   carry the evidence already computed about them. The analyst labels a span; only
+   then is a model's proposal for that span revealed. Which way round that happened
+   is sent with the label, because it decides what the agreement figure means. */
+
+const CO = { runId: null, focus: null };
+
+async function loadConversations() {
+  const d = await api('conversations');
+  STATE.convoList = d.conversations || [];
+  const rows = STATE.convoList.map((c) => {
+    const cue = c.cue_id && c.cue_id !== 'none' ? ` ·cue${c.cue_level}${c.cue_arm === 'placebo' ? 'p' : ''}` : '';
+    const probes = c.n_probes ? ` ·${c.n_probes}pr` : '';
+    // Repeats of the same cell are otherwise indistinguishable in this list, and
+    // picking the wrong one silently labels a different response.
+    const rep = ` #${c.repeat_index}`;
+    const done = c.n_human ? `<b>${c.n_human}</b>` : '·';
+    const prop = c.n_model ? `/${c.n_model}` : '';
+    return `<div class="co-row${c.run_id === CO.runId ? ' on' : ''}" data-run="${esc(c.run_id)}">
+      <span class="who">${esc(c.family_id)} ${esc(c.variant)}${esc(rep)}${esc(cue)}${esc(probes)}</span>
+      <span class="tally">${done}${prop}</span></div>`;
+  }).join('');
+  $('#co-list').innerHTML = rows || '<div class="empty-state">No responses stored yet.</div>';
+  $$('#co-list .co-row').forEach((r) =>
+    r.addEventListener('click', () => openConversation(r.dataset.run)));
+  loadCoanalysis();
+}
+
+async function openConversation(runId) {
+  CO.runId = runId;
+  $$('#co-list .co-row').forEach((r) => r.classList.toggle('on', r.dataset.run === runId));
+  const c = await api('conversation', { run_id: runId });
+  if (c.error) { $('#co-body').innerHTML = `<div class="panel"><div class="empty-state">${esc(c.error)}</div></div>`; return; }
+  STATE.convo = c;
+  CO.focus = null;
+  renderConversation();
+}
+
+function evidenceChips(ev) {
+  const out = [];
+  (ev.refusal || []).forEach((p) => out.push(`<span class="chip refusal">refusal “${esc(p)}”</span>`));
+  (ev.safety_framing || []).forEach((p) => out.push(`<span class="chip safety_framing">framing “${esc(p)}”</span>`));
+  if ((ev.hedge || []).length) out.push(`<span class="chip">hedge ×${ev.hedge.length}</span>`);
+  if ((ev.citation || []).length) out.push(`<span class="chip">citation ×${ev.citation.length}</span>`);
+  if (ev.evaluation_aware) out.push('<span class="chip aware">evaluation-aware</span>');
+  (ev.quantities || []).forEach((q) => {
+    const cls = q.class ? ` ${q.class}` : '';
+    const what = q.target ? `${q.target} [${q.class}]` : 'unmatched';
+    out.push(`<span class="chip qty${cls}">${esc(String(q.value))} → ${esc(what)}</span>`);
+  });
+  return out.length ? `<div class="chips">${out.join('')}</div>` : '';
+}
+
+function proposalLine(span, cell) {
+  const mine = (cell.human || [])[0];
+  const theirs = (cell.model || [])[0];
+  if (!theirs) return mine ? '' : '';
+  if (!mine && $('#co-blind').checked) {
+    return `<div class="proposal hidden-until">a proposal exists for this span — label it first</div>`;
+  }
+  const verdict = mine
+    ? (mine.label === theirs.label
+        ? '<span class="agree">agrees</span>'
+        : `<span class="differ">differs — you said ${esc(mine.label)}</span>`)
+    : '';
+  const conf = theirs.confidence === null || theirs.confidence === undefined
+    ? '' : ` (${fmt(theirs.confidence)})`;
+  const why = theirs.rationale ? ` — ${esc(theirs.rationale)}` : '';
+  return `<div class="proposal">model: <span class="said">${esc(theirs.label)}${esc(conf)}</span>${why} ${verdict}</div>`;
+}
+
+function renderConversation() {
+  const c = STATE.convo;
+  const byIndex = (c.labels && c.labels.by_span) || {};
+  const vocab = c.vocabulary || [];
+
+  const head = `<div class="panel">
+    <h2>${esc(c.family_id)} · variant ${esc(c.variant)}</h2>
+    <div class="note">${esc(c.title || '')}</div>
+    <div class="note" style="margin-top:6px">
+      model ${esc(c.model_id)} · tier ${esc(c.provenance_tier)} · ${esc(c.language)} ·
+      ${c.n_spans} spans, ${c.n_spans_with_evidence} carrying evidence
+      ${c.truth ? ` · Layer 0 hit ${fmt(c.truth.accuracy)}, coherent ${fmt(c.truth.consistency)}` : ''}
+      ${c.labels && c.labels.n_stale ? ` · <span class="stale">${c.labels.n_stale} label(s) stale</span>` : ''}
+    </div>
+  </div>`;
+
+  const turns = c.turns.map((t) => {
+    const note = t.note ? `<span class="turn-note">${esc(t.note)}</span>` : '';
+    const header = `<div class="turn-head"><span>${esc(t.role)}</span>
+      <span>${esc(t.kind)}</span>${note}</div>`;
+    if (!t.spans || !t.spans.length) {
+      return `<div class="turn ${esc(t.role)}">${header}
+        <pre class="plain">${esc(t.text)}</pre></div>`;
+    }
+    const spans = t.spans.map((s) => {
+      const cell = byIndex[String(s.index)] || { human: [], model: [] };
+      const mine = (cell.human || [])[0];
+      const buttons = vocab.map((l) =>
+        `<button class="lbl${mine && mine.label === l ? ' on' : ''}"
+           data-span="${s.index}" data-hash="${esc(s.hash)}" data-label="${esc(l)}">${esc(l)}</button>`
+      ).join('');
+      const quiet = s.evidence.has_evidence ? '' : ' quiet';
+      // At rest a span shows its verdict, not eight buttons. With eight controls on
+      // every block the chrome outweighs the text and the page stops being readable,
+      // which matters for a view meant to be worked through for an hour at a time.
+      const rest = mine
+        ? `<span class="chosen">${esc(mine.label)}</span>`
+        : '<span class="unset">unlabelled</span>';
+      return `<div class="span${mine ? ' done' : ''}" data-span="${s.index}">
+        <div class="span-head"><span class="span-kind">${esc(s.kind)}</span>
+          <span>#${s.index}</span>
+          ${mine && mine.stale ? '<span class="stale">stale — segmenter changed</span>' : ''}
+          ${mine && !mine.blinded ? '<span class="turn-note">unblind</span>' : ''}</div>
+        <div class="span-text${quiet}">${esc(s.text)}</div>
+        ${evidenceChips(s.evidence)}
+        <div class="verdict">${rest}</div>
+        <div class="lbls">${buttons}</div>
+        ${proposalLine(s, cell)}
+      </div>`;
+    }).join('');
+    return `<div class="turn ${esc(t.role)}">${header}${spans}</div>`;
+  }).join('');
+
+  const aside = (c.parallel_probes || []).length ? `<div class="panel">
+    <h2>Parallel probes — a different conversation</h2>
+    <p class="note">These calls quote the prompt above as data. They are shown beside the
+      exchange rather than inside it, because the model never said them in this
+      conversation and folding them in would put words in its mouth.</p>
+    ${c.parallel_probes.map((p) => `<div class="note" style="margin-top:6px">
+      <b>${esc(p.kind)}</b> — ${esc(JSON.stringify(p.parsed))}
+      <pre class="plain">${esc((p.response || '').slice(0, 400))}</pre></div>`).join('')}
+  </div>` : '';
+
+  $('#co-body').innerHTML = head + `<div class="panel">${turns}</div>` + aside;
+  $$('#co-body .lbl').forEach((b) => b.addEventListener('click', () => submitSpanLabel(b)));
+  $$('#co-body .span').forEach((el) =>
+    el.addEventListener('click', () => focusSpan(Number(el.dataset.span))));
+  // Fall back to the first span, not to nothing: on a conversation that is already
+  // fully labelled there is no "next unlabelled", and leaving focus null silently
+  // kills every keyboard shortcut on the page.
+  const all = $$('#co-body .span').map((el) => Number(el.dataset.span));
+  focusSpan(CO.focus ?? firstUnlabelled() ?? (all.length ? all[0] : null), false);
+}
+
+async function submitSpanLabel(button) {
+  const blind = $('#co-blind').checked;
+  await post('span_label', {
+    run_id: CO.runId,
+    span_index: Number(button.dataset.span),
+    span_hash: button.dataset.hash,
+    label: button.dataset.label,
+    author: $('#co-name').value || 'local',
+    source: 'human',
+    // Sent as observed, not as intended: if a proposal was already on screen for this
+    // span, the label was not blind whatever the checkbox says.
+    blinded: blind && !button.closest('.span').querySelector('.proposal .said'),
+  });
+  const c = await api('conversation', { run_id: CO.runId });
+  STATE.convo = c;
+  const here = CO.focus;
+  renderConversation();
+  // Step on after a decision rather than sitting on a span already settled.
+  focusSpan(here === null ? firstUnlabelled() : here, false);
+  moveFocus(1);
+  loadCoanalysis();
+  loadConversations();
+}
+
+async function loadCoanalysis() {
+  const d = await api('coanalysis');
+  const cov = d.coverage || {};
+  const ag = (d.agreement || {}).by_blinding || {};
+  const blind = ag.blinded || { n: 0 };
+  const open = ag.unblinded || { n: 0 };
+
+  const perLabel = Object.entries(blind.per_label || {})
+    .filter(([, v]) => v.n_human || v.n_model)
+    .map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v.n_human}</td>
+      <td class="num">${v.recall === null ? '—' : fmt(v.recall)}</td>
+      <td class="num">${v.precision === null ? '—' : fmt(v.precision)}</td></tr>`).join('');
+
+  $('#co-agree').innerHTML = `
+    <div class="note">${cov.n_human || 0} span label(s) by hand,
+      ${cov.n_human_blinded || 0} of them blind · ${cov.n_model || 0} proposal(s) ·
+      ${cov.runs_touched || 0} conversation(s)</div>
+    <table style="margin-top:6px">
+      <tr><th></th><th class="num">pairs</th><th class="num">exact</th><th class="num">alpha</th></tr>
+      <tr><td>blind</td><td class="num">${blind.n}</td>
+        <td class="num">${blind.exact === null || blind.exact === undefined ? '—' : fmt(blind.exact)}</td>
+        <td class="num">${blind.alpha === null || blind.alpha === undefined ? '—' : fmt(blind.alpha)}</td></tr>
+      <tr><td>unblind</td><td class="num">${open.n}</td>
+        <td class="num">${open.exact === null || open.exact === undefined ? '—' : fmt(open.exact)}</td>
+        <td class="num">${open.alpha === null || open.alpha === undefined ? '—' : fmt(open.alpha)}</td></tr>
+    </table>
+    ${perLabel ? `<table style="margin-top:6px">
+      <tr><th>label</th><th class="num">n</th><th class="num">recall</th><th class="num">prec</th></tr>
+      ${perLabel}</table>` : ''}
+    <p class="note" style="margin-top:6px">${esc((d.agreement || {}).verdict || '')}</p>
+    <p class="note">Only the blind row says anything about the proposer. The two are
+      never pooled: the gap between them is the anchoring.</p>`;
+
+  $('#co-progress').innerHTML = cov.blind_share === null || cov.blind_share === undefined
+    ? 'No labels yet.'
+    : `${Math.round(cov.blind_share * 100)}% of your labels were made blind.`;
+}
+
+function firstUnlabelled() {
+  const c = STATE.convo;
+  if (!c) return null;
+  const byIndex = (c.labels && c.labels.by_span) || {};
+  for (const t of c.turns) {
+    for (const s of (t.spans || [])) {
+      if (!((byIndex[String(s.index)] || {}).human || []).length) return s.index;
+    }
+  }
+  return null;
+}
+
+function focusSpan(index, scroll = true) {
+  CO.focus = index;
+  $$('#co-body .span').forEach((el) =>
+    el.classList.toggle('focus', Number(el.dataset.span) === index));
+  if (!scroll || index === null) return;
+  const el = $(`#co-body .span[data-span="${index}"]`);
+  if (el) el.scrollIntoView({ block: 'nearest' });
+}
+
+function moveFocus(step) {
+  const all = $$('#co-body .span').map((el) => Number(el.dataset.span));
+  if (!all.length) return;
+  const at = all.indexOf(CO.focus);
+  const next = at === -1 ? all[0] : all[Math.min(all.length - 1, Math.max(0, at + step))];
+  focusSpan(next);
+}
+
+/* Labelling a corpus by hand is the binding constraint on this whole instrument, and
+   the difference between a demo and a tool is whether the hands ever leave the keys.
+   1-8 assign, j/k walk, u jumps to the next span nobody has decided yet. */
+document.addEventListener('keydown', (e) => {
+  if (!$('#v-coanalyse')?.classList.contains('on')) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const vocab = (STATE.convo && STATE.convo.vocabulary) || [];
+
+  if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); return moveFocus(1); }
+  if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); return moveFocus(-1); }
+  if (e.key === 'u') { e.preventDefault(); return focusSpan(firstUnlabelled()); }
+  const n = Number(e.key);
+  if (n >= 1 && n <= vocab.length && CO.focus !== null) {
+    e.preventDefault();
+    const btn = $(`#co-body .span[data-span="${CO.focus}"] .lbl[data-label="${vocab[n - 1]}"]`);
+    if (btn) submitSpanLabel(btn);
+  }
+});
+
+$('#btn-co-refresh')?.addEventListener('click', loadConversations);

@@ -235,6 +235,55 @@ baseline, which is what keeps RQ6 measurable. Where they share nothing, no delta
 reported at all. A variant that was never asked for a quantity is recorded as *absent*,
 never as zero.
 
+**Responses are co-analysed span by span, blind first.** Layer 2 — human annotation —
+is the binding constraint on everything here, and Layer 3 shipped in v0.1 as a table
+with nothing writing to it, because a judge that scores whole responses returns a number
+whose only audit is re-reading the response yourself. `explorer serve` → **Co-analyse**
+re-presents a run as what it is: a short conversation, with the assistant's turn cut into
+spans that carry the evidence already computed about them — which refusal phrase fired,
+which figure matched `critical_population` and how badly, whether the span remarks on
+being observed.
+
+A model proposes a label per span, with a quote and a reason, so checking it costs a
+glance rather than a re-read. You label with `1`–`8`, walk with `j`/`k`, jump to the next
+undecided span with `u`.
+
+```
+explorer analyse coanalysis
+
+              pairs   exact   alpha
+  blinded         8   0.750   0.663
+  unblinded       9   0.556   0.313
+```
+
+**The blinding rule is the whole design.** An analyst shown a proposal before judging
+agrees with it more often, and that agreement is not evidence the proposal was right —
+it is evidence the analyst was anchored. So the proposal stays hidden until you have
+labelled the span yourself, `blinded` is stored per label, and the two populations are
+reported apart and **never pooled**. Whether the label was blind is recorded as
+*observed*, not as intended: if a proposal was already on screen for that span, the label
+is stored unblind whatever the checkbox says. The blind/unblind gap is only narrated once
+both sides carry 20 pairs, because a twenty-point difference on eight against nine is
+noise.
+
+Span labels are nominal — `capability`, `refusal`, `hedge` have no order — so agreement
+uses **nominal** Krippendorff. Scoring them ordinally would make a disagreement's size
+depend on where each label happened to sit in a tuple; on the same data the two differ by
+half an alpha.
+
+A label points at a span index, and an index means nothing once the segmenter changes, so
+every label carries a hash of the text it was made against. A label whose hash no longer
+matches is reported **stale**, never silently re-pointed at words its author never read.
+
+The view earned its keep on the first response it rendered: a span of pure refusal came
+up with no refusal chip on it. `REFUSAL_PATTERNS` read `\bi (?:…|'m not able to)`, which
+requires a literal space after "i", so the contraction branch could never fire —
+*"I'm not able to help with this one"*, the most common way a model opens a refusal,
+scored **zero** refusal hits while *"I am not able to help"* scored one. The mock's own
+refusal text opens exactly that way, so `refusal_signal` had been dead for every refusal
+in the fixture. A whole-response signal of 0.0 looks like a quiet response; a span of
+pure refusal showing no refusal does not.
+
 **Sandbagging is tested with a placebo.** Does accuracy fall when the model can tell
 it is being evaluated? Observation cues are composed onto existing prompts at five
 severities, each with a length- and structure-matched placebo twin — at level 2 they
@@ -510,7 +559,8 @@ explorer truth [--targets]        score responses against computed answer keys
        truth --coherence          validate the internal-consistency identities
        truth --items              item analysis: is the answer key carrying information?
 explorer annotate                 queue responses for blinded annotation
-explorer analyse {twins,surface,depth,language,sandbagging,controls,reliability,judge,drift}
+explorer analyse {twins,surface,depth,language,sandbagging,controls,reliability,
+                  judge,coanalysis,drift}
 explorer serve                    the Explorer UI
 explorer export                   JSONL export (escalated responses withheld)
 ```

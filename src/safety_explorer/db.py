@@ -91,14 +91,25 @@ def insert(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> None:
     conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({marks})", tuple(clean.values()))
 
 
-def upsert(conn: sqlite3.Connection, table: str, row: dict[str, Any], key: str) -> None:
+def upsert(conn: sqlite3.Connection, table: str, row: dict[str, Any],
+           key: str, conflict: tuple[str, ...] | None = None) -> None:
+    """Insert or replace a row.
+
+    `key` is the column left untouched on update — the primary key. `conflict` names the
+    columns whose UNIQUE index decides whether this is an update, for tables where that
+    is a composite rather than the primary key. A span label is identified by (run, span,
+    source, author), not by its own id, so re-labelling a span has to replace the row
+    rather than stack a second one beside it.
+    """
     clean = {k: (json.dumps(v) if isinstance(v, (dict, list)) else v) for k, v in row.items()}
     cols = ", ".join(clean)
     marks = ", ".join("?" for _ in clean)
-    updates = ", ".join(f"{c}=excluded.{c}" for c in clean if c != key)
+    target = ", ".join(conflict) if conflict else key
+    frozen = set(conflict) if conflict else {key}
+    updates = ", ".join(f"{c}=excluded.{c}" for c in clean if c not in frozen)
     conn.execute(
         f"INSERT INTO {table} ({cols}) VALUES ({marks}) "
-        f"ON CONFLICT({key}) DO UPDATE SET {updates}",
+        f"ON CONFLICT({target}) DO UPDATE SET {updates}",
         tuple(clean.values()),
     )
 

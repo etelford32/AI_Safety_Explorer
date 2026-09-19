@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from . import DIMENSION_LABELS, DIMENSIONS, HUMAN_METRICS, INVERTED_METRICS, __version__
+from . import (DIMENSION_LABELS, DIMENSIONS, HUMAN_METRICS, INVERTED_METRICS,
+               SPAN_LABELS, __version__)
 from . import analysis, annotate, corpus as corpus_mod, db, ingest, jobs, lint, metrics, pricing
 
 WEB_ROOT = Path(__file__).parent / "web"
@@ -100,6 +101,25 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 return self._send_json(self._import(body))
             if url.path == "/api/unmatched/assign":
                 return self._send_json(self._assign_unmatched(body))
+            if url.path == "/api/span_label":
+                from . import coanalyse
+                label_id = coanalyse.record(
+                    self.conn,
+                    run_id=body["run_id"],
+                    span_index=int(body["span_index"]),
+                    span_hash=body["span_hash"],
+                    label=body["label"],
+                    source=body.get("source", "human"),
+                    author=body.get("author", "local"),
+                    confidence=body.get("confidence"),
+                    rationale=body.get("rationale", ""),
+                    quote=body.get("quote", ""),
+                    # Blind by default. An unblinded label is a deliberate act and has to
+                    # be asked for, because the default silently decides whether the
+                    # agreement figure measures the model or measures anchoring.
+                    blinded=bool(body.get("blinded", True)),
+                )
+                return self._send_json({"ok": True, "id": label_id})
             if url.path == "/api/features/recompute":
                 from .runner import recompute_features
                 n = recompute_features(self.conn)
@@ -402,6 +422,44 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 "coherence_floor": gt.consistency_floor(),
                 "items": gt.item_analysis(self.conn, q.get("campaign_id") or None,
                                           q.get("tiers", "A")),
+            }
+
+        if path == "/api/conversations":
+            rows = db.query(self.conn, """
+                SELECT r.id AS run_id, p.id AS prompt_id, p.family_id, p.variant,
+                       p.title, p.language, p.sub_arm, r.repeat_index,
+                       r.model_id, r.provenance_tier,
+                       r.cue_id, r.cue_arm, r.cue_level, r.finish_reason,
+                       LENGTH(r.response) AS n_chars,
+                       (SELECT COUNT(*) FROM span_label s
+                        WHERE s.run_id = r.id AND s.source = 'human') AS n_human,
+                       (SELECT COUNT(*) FROM span_label s
+                        WHERE s.run_id = r.id AND s.source = 'model') AS n_model,
+                       (SELECT COUNT(*) FROM probe pr WHERE pr.run_id = r.id) AS n_probes
+                FROM run r JOIN prompt p ON p.id = r.prompt_id
+                WHERE r.response IS NOT NULL AND r.error IS NULL
+                ORDER BY p.family_id, p.variant, r.repeat_index
+                LIMIT 400""")
+            return {"conversations": rows, "labels": list(SPAN_LABELS)}
+
+        if path == "/api/conversation":
+            from . import coanalyse, conversation as conv
+            run_id = q.get("run_id")
+            if not run_id:
+                return {"error": "run_id required"}
+            convo = conv.assemble(self.conn, run_id)
+            if convo is None:
+                return {"error": f"no run {run_id}"}
+            convo["labels"] = coanalyse.labels_for(self.conn, run_id)
+            convo["vocabulary"] = list(SPAN_LABELS)
+            return convo
+
+        if path == "/api/coanalysis":
+            from . import coanalyse
+            return {
+                "coverage": coanalyse.coverage(self.conn),
+                "agreement": coanalyse.agreement(self.conn),
+                "usable_alpha": coanalyse.USABLE_ALPHA,
             }
 
         if path == "/api/controls":
