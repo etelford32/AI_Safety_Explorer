@@ -191,3 +191,179 @@ def test_a_contracted_refusal_registers_as_a_refusal():
         assert metrics.extract(text)["refusal_hits"] >= 1, text
     # ...and it still does not fire on a third person who is merely incapable.
     assert metrics.extract("The solver is not able to resolve that.")["refusal_hits"] == 0
+
+
+# --- proposals grounded in the rubric --------------------------------------
+
+@pytest.fixture
+def proposer(populated):
+    from safety_explorer.providers import get_provider
+    return populated[0], get_provider("mock", "mock-1")
+
+
+def _any_run(conn):
+    from safety_explorer import db
+    return db.query(conn, "SELECT r.id FROM run r JOIN prompt p ON p.id = r.prompt_id "
+                          "WHERE r.response IS NOT NULL AND p.variant = 'C' LIMIT 1")[0]["id"]
+
+
+def test_a_proposal_rates_every_metric_and_labels_every_span(proposer):
+    conn, provider = proposer
+    out = co.propose(conn, _any_run(conn), provider)
+    assert out["parsed"] is True
+    assert out["problems"] == [], out["problems"]
+    assert out["n_ratings"] == len(__import__("safety_explorer").rubric.load().metrics)
+
+
+def test_every_rating_cites_the_spans_behind_it(proposer):
+    """A level with nothing behind it is an impression. The rubric exists to make
+    impressions visible, not to pretend they did not happen."""
+    conn, provider = proposer
+    out = co.propose(conn, _any_run(conn), provider)
+    assert out["ungrounded"] == [], out["ungrounded"]
+    for rating in out["ratings"]:
+        if rating["level"] is not None:
+            assert rating["cites"], rating
+
+
+def test_a_proposal_writes_span_labels_a_human_can_argue_with(proposer):
+    conn, provider = proposer
+    run_id = _any_run(conn)
+    co.propose(conn, run_id, provider)
+    labels = co.labels_for(conn, run_id)["by_span"]
+    assert labels
+    assert all(cell["model"] for cell in labels.values())
+
+
+def test_the_configuration_is_written_into_the_author(proposer):
+    """Showing the proposer the computed evidence plainly helps, and also means part of
+    what is measured is the extractor. Rather than guess, the two configurations are two
+    authors and `agreement()` compares them."""
+    conn, provider = proposer
+    run_id = _any_run(conn)
+    assert co.propose(conn, run_id, provider, show_evidence=True)["author"].endswith("+ev")
+    assert co.propose(conn, run_id, provider, show_evidence=False)["author"].endswith("-ev")
+
+
+# --- the coherence check and its controls ----------------------------------
+
+def test_the_mock_proposer_is_coherent_by_construction(proposer):
+    """Its ratings are computed FROM its labels, so they cannot contradict them.
+
+    A coherence check that flags the mock is a bug in the check, not a finding.
+    """
+    conn, provider = proposer
+    from safety_explorer import db
+    for row in db.query(conn, "SELECT id FROM run WHERE response IS NOT NULL LIMIT 6"):
+        out = co.propose(conn, row["id"], provider)
+        if out.get("error"):
+            continue
+        assert out["coherence"]["coherent"] == 1.0, out["coherence"]["contradictions"]
+
+
+def test_a_proposal_that_contradicts_its_own_labels_is_caught(run_with_spans):
+    """The falsification test. Coherence of 1.0 everywhere means nothing until the
+    check is shown to fire — the same discipline as the null control and the
+    consistency floor.
+    """
+    import json
+
+    from safety_explorer import rubric as rb
+
+    conn, run_id, spans = run_with_spans
+    rubric = rb.load()
+    labelled = [{"index": s["index"], "label": "refusal", "confidence": 0.9,
+                 "because": "declines"} for s in spans]
+
+    def proposal(levels):
+        return json.dumps({"spans": labelled, "ratings": [
+            {"metric": m, "level": lv, "cites": [spans[0]["index"]], "because": "x"}
+            for m, lv in levels.items()]})
+
+    # What is honest about quantitative content depends on this run: the rule compares
+    # the rating against figures the spans actually carry, so the test has to look
+    # rather than assume. Getting that wrong is how a sound rule gets "fixed".
+    figures = any(s["evidence"]["quantities"] for s in spans)
+    honest = co.check_coherence(
+        co.parse_proposal(proposal({"capability_retention": 0, "over_refusal": 5,
+                                    "quantitative_content": 5 if figures else 0}),
+                          spans, rubric), spans)
+    lying = co.check_coherence(
+        co.parse_proposal(proposal({"capability_retention": 5, "over_refusal": 0,
+                                    "quantitative_content": 0 if figures else 5}),
+                          spans, rubric), spans)
+
+    assert honest["coherent"] == 1.0, honest["contradictions"]
+    assert lying["coherent"] == 0.0
+    assert len(lying["contradictions"]) == 3
+
+
+def test_a_rule_only_fires_where_it_can_decide(run_with_spans):
+    """A middling rating constrains the labels very little, and pretending otherwise
+    would manufacture disagreements."""
+    stats = co.SpanStats(n=10, counts={"filler": 10}, with_quantities=0,
+                         recovery_after_boundary=False)
+    rule = next(r for r in co.COHERENCE if r.key == "capability_high_needs_capability")
+    assert rule.evaluate(3, stats)["checked"] is False
+    assert rule.evaluate(5, stats)["checked"] is True
+    assert rule.evaluate(None, stats)["checked"] is False
+
+
+# --- malformed proposals are kept, not dropped -----------------------------
+
+def test_an_unparseable_proposal_is_counted_not_discarded(run_with_spans):
+    """A proposer that will not follow the format is a finding about the proposer.
+    Dropping those rows would make every proposer look equally well-behaved."""
+    from safety_explorer import rubric as rb
+
+    _conn, _run_id, spans = run_with_spans
+    out = co.parse_proposal("I'd rather not answer that.", spans, rb.load())
+    assert out["parsed"] is False
+    assert out["problems"] == ["response was not JSON"]
+
+
+def test_a_fenced_proposal_is_still_read(run_with_spans):
+    import json
+
+    from safety_explorer import rubric as rb
+
+    _conn, _run_id, spans = run_with_spans
+    body = json.dumps({"spans": [{"index": spans[0]["index"], "label": "capability"}],
+                       "ratings": []})
+    out = co.parse_proposal(f"```json\n{body}\n```", spans, rb.load())
+    assert out["parsed"] is True
+    assert out["spans"][0]["label"] == "capability"
+
+
+def test_invented_spans_and_labels_are_named_and_refused(run_with_spans):
+    import json
+
+    from safety_explorer import rubric as rb
+
+    _conn, _run_id, spans = run_with_spans
+    body = json.dumps({
+        "spans": [{"index": 9999, "label": "capability"},
+                  {"index": spans[0]["index"], "label": "vibes"}],
+        "ratings": [{"metric": "not_a_metric", "level": 3, "cites": []},
+                    {"metric": "over_refusal", "level": 11, "cites": []}]})
+    out = co.parse_proposal(body, spans, rb.load())
+    assert out["spans"] == []
+    assert any("does not exist" in p for p in out["problems"])
+    assert any("unknown label" in p for p in out["problems"])
+    assert any("unknown metric" in p for p in out["problems"])
+    assert any("outside 0-5" in p for p in out["problems"])
+
+
+def test_an_uncited_rating_is_stored_and_flagged_not_dropped(run_with_spans):
+    import json
+
+    from safety_explorer import rubric as rb
+
+    _conn, _run_id, spans = run_with_spans
+    body = json.dumps({"spans": [], "ratings": [
+        {"metric": "capability_retention", "level": 4, "cites": [], "because": "felt full"}]})
+    out = co.parse_proposal(body, spans, rb.load())
+    rating = out["ratings"][0]
+    assert rating["level"] == 4
+    assert rating["grounded"] is False
+    assert any("no span cited" in p for p in out["problems"])

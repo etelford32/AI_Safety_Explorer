@@ -5,8 +5,8 @@ See docs/PLAN.md for the experimental design and docs/DATA_INGESTION.md for how
 observations enter the system.
 """
 
-__version__ = "0.9.0"
-CORPUS_VERSION = "0.7.1"
+__version__ = "0.10.0"
+CORPUS_VERSION = "0.8.0"
 #: Bumped when a feature's definition changes, so a stored feature row can be told apart
 #: from one computed under different rules. Features are recomputable from stored
 #: responses (`explorer features`), so a bump costs a re-derivation, never an API call.

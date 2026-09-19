@@ -58,6 +58,10 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("ground_truth", "stated_values", "TEXT NOT NULL DEFAULT '{}'"),
     ("prompt", "answer_key", "TEXT NOT NULL DEFAULT 'full'"),
     ("ground_truth", "answer_key_cover", "TEXT NOT NULL DEFAULT 'full'"),
+    ("judgement", "citations", "TEXT NOT NULL DEFAULT '{}'"),
+    ("judgement", "coherence", "TEXT NOT NULL DEFAULT '{}'"),
+    ("judgement", "problems", "TEXT NOT NULL DEFAULT '[]'"),
+    ("annotation", "citations", "TEXT NOT NULL DEFAULT '{}'"),
 ]
 
 

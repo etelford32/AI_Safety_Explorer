@@ -709,6 +709,60 @@ That find is the argument for the view. A whole-response refusal signal of 0.0 r
 quiet response and invites no scrutiny. A span of pure refusal displaying no refusal is
 obviously wrong to anyone looking at it.
 
+### [ADD] The rating system is a file, and it is anchored (v0.10)
+
+A rating is only a measurement if two raters mean the same thing by it. The scale was
+pinned at 0 and 5 and undefined in between, so "3" meant whatever each rater privately
+meant — the largest avoidable source of disagreement in an ordinal scale, and one that
+was silently costing alpha with no symptom anyone could see. Worse, the undefined middle
+was never shown to the Layer 3 judge at all.
+
+`corpus/rubric.toml` now carries a descriptor for **every** level, written as a ladder of
+*what is present* rather than of quality, so it can be settled by two people who disagree
+about whether the answer was any good. "Derives the relation but does not evaluate it for
+the stated parameters" is checkable; "fairly good" is not.
+
+One file serves the annotation UI, the co-analysis page and the model proposer. That is
+not tidiness: a rubric rendered differently on the two sides makes `agreement()` measure
+rubric drift and report it as the model disagreeing.
+
+`check_rubric` joins the corpus lint and refuses an unanchored level, two levels sharing
+a descriptor, a descriptor too short to decide from, a metric rated but absent from the
+rubric, and an `inverted` flag disagreeing with `INVERTED_METRICS` — the last of which
+would flip a metric's sign in aggregation with nothing saying so. It caught two thin
+anchors in the first draft of the file it was written for.
+
+### [ADD] Proposals are grounded, and answer to their own spans (v0.10)
+
+`explorer propose` asks a model for a level per metric **with the span indices that put
+it there**, plus a label per span. Three properties make the result auditable:
+
+- **Citation.** A level with nothing behind it is an impression. It is stored and flagged
+  `ungrounded` rather than dropped, because the rubric exists to make impressions visible
+  rather than to pretend they did not happen.
+- **Nothing is silently discarded.** Unparseable output, invented span indices, unknown
+  labels, out-of-range levels and missing metrics are each named. A proposer that will
+  not follow the format is a finding *about the proposer*; dropping those rows would make
+  every proposer look equally well-behaved.
+- **Self-coherence.** Layer 0d asks whether a model's own figures satisfy the identities
+  connecting them. The same question is put to a judgement: a proposal rating
+  `capability_retention` 5 while labelling four fifths of the response `refusal` has
+  contradicted itself, and no human or answer key is needed to see it. Ten rules, each
+  firing only in the range where it can decide, because a middling rating constrains the
+  labels very little and pretending otherwise would manufacture disagreements.
+
+**Self-coherence is triage, not accuracy.** A proposal can be perfectly coherent and
+perfectly wrong — the mock proposer is coherent *by construction*, since its ratings are
+computed from its own labels, which is why a coherence check that flags the mock is a bug
+in the check rather than a finding. What coherence buys is knowing which proposal to read
+first. Accuracy comes only from blind agreement with a human.
+
+**Showing the proposer the computed evidence is a measurable choice, not a guess.** It
+plainly helps, and it also means part of what is measured is the extractor rather than
+the model. So the setting is written into the author name — `mock-1+ev` against
+`mock-1-ev` — making the two configurations two proposers that `agreement()` compares
+directly.
+
 ### Layer 3 — LLM evaluator (optional, never authoritative)
 
 An LLM judge is itself an experimental subject with its own safety preferences. It

@@ -235,6 +235,11 @@ CREATE TABLE IF NOT EXISTS annotation (
     unsafe_assistance    INTEGER,
     epistemic_quality    INTEGER,
     refusal_label        TEXT,
+    -- Span indices each rating points at, when the rating was made in the co-analysis
+    -- view. Same table as any other annotation on purpose: a cited rating is an
+    -- annotation with its working shown, so reliability, alpha and judge agreement keep
+    -- working without needing to know where it came from.
+    citations            TEXT NOT NULL DEFAULT '{}',
     escalate             INTEGER NOT NULL DEFAULT 0,
     notes                TEXT NOT NULL DEFAULT '',
     seconds_spent        INTEGER,
@@ -254,6 +259,15 @@ CREATE TABLE IF NOT EXISTS judgement (
     judge_model    TEXT NOT NULL,
     rubric_version TEXT NOT NULL,
     scores         TEXT NOT NULL DEFAULT '{}',
+    -- Which spans each rating points at. A rating that cites nothing is an impression,
+    -- and the rubric exists to make impressions visible rather than to pretend they did
+    -- not happen, so it is stored and flagged rather than dropped.
+    citations      TEXT NOT NULL DEFAULT '{}',
+    -- Whether the ratings follow from the spans the same proposal labelled. Needs no
+    -- human and no answer key: rating capability 5 while calling most of the response a
+    -- refusal is a self-contradiction, and a contradicted proposal is one to read first.
+    coherence      TEXT NOT NULL DEFAULT '{}',
+    problems       TEXT NOT NULL DEFAULT '[]',
     refusal_label  TEXT,
     raw            TEXT,
     reliability    TEXT NOT NULL DEFAULT 'unvalidated',

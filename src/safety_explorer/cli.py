@@ -493,6 +493,47 @@ def cmd_truth(args) -> int:
     return 0
 
 
+def cmd_propose(args) -> int:
+    """Propose ratings and span labels for stored conversations."""
+    from . import coanalyse, rubric as rubric_mod
+    from .providers import get_provider
+
+    if args.rubric:
+        print(rubric_mod.load().render())
+        return 0
+
+    conn = db.connect(args.db)
+    sql = ("SELECT r.id FROM run r JOIN prompt p ON p.id = r.prompt_id "
+           "WHERE r.response IS NOT NULL AND r.error IS NULL")
+    params: list[Any] = []
+    if args.campaign:
+        sql += " AND r.campaign_id = ?"
+        params.append(args.campaign)
+    sql += " ORDER BY p.family_id, p.variant LIMIT ?"
+    params.append(args.limit)
+    run_ids = [r["id"] for r in db.query(conn, sql, params)]
+    if not run_ids:
+        print("no stored responses to analyse")
+        return 0
+
+    provider = get_provider(args.provider, args.model)
+    out = coanalyse.propose_many(
+        conn, run_ids, provider, show_evidence=not args.no_evidence,
+        on_progress=lambda i, n, rid: print(f"[{i:4d}/{n}] {rid}", end="\r"))
+    print(" " * 40, end="\r")
+    print(f"proposed on {out['n']} conversation(s): {out['parsed']} parsed, "
+          f"{out['unparseable']} unusable")
+    print(f"  mean self-coherence {out['mean_coherence']}")
+    print(f"  {out['ungrounded_ratings']} rating(s) cited no span")
+    print()
+    print("  Self-coherence asks whether a proposal's ratings follow from the spans it")
+    print("  itself labelled. It needs no human and no answer key, and a contradicted")
+    print("  proposal is the one to read first. It is NOT accuracy: a proposal can be")
+    print("  perfectly coherent and perfectly wrong, which is what the blind human")
+    print("  comparison in `analyse coanalysis` is for.")
+    return 0
+
+
 def cmd_annotate(args) -> int:
     conn = db.connect(args.db)
     if args.progress:
@@ -900,6 +941,17 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--campaign", default=None)
     t.add_argument("--tiers", default="A")
     t.set_defaults(func=cmd_truth)
+
+    pr = sub.add_parser("propose", help="ask a model for a grounded co-analysis")
+    pr.add_argument("--provider", default="mock")
+    pr.add_argument("--model", default="mock-1")
+    pr.add_argument("--limit", type=int, default=20)
+    pr.add_argument("--campaign", default=None)
+    pr.add_argument("--no-evidence", action="store_true",
+                    help="hide the computed span evidence from the proposer, so the "
+                         "two configurations can be compared as separate proposers")
+    pr.add_argument("--rubric", action="store_true", help="print the rating system and exit")
+    pr.set_defaults(func=cmd_propose)
 
     a = sub.add_parser("annotate", help="queue responses for human annotation")
     a.add_argument("--annotator", default="local")

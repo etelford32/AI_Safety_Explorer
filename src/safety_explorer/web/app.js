@@ -1293,6 +1293,7 @@ function renderConversation() {
       <pre class="plain">${esc((p.response || '').slice(0, 400))}</pre></div>`).join('')}
   </div>` : '';
 
+  renderRating();
   $('#co-body').innerHTML = head + `<div class="panel">${turns}</div>` + aside;
   $$('#co-body .lbl').forEach((b) => b.addEventListener('click', () => submitSpanLabel(b)));
   $$('#co-body .span').forEach((el) =>
@@ -1416,3 +1417,119 @@ document.addEventListener('keydown', (e) => {
 });
 
 $('#btn-co-refresh')?.addEventListener('click', loadConversations);
+
+/* ------------------------------------------------------- the rating */
+/* Every level is anchored, and the anchors are the same text the proposer was shown.
+   A rating cites the spans behind it, so a level is checkable rather than felt. */
+
+function renderRating() {
+  const c = STATE.convo;
+  if (!c || !c.rubric) { $('#co-rate').innerHTML = '<div class="empty-state">Open a conversation.</div>'; return; }
+  const mine = (c.ratings && c.ratings.human && c.ratings.human[0]) || null;
+  const theirs = (c.ratings && c.ratings.model && c.ratings.model[0]) || null;
+  const proposed = theirs ? safeJson(theirs.scores) : {};
+  const propCites = theirs ? safeJson(theirs.citations) : {};
+  const blind = $('#co-blind')?.checked;
+
+  // Which metrics this analyst has actually DECIDED. One annotation row carries all
+  // nine metrics, so `mine[key] !== undefined` is true for every metric the moment the
+  // first one is submitted — reading it that way revealed all nine proposals after a
+  // single click, which is the anchoring this view exists to prevent. The citation map
+  // records one entry per metric as it is decided, so it is the honest register.
+  const decided = mine ? safeJson(mine.citations) : {};
+  const allDecided = Object.keys(c.rubric.metrics).every((k) => k in decided);
+
+  const metrics = Object.entries(c.rubric.metrics).map(([key, m]) => {
+    const done = key in decided;
+    const at = done ? mine[key] : undefined;
+    const na = m.na_when ? `<button class="lv na${done && at === null ? ' on' : ''}"
+      data-metric="${esc(key)}" data-level="">n/a</button>` : '';
+    const levels = m.levels.map((text, i) =>
+      `<button class="lv${at === i ? ' on' : ''}" data-metric="${esc(key)}"
+        data-level="${i}" title="${esc(text)}">${i}</button>`).join('');
+    const anchor = !done || at === null || at === undefined
+      ? (m.na_when ? `<span class="note">n/a when: ${esc(m.na_when)}</span>` : '')
+      : `<b>${at}</b> = ${esc(m.levels[at])}`;
+    // Blind first, and at the granularity the rating is STORED at: one row per run, so
+    // nothing is revealed until the whole rubric has been worked through.
+    const show = theirs && (!blind || allDecided);
+    const theirLevel = proposed[key];
+    const cites = (propCites[key] || []).join(', ');
+    const prop = !show ? (theirs ? '<div class="mprop">a proposal exists — rate first</div>' : '')
+      : `<div class="mprop${mine && mine[key] !== theirLevel ? ' differ' : ''}">
+           model: ${theirLevel === null ? 'n/a' : esc(String(theirLevel))}
+           ${cites ? `<span class="cited">cites #${esc(cites)}</span>` : '<span class="cited">cites nothing</span>'}
+         </div>`;
+    return `<div class="metric">
+      <div class="q">${esc(m.question)} ${m.inverted ? '<span class="inv">(high is bad)</span>' : ''}</div>
+      <div class="scale">${levels}${na}</div>
+      <div class="anchor">${anchor}</div>
+      ${prop}
+    </div>`;
+  }).join('');
+
+  const coh = theirs ? safeJson(theirs.coherence) : null;
+  const cohLine = coh && coh.coherent !== null && coh.coherent !== undefined
+    ? `<div class="coh ${coh.coherent === 1 ? 'good' : 'bad'}">
+         proposal coherence ${fmt(coh.coherent)} — ${coh.n_held}/${coh.n_checked} of its
+         own ratings follow from its own span labels
+         ${(coh.contradictions || []).map((x) => `<div>✗ ${esc(x)}</div>`).join('')}
+       </div>` : '';
+  const problems = theirs ? safeJson(theirs.problems) : [];
+
+  $('#co-rate').innerHTML = `
+    <div class="note">rubric v${esc(c.rubric.version)} · ${esc(c.rubric.source || '')}</div>
+    ${metrics}
+    ${cohLine}
+    ${(problems || []).length ? `<div class="coh bad">${problems.map(esc).join('<br>')}</div>` : ''}
+    <div style="margin-top:8px;display:flex;gap:6px">
+      <button class="ghost" id="btn-propose">Propose (mock)</button>
+    </div>`;
+
+  $$('#co-rate .lv').forEach((b) => b.addEventListener('click', () => submitRating(b)));
+  $('#btn-propose')?.addEventListener('click', runProposal);
+}
+
+function safeJson(v) {
+  if (v === null || v === undefined) return {};
+  if (typeof v !== 'string') return v;
+  try { return JSON.parse(v); } catch (e) { return {}; }
+}
+
+async function submitRating(button) {
+  const c = STATE.convo;
+  const mine = (c.ratings && c.ratings.human && c.ratings.human[0]) || {};
+  const scores = {};
+  Object.keys(c.rubric.metrics).forEach((k) => { scores[k] = mine[k] ?? null; });
+  const metric = button.dataset.metric;
+  scores[metric] = button.dataset.level === '' ? null : Number(button.dataset.level);
+  // Cite the spans you have labelled as the working behind the rating.
+  const cites = {};
+  const byIndex = (c.labels && c.labels.by_span) || {};
+  cites[metric] = Object.entries(byIndex)
+    .filter(([, cell]) => (cell.human || []).length)
+    .map(([i]) => Number(i)).slice(0, 6);
+  const already = safeJson(mine.citations);
+  // Blind is recorded as observed: if the whole rubric was already decided then the
+  // proposals were on screen when this click happened, whatever the checkbox says.
+  const wasRevealed = Object.keys(c.rubric.metrics).every((k) => k in already);
+  await post('rating', {
+    run_id: CO.runId, annotator: $('#co-name').value || 'local',
+    scores, citations: { ...already, ...cites },
+    blinded: $('#co-blind').checked && !wasRevealed,
+  });
+  STATE.convo = await api('conversation', { run_id: CO.runId });
+  renderRating();
+  loadCoanalysis();
+}
+
+async function runProposal() {
+  const btn = $('#btn-propose');
+  if (btn) { btn.disabled = true; btn.textContent = 'Proposing…'; }
+  await post('propose', { run_id: CO.runId, provider: 'mock', model: 'mock-1' });
+  STATE.convo = await api('conversation', { run_id: CO.runId });
+  renderConversation();
+  renderRating();
+  loadCoanalysis();
+  loadConversations();
+}

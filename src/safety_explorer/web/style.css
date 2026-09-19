@@ -283,3 +283,26 @@ label.check { display: inline-flex; align-items: center; gap: 6px; font-size: 11
 .span.focus { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
 .kbd { color: var(--ink-faint); font-size: 11px; }
 .kbd b { color: var(--ink-dim); font-weight: 500; }
+
+/* ------------------------------------------------ rating (rubric) */
+.metric { border-top: 1px solid var(--line); padding: 6px 0; }
+.metric:first-child { border-top: none; }
+.metric .q { color: var(--ink-dim); }
+.metric .inv { color: var(--warn); font-size: 11px; }
+.metric .scale { display: flex; gap: 3px; margin-top: 4px; align-items: center; }
+.metric .lv {
+  font: inherit; font-size: 11px; width: 20px; padding: 1px 0; cursor: pointer;
+  background: transparent; color: var(--ink-faint);
+  border: 1px solid var(--line); border-radius: 2px;
+}
+.metric .lv:hover { color: var(--ink); border-color: var(--ink-faint); }
+.metric .lv.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.metric .lv.na { width: auto; padding: 1px 5px; }
+.metric .anchor { color: var(--ink-faint); font-size: 11px; margin-top: 3px; min-height: 15px; }
+.metric .anchor b { color: var(--ink-dim); font-weight: 500; }
+.metric .cited { color: var(--accent); font-size: 11px; }
+.metric .mprop { color: var(--ink-faint); font-size: 11px; }
+.metric .mprop.differ { color: var(--warn); }
+.coh { font-size: 11px; margin-top: 6px; }
+.coh.bad { color: var(--bad); }
+.coh.good { color: var(--good); }

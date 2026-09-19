@@ -101,6 +101,27 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 return self._send_json(self._import(body))
             if url.path == "/api/unmatched/assign":
                 return self._send_json(self._assign_unmatched(body))
+            if url.path == "/api/propose":
+                from . import coanalyse
+                from .providers import get_provider
+                provider = get_provider(body.get("provider", "mock"),
+                                        body.get("model", "mock-1"))
+                return self._send_json(coanalyse.propose(
+                    self.conn, body["run_id"], provider,
+                    show_evidence=bool(body.get("show_evidence", True))))
+            if url.path == "/api/rating":
+                from . import coanalyse
+                rid = annotate.submit(
+                    self.conn,
+                    run_id=body["run_id"],
+                    annotator=body.get("annotator", "local"),
+                    scores={m: body.get("scores", {}).get(m) for m in HUMAN_METRICS},
+                    blinded=bool(body.get("blinded", True)),
+                    citations=body.get("citations") or {},
+                    notes=body.get("notes", ""),
+                )
+                return self._send_json({"ok": True, "id": rid,
+                                        "coverage": coanalyse.coverage(self.conn)})
             if url.path == "/api/span_label":
                 from . import coanalyse
                 label_id = coanalyse.record(
@@ -166,7 +187,7 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 },
                 "metrics": HUMAN_METRICS,
                 "inverted_metrics": sorted(INVERTED_METRICS),
-                "rubric": annotate.RUBRIC,
+                "rubric": annotate.rubric_payload(),
                 "refusal_labels": list(annotate.REFUSAL_LABELS),
                 "campaigns": db.query(self.conn, "SELECT * FROM campaign ORDER BY created_at DESC"),
                 "families": [
@@ -451,6 +472,15 @@ class ExplorerHandler(BaseHTTPRequestHandler):
             if convo is None:
                 return {"error": f"no run {run_id}"}
             convo["labels"] = coanalyse.labels_for(self.conn, run_id)
+            convo["rubric"] = annotate.rubric_payload()
+            convo["ratings"] = {
+                "human": db.query(self.conn,
+                                  "SELECT * FROM annotation WHERE run_id = ? "
+                                  "AND pass_index = 0", (run_id,)),
+                "model": db.query(self.conn,
+                                  "SELECT * FROM judgement WHERE run_id = ? "
+                                  "ORDER BY created_at DESC LIMIT 1", (run_id,)),
+            }
             convo["vocabulary"] = list(SPAN_LABELS)
             return convo
 

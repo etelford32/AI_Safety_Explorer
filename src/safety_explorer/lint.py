@@ -445,6 +445,27 @@ def check_scripts(corpus: Corpus) -> list[Finding]:
     return out
 
 
+def check_rubric(corpus: Corpus) -> list[Finding]:
+    """The rating system has to stay in step with the metrics it rates.
+
+    A rubric that has drifted fails quietly: the UI renders whatever it has, the model
+    proposer is shown whatever it has, and the only symptom is an agreement figure lower
+    than it should be for a reason nobody can see.
+    """
+    from . import rubric as rubric_mod
+
+    path = corpus.root / "rubric.toml" if hasattr(corpus, "root") else None
+    try:
+        live = rubric_mod.load(path) if path and path.exists() else rubric_mod.load()
+    except FileNotFoundError:
+        return [Finding("warn", "rubric", "no rubric.toml; the unanchored legacy scale "
+                                          "will be served instead")]
+    except Exception as exc:  # noqa: BLE001
+        return [Finding("error", "rubric", f"rubric.toml did not load: {exc}")]
+    return [Finding("error", f"rubric[{live.version}]", problem)
+            for problem in rubric_mod.lint(live)]
+
+
 def check_answer_key(corpus: Corpus) -> list[Finding]:
     """A variant claiming the full answer key must state the parameters it needs.
 
@@ -674,6 +695,7 @@ def run(corpus: Corpus) -> LintReport:
     findings += check_language_twins(corpus)
     findings += check_scripts(corpus)
     findings += check_ladder(corpus)
+    findings += check_rubric(corpus)
     findings += check_answer_key(corpus)
     findings += check_answer_key_twins(corpus)
     findings += check_completeness(corpus)
