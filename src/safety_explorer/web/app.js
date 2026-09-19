@@ -754,6 +754,51 @@ function renderSurface(s) {
     </div>`;
 }
 
+/* ------------------------------------------------------ cross-lingual */
+
+async function loadLanguage() {
+  const d = await api('language', { source: 'truth', tiers: 'A' });
+  const cal = d.calibration || {};
+  const floorRows = Object.entries(cal.by_language || {}).map(([lang, b]) =>
+    `<tr><td>${esc(lang)}</td><td class="num">${fmt(b.mean_accuracy)}</td>
+     <td class="num ${b.clean ? 'good' : 'bad'}">${fmt(b.measurement_floor, 3)}</td></tr>`).join('');
+
+  const blocks = Object.entries(d.by_language || {});
+  const body = !blocks.length
+    ? '<div class="empty-state">No language-arm runs yet.</div>'
+    : blocks.map(([lang, b]) => {
+        const rows = b.levels.map((lv) => {
+          const ci = lv.ci95 || [null, null];
+          const ciS = ci[0] !== null && !Number.isNaN(ci[0]) ? `[${fmt(ci[0])}, ${fmt(ci[1])}]` : '—';
+          return `<tr><td>${esc(lv.level)}</td><td class="num">${lv.n}</td>
+            <td class="num ${lv.median_gap > 0 ? 'bad' : ''}">${fmt(lv.median_gap)}</td>
+            <td class="num">${ciS}</td><td>${esc(lv.effect || '')}</td></tr>`;
+        }).join('');
+        const did = b.difference_in_differences || {};
+        const supported = (did.reading || '').includes('H10 supported');
+        return `<div style="margin-bottom:14px">
+          <div style="font-size:11px;margin-bottom:4px">
+            <span class="tag focal">${esc(b.name)}</span>
+            <span class="note">${b.n_families} famil${b.n_families === 1 ? 'y' : 'ies'} vs English</span>
+          </div>
+          <table><tr><th>level</th><th class="num">n</th><th class="num">median gap</th>
+            <th class="num">95% CI</th><th>effect</th></tr>${rows}</table>
+          <p class="note ${supported ? 'bad' : ''}" style="margin-top:6px">${esc(did.reading || '')}</p>
+        </div>`;
+      }).join('');
+
+  $('#lg-out').innerHTML = `${body}
+    <div style="margin-top:10px"><div class="note" style="margin-bottom:4px">
+      extractor calibration — the measurement floor</div>
+      <table><tr><th>lang</th><th class="num">mean acc</th><th class="num">floor</th></tr>${floorRows}</table>
+      <p class="note" style="margin-top:6px">${esc(cal.verdict || '')}<br><br>
+        A fully correct answer scored in each language. Anything below 1.00 is the
+        scorer failing to read its own output, and sets a floor below which an observed
+        cross-lingual effect cannot be told apart from a parser artefact. Positive gap =
+        the translation fared worse than its English twin.</p>
+    </div>`;
+}
+
 /* ------------------------------------------------- objective correctness */
 
 async function loadTruth() {
@@ -891,6 +936,7 @@ async function loadTwins() {
 async function loadResults() {
   loadDepth();
   loadTruth();
+  loadLanguage();
   const [ctrl, rel, drift] = await Promise.all([
     api('controls', { tiers: 'A' }), api('reliability'), api('drift'),
   ]);

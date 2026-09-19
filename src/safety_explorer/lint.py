@@ -13,7 +13,8 @@ import math
 import re
 from dataclasses import dataclass
 
-from . import DEPTH_ARM, DEPTH_ARM_LEVEL, DIMENSIONS, LADDER_DELTAS, VARIANT_ORDER
+from . import (DEPTH_ARM, DEPTH_ARM_LEVEL, DIMENSIONS, LANGUAGE_ARM_VARIANTS,
+               LANGUAGE_CHAR_BAND, LANGUAGES, LADDER_DELTAS, VARIANT_ORDER)
 from .corpus import Corpus, Variant, normalise
 
 # Twin-matching tolerances. Deliberately strict: a twin pair that drifts past these
@@ -210,6 +211,15 @@ def check_twins(corpus: Corpus) -> list[Finding]:
 
             is_depth_twin = v.depth != base.depth
 
+            # A translation shares almost no vocabulary with its source and has a length
+            # governed by its script, so neither the word-ratio nor the Jaccard check
+            # means anything here. `check_language_twins` applies the rules that do.
+            if v.language != base.language:
+                if v.output_format and normalise(v.output_format) not in normalise(v.text):
+                    out.append(Finding("error", v.id,
+                                       "declared output_format does not appear in the translation"))
+                continue
+
             ratio = v.word_count / base.word_count if base.word_count else 0.0
             if not TOKEN_RATIO_MIN <= ratio <= TOKEN_RATIO_MAX:
                 out.append(Finding(
@@ -253,7 +263,10 @@ def check_depth_twins(corpus: Corpus) -> list[Finding]:
         if not arm:
             continue
 
-        index = {v.variant: v for v in fam.variants}
+        # Index the LADDER only. Translations reuse the variant letter — C.ja is also
+        # variant "C" — so indexing every variant lets a language twin overwrite the
+        # English one and the depth check compares against the wrong prompt.
+        index = {v.variant: v for v in fam.ladder_variants}
         present = {v.variant for v in arm}
         missing = [k for k in DEPTH_ARM if k not in present]
         if missing:
@@ -303,6 +316,132 @@ def check_depth_twins(corpus: Corpus) -> list[Finding]:
                     f"only here {only_here}, only there {only_there}. Different wording "
                     f"is the manipulation; different numbers are a different question.",
                 ))
+    return out
+
+
+def check_language_twins(corpus: Corpus) -> list[Finding]:
+    """A translation must pose the same question, in a different language, and nothing else.
+
+    What is checked, and why each one:
+
+    * **Identical numeric parameters.** The strongest guarantee available and the one
+      that replaces vocabulary matching — a faithful translation changes every word and
+      no figure. Comparison is decimal-separator aware, so French "0,35" and English
+      "0.35" are the same number rather than a 100-fold discrepancy.
+    * **Identical dimension vector.** Language is the manipulation; if intent or
+      specificity also moved, an observed effect could belong to either.
+    * **A character-count band**, not a word-count ratio. Japanese has no inter-word
+      spaces, so word counts are meaningless; characters mean the same thing in every
+      script. The band is wide because it guards against a truncated translation, not
+      against style.
+    """
+    out: list[Finding] = []
+    for fam in corpus.families:
+        if not fam.is_active:
+            continue
+        english = {v.variant: v for v in fam.variants if v.language == "en"}
+        by_language: dict[str, set[str]] = {}
+
+        for v in fam.language_arm:
+            if v.status != "active":
+                continue
+            if v.language not in LANGUAGES or v.language == "en":
+                out.append(Finding("error", v.id,
+                                   f"language '{v.language}' is not a declared study language"))
+                continue
+            by_language.setdefault(v.language, set()).add(v.variant)
+
+            if v.variant not in LANGUAGE_ARM_VARIANTS:
+                out.append(Finding(
+                    "error", v.id,
+                    f"'{v.variant}' is outside the language arm {LANGUAGE_ARM_VARIANTS}"))
+                continue
+            base = english.get(v.variant)
+            if base is None:
+                out.append(Finding("error", v.id,
+                                   f"English counterpart '{v.variant}' is missing"))
+                continue
+            if v.baseline != base.id:
+                out.append(Finding(
+                    "error", v.id,
+                    f"baseline is '{v.baseline}', but a translation must be compared "
+                    f"against its English counterpart '{base.id}'"))
+
+            moved = {d for d in DIMENSIONS if getattr(v, d) != getattr(base, d)}
+            if moved:
+                out.append(Finding(
+                    "error", v.id,
+                    f"translation moves {sorted(moved)}; language must be the only "
+                    f"thing that differs from the English variant"))
+
+            if v.numeric_signature != base.numeric_signature:
+                only_here = sorted(float(x) for x in v.numeric_signature - base.numeric_signature)
+                only_there = sorted(float(x) for x in base.numeric_signature - v.numeric_signature)
+                out.append(Finding(
+                    "error", v.id,
+                    f"numeric parameters differ from the English variant: "
+                    f"only here {only_here}, only there {only_there}. A translation "
+                    f"changes every word and no figure."))
+
+            lo, hi = LANGUAGE_CHAR_BAND.get(v.language, (0.5, 2.0))
+            ratio = v.char_count / base.char_count if base.char_count else 0.0
+            if not lo <= ratio <= hi:
+                out.append(Finding(
+                    "error", v.id,
+                    f"character count is {ratio:.2f}x the English variant, outside "
+                    f"[{lo}, {hi}] ({v.char_count} vs {base.char_count}) — likely a "
+                    f"truncated or padded translation"))
+
+        for language, variants in by_language.items():
+            missing = [x for x in LANGUAGE_ARM_VARIANTS if x not in variants]
+            if missing:
+                out.append(Finding(
+                    "error", f"{fam.id}/{language}",
+                    f"language arm is incomplete, missing {missing}; a partial arm "
+                    f"cannot support a difference-in-differences"))
+    return out
+
+
+#: Scripts that must not appear in a translation unless that translation declares them.
+#: A stray word in a third script is a real confound — the model may react to the mixed
+#: script rather than to the language — and it is exactly the kind of slip that survives
+#: proofreading by someone who does not read the target language.
+_SCRIPT_RANGES = {
+    "cyrillic": re.compile(r"[\u0400-\u04ff]"),
+    "cjk": re.compile(r"[\u3040-\u30ff\u4e00-\u9fff]"),
+    "hangul": re.compile(r"[\uac00-\ud7af]"),
+    "arabic": re.compile(r"[\u0600-\u06ff]"),
+    "greek": re.compile(r"[\u0370-\u03ff]"),
+    "hebrew": re.compile(r"[\u0590-\u05ff]"),
+}
+
+#: Scripts each study language is allowed to contain. Greek is permitted everywhere
+#: because these prompts are full of sigma, tau and alpha.
+_ALLOWED_SCRIPTS = {
+    "en": {"greek"}, "fr": {"greek"}, "es": {"greek"},
+    "ja": {"cjk", "greek"},
+}
+
+
+def check_scripts(corpus: Corpus) -> list[Finding]:
+    """No translation may contain a script its language does not use."""
+    out: list[Finding] = []
+    for v in corpus.all_variants:
+        if v.status != "active":
+            continue
+        allowed = _ALLOWED_SCRIPTS.get(v.language, set())
+        for name, pattern in _SCRIPT_RANGES.items():
+            if name in allowed:
+                continue
+            m = pattern.search(v.text)
+            if m:
+                window = v.text[max(0, m.start() - 20):m.start() + 20].replace("\n", " ")
+                out.append(Finding(
+                    "error", v.id,
+                    f"contains {name} script, which '{v.language}' does not use: "
+                    f"...{window}...",
+                ))
+                break
     return out
 
 
@@ -367,7 +506,10 @@ def check_independence(corpus: Corpus) -> tuple[list[Finding], dict, dict]:
     families here would be the wrong test: it would pick up between-family differences
     in where each ladder sits in the space and report them as within-arm confounds.
     """
-    active = [v for v in corpus.all_variants if v.status == "active"]
+    # Translations duplicate their English counterpart's coordinates exactly, so
+    # including them would weight those points N times and distort the matrix.
+    active = [v for v in corpus.all_variants
+              if v.status == "active" and v.language == "en"]
     marginal = _corr_matrix(active)
 
     worst: dict[str, dict[str, float]] = {a: {b: 0.0 for b in DIMENSIONS} for a in DIMENSIONS}
@@ -448,6 +590,8 @@ def run(corpus: Corpus) -> LintReport:
     findings += check_output_format(corpus)
     findings += check_twins(corpus)
     findings += check_depth_twins(corpus)
+    findings += check_language_twins(corpus)
+    findings += check_scripts(corpus)
     findings += check_ladder(corpus)
     findings += check_completeness(corpus)
     indep, matrix, critical = check_independence(corpus)

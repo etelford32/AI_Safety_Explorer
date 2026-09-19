@@ -92,9 +92,10 @@ def test_runner_execute_honours_should_stop(conn, corpus):
         calls["n"] += 1
         return calls["n"] > 3
 
+    n_cells = len([v for v in corpus.runnable if v.family_id == "orbital_debris"])
     stats = runner.execute(conn, cid, corpus, provider, 1,
                            only=["orbital_debris"], should_stop=stop_after_three)
     assert stats["cancelled"] is True
     stored = db.query_one(conn, "SELECT COUNT(*) AS n FROM run WHERE campaign_id = ?", (cid,))
     # Cancellation is checked between cells, so completed work is always written.
-    assert 0 < stored["n"] < 9
+    assert 0 < stored["n"] < n_cells

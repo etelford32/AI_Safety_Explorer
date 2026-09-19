@@ -14,10 +14,11 @@ def test_multi_turn_predecessor_runs_first(corpus):
 
 def test_repeats_are_outermost(corpus):
     """An interrupted campaign should yield a balanced design, not three copies of family 1."""
+    n_cells = len([v for v in corpus.runnable if v.family_id == "orbital_debris"])
     plan = runner.plan(corpus, 3, only=["orbital_debris"])
-    first_sweep = plan[:9]
+    first_sweep = plan[:n_cells]
     assert {p.repeat_index for p in first_sweep} == {0}
-    assert len({p.variant.id for p in first_sweep}) == 9
+    assert len({p.variant.id for p in first_sweep}) == n_cells
 
 
 def test_conversation_replays_the_real_exchange(populated, corpus):
@@ -41,11 +42,13 @@ def test_conversation_replays_the_real_exchange(populated, corpus):
 def test_resume_skips_existing_cells(conn, corpus):
     provider = get_provider("mock", "mock-1")
     cid = runner.create_campaign(conn, "r", provider, corpus, 1)
-    # 6 ladder variants + 3 depth-arm variants.
+    # Derived, not hardcoded: the family grows as arms are added (ladder, depth,
+    # language), and a literal here breaks on every extension.
+    n_cells = len([v for v in corpus.runnable if v.family_id == "orbital_debris"])
     first = runner.execute(conn, cid, corpus, provider, 1, only=["orbital_debris"])
-    assert first["ok"] == 9 and first["skipped"] == 0
+    assert first["ok"] == n_cells and first["skipped"] == 0
     second = runner.execute(conn, cid, corpus, provider, 1, only=["orbital_debris"])
-    assert second["ok"] == 0 and second["skipped"] == 9
+    assert second["ok"] == 0 and second["skipped"] == n_cells
 
 
 def test_api_runs_are_tier_a(populated):

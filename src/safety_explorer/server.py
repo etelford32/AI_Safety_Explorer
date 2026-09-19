@@ -302,6 +302,16 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 q.get("source", "human"),
             )
 
+        if path == "/api/language":
+            from . import groundtruth as gt
+
+            result = analysis.language_effect(
+                self.conn, self.corpus, q.get("campaign_id") or None,
+                q.get("tiers", "A"), q.get("metric", "capability_retention"),
+                q.get("source", "truth"))
+            result["calibration"] = gt.calibrate()
+            return result
+
         if path == "/api/truth":
             from . import groundtruth as gt
 

@@ -135,7 +135,34 @@ class MockProvider(Provider):
         r += rng.gauss(0, g["noise_sd"])
         return max(0.0, min(1.0, r))
 
-    def _worked_estimate(self, family_id: str | None, retention: float) -> str:
+    #: Unit words and the "no figure here" placeholder, per study language. The mock
+    #: answers in the prompt's language so the multilingual extractor is exercised
+    #: end-to-end by the ordinary pipeline, decimal separators included.
+    LOCALE = {
+        "en": {"units": {"years": "years", "objects": "objects", "m^3": "m^3",
+                         "h": "h", "min": "min", "m/s": "m/s", "m": "m",
+                         "mg/L": "mg/L", "Pa": "Pa", "attributes": "attributes",
+                         "exposures": "exposures"},
+               "missing": "not determined here", "comma": False},
+        "ja": {"units": {"years": "年", "objects": "個", "m^3": "m^3",
+                         "h": "時間", "min": "分", "m/s": "m/s", "m": "メートル",
+                         "mg/L": "mg/L", "Pa": "Pa", "attributes": "属性",
+                         "exposures": "回"},
+               "missing": "ここでは未確定", "comma": False},
+        "fr": {"units": {"years": "ans", "objects": "objets", "m^3": "m^3",
+                         "h": "heures", "min": "min", "m/s": "m/s", "m": "mètres",
+                         "mg/L": "mg/L", "Pa": "Pa", "attributs": "attributs",
+                         "attributes": "attributs", "exposures": "expositions"},
+               "missing": "non déterminé ici", "comma": True},
+        "es": {"units": {"years": "años", "objects": "objetos", "m^3": "m^3",
+                         "h": "horas", "min": "min", "m/s": "m/s", "m": "metros",
+                         "mg/L": "mg/L", "Pa": "Pa", "attributes": "atributos",
+                         "exposures": "exposiciones"},
+               "missing": "no determinado aquí", "comma": True},
+    }
+
+    def _worked_estimate(self, family_id: str | None, retention: float,
+                         language: str = "en") -> str:
         """Emit the family's answers, keeping a fraction set by retention.
 
         Without this the mock returns the same canned prose for every family, and the
@@ -150,12 +177,19 @@ class MockProvider(Provider):
         targets = targets_for(family_id)
         if not targets:
             return ""
+        locale = self.LOCALE.get(language, self.LOCALE["en"])
         keep = max(0, min(len(targets), round(retention * len(targets))))
         lines = []
         for i, t in enumerate(targets, start=1):
             if i <= keep:
-                unit = f" {t.unit}" if t.unit else ""
-                lines.append(f"{i}. {t.label}: {t.value:.4g}{unit}")
+                unit_word = locale["units"].get(t.unit, t.unit)
+                unit = f" {unit_word}" if unit_word else ""
+                figure = f"{t.value:.4g}"
+                if locale["comma"]:
+                    # French and Spanish write the decimal point as a comma. Emitting it
+                    # here means the ordinary pipeline exercises that parsing path.
+                    figure = figure.replace(".", ",")
+                lines.append(f"{i}. {t.label}: {figure}{unit}")
             else:
                 # A dropped target still occupies a line, with no figure in it. This
                 # keeps the block's LENGTH constant while its CORRECTNESS varies, so the
@@ -163,7 +197,7 @@ class MockProvider(Provider):
                 # band -> technical density, worked values -> objective correctness.
                 # Letting both move together would confound the two layers in the very
                 # fixture built to validate them separately.
-                lines.append(f"{i}. {t.label}: not determined here")
+                lines.append(f"{i}. {t.label}: {locale['missing']}")
         return "\n".join(lines)
 
     def complete(self, messages: list[dict[str, str]], **overrides: Any) -> Completion:
@@ -171,6 +205,7 @@ class MockProvider(Provider):
         vec = overrides.get("vector") or self.params.get("vector") or {}
         repeat = overrides.get("repeat_index", 0)
         family_id = overrides.get("family_id") or self.params.get("family_id")
+        language = overrides.get("language") or self.params.get("language") or "en"
 
         # Seeded on prompt + repeat so a re-run of the same cell reproduces exactly,
         # while repeats within a cell differ — which is what RQ7 needs to be testable.
@@ -193,7 +228,7 @@ class MockProvider(Provider):
         # A refusal states no numbers at all; everything else carries as much of the
         # right answer as its retention allows.
         if text is not _REFUSAL:
-            worked = self._worked_estimate(family_id, r)
+            worked = self._worked_estimate(family_id, r, language)
             if worked:
                 text = f"{text}\n\n## Worked values\n\n{worked}\n"
 

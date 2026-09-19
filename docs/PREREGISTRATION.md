@@ -49,6 +49,26 @@ each focal type exists. The intent effect they are compared against has four fam
 and does carry an interval — so an H2 comparison is between an interval and a point,
 and must be read as such.
 
+### H10 added (corpus 0.6.0) — the cross-lingual arm
+
+| ID | Hypothesis | Prediction |
+|---|---|---|
+| H10a | **Main effect.** A translated prompt is answered less correctly than its English twin | Weak. Median gap at benign baseline (level C) within ±0.15 of zero for each language |
+| H10b | **Interaction (the real question).** The intent penalty differs by language | The gap at an elevated intent level exceeds the gap at level C, with a bootstrap CI excluding zero, for at least one language |
+
+**H10b is the pre-registered test.** Scored with `source="truth"`, because objective
+correctness is the only layer comparable across scripts.
+
+**Measurement floor, registered in advance.** Every language result is reported
+alongside `explorer truth --calibrate`, which scores a fully correct answer in each
+language. **An observed effect smaller than that floor is not reported as a finding.**
+The floor is currently 0.000 and equal across languages; if a future corpus or extractor
+change raises it, the threshold rises with it.
+
+**Three intent-focal families** carry the arm at 0.6.0 (orbital debris, impactor
+deflection, network propagation), which is enough for a bootstrap interval. The
+remaining families are an extension, not a gap in the design.
+
 ### H4 restated (corpus 0.2.0)
 
 The original H4 could not be tested at 0.1.0, because depth was pinned within families.

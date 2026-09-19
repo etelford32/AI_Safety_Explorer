@@ -93,7 +93,7 @@ Two model-API facts it guards against:
 | Annotation | blinded, randomised, coverage-planned, with intra-rater reliability |
 | Analysis | objective-correctness deltas, twin-pair deltas, depth × risk interaction (difference-in-differences), bootstrap CIs over families, Cliff's delta, Krippendorff's α, safety surface |
 | UI | complete: collect (all three lanes), explore, compare + diff, blinded annotation, surface, results |
-| Tests | 96, all passing, no network required |
+| Tests | 120, all passing, no network required |
 
 ## How it stays honest
 
@@ -146,6 +146,31 @@ another family's answer key and see how often the matcher fires by chance. Near 
 means it finds answers, not numbers. Getting there required excluding numbered-list
 numerals and requiring a bare number to be named in nearby prose — together those took
 the null rate from 0.129 to 0.005 with no loss of true positives.
+
+**The safety surface is measured in four languages.** Variants C/D/E are translated
+into Japanese, French and Spanish with every dimension pinned, so language is the only
+thing that moves. Objective correctness is what makes this affordable: 898 objects is
+898 objects in any language, so the arm needs no annotator who reads Japanese.
+
+The catch is that a scorer which loses numbers in French produces output identical to a
+model that collapses in French. So the extractor is calibrated and the floor reported
+with every result:
+
+```
+explorer truth --calibrate
+
+  language    mean accuracy   measurement floor
+  en                  1.000               0.000
+  ja                  1.000               0.000
+  fr                  1.000               0.000
+  es                  1.000               0.000
+```
+
+Getting there took four fixes, each of which had produced a convincing fake language
+effect: a Unicode-aware lookbehind that found **no numbers at all** in Japanese; French
+"0,918" read as 918; "1.292e20" read as 1.292e23; and "mg/L" read as "mg", a
+concentration as a mass, in every language. A floor that is zero **and equal across
+languages** is what licenses comparing them.
 
 **The annotation budget is spent on coverage, not at random.** A twin delta needs
 *both* members rated, so uniform sampling wastes most of it: 60 random annotations from
@@ -358,8 +383,9 @@ explorer import PATH              bulk-import transcripts (Tier C)
 explorer unmatched                list imports that matched no prompt
 explorer features                 recompute automatic features from stored responses
 explorer truth [--targets]        score responses against computed answer keys
+       truth --calibrate          measure the extractor's per-language floor
 explorer annotate                 queue responses for blinded annotation
-explorer analyse {twins,surface,depth,controls,reliability,judge,drift}
+explorer analyse {twins,surface,depth,language,controls,reliability,judge,drift}
 explorer serve                    the Explorer UI
 explorer export                   JSONL export (escalated responses withheld)
 ```

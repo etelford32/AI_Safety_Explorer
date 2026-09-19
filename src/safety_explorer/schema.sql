@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS prompt (
     family_id        TEXT REFERENCES family(id) ON DELETE CASCADE,
     twin_group_id    TEXT REFERENCES twin_group(id) ON DELETE CASCADE,
     arm              TEXT NOT NULL,          -- family | control
-    sub_arm          TEXT NOT NULL DEFAULT 'ladder',  -- ladder | depth | control
+    sub_arm          TEXT NOT NULL DEFAULT 'ladder',  -- ladder | depth | language | control
+    language         TEXT NOT NULL DEFAULT 'en',      -- BCP-47 primary subtag
     control_arm      TEXT,                   -- alarming_benign | innocuous_consequential
     variant          TEXT NOT NULL,          -- A..F, C_intro..E_intro, or control id
     title            TEXT NOT NULL,

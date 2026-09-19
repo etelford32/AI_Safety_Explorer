@@ -13,7 +13,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import CORPUS_VERSION, DIMENSIONS
+from . import CORPUS_VERSION, DIMENSIONS, UNSPACED_SCRIPTS
 
 CORPUS_ROOT = Path("corpus")
 
@@ -27,25 +27,23 @@ def text_hash(text: str) -> str:
     return hashlib.sha256(normalise(text).encode("utf-8")).hexdigest()
 
 
-_NUMBER_RE = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?(?:[eE][-+]?\d+)?(?![\w])")
-
-
-def numeric_signature(text: str) -> frozenset[str]:
+def numeric_signature(text: str, language: str = "en") -> frozenset[str]:
     """The set of numeric literals in a prompt, normalised.
 
     Used to verify that two prompts pose the *same physical problem*. This is the
-    guarantee that replaces vocabulary matching for depth twins: an introductory and a
-    graduate phrasing of one question must differ in wording — that is the manipulation
-    — but they must not differ in a single parameter, or they are different questions.
+    guarantee that replaces vocabulary matching for both the depth arm (an introductory
+    and a graduate phrasing must differ in wording but not in a single parameter) and
+    the language arm (likewise across translations).
+
+    Language matters here. A French prompt writes 0,35 where English writes 0.35, and
+    reading that with English conventions gives 35 — so a faithful translation would be
+    reported as changing every decimal parameter in the question. The extraction is
+    shared with the response scorer so there is one implementation of the
+    decimal-separator rule, not two that can drift apart.
     """
-    out = set()
-    for tok in _NUMBER_RE.findall(text):
-        tok = tok.replace(",", "")
-        try:
-            out.add(repr(float(tok)))
-        except ValueError:
-            continue
-    return frozenset(out)
+    from .groundtruth import extract_quantities
+
+    return frozenset(repr(q.value) for q in extract_quantities(text, language))
 
 
 @dataclass
@@ -66,6 +64,7 @@ class Variant:
     status: str = "active"
     arm: str = "family"
     sub_arm: str = "ladder"
+    language: str = "en"
     control_arm: str | None = None
     family_id: str | None = None
     twin_group_id: str | None = None
@@ -82,11 +81,27 @@ class Variant:
 
     @property
     def numeric_signature(self) -> frozenset[str]:
-        return numeric_signature(self.text)
+        return numeric_signature(self.text, self.language)
 
     @property
     def word_count(self) -> int:
+        """Whitespace tokens. Meaningless for unspaced scripts — use `length` instead."""
         return len(self.text.split())
+
+    @property
+    def char_count(self) -> int:
+        """Non-whitespace characters: comparable across scripts, unlike word count."""
+        return len("".join(self.text.split()))
+
+    @property
+    def length(self) -> int:
+        """The right length measure for this variant's script.
+
+        Japanese has no inter-word spaces, so `text.split()` returns a handful of
+        enormous tokens and every word-ratio check becomes nonsense. Character count is
+        the measure that means the same thing in every script.
+        """
+        return self.char_count if self.language in UNSPACED_SCRIPTS else self.word_count
 
 
 @dataclass
@@ -122,6 +137,10 @@ class Family:
     @property
     def depth_arm(self) -> list["Variant"]:
         return [v for v in self.variants if v.sub_arm == "depth"]
+
+    @property
+    def language_arm(self) -> list["Variant"]:
+        return [v for v in self.variants if v.sub_arm == "language"]
 
 
 @dataclass
@@ -221,6 +240,7 @@ def load_family(path: Path) -> Family:
                 status=v.get("status", fam.status),
                 arm="family",
                 sub_arm=v.get("sub_arm", "ladder"),
+                language=v.get("language", "en"),
                 family_id=fam.id,
                 twin_group_id=tg_id,
                 baseline=v.get("baseline") or None,

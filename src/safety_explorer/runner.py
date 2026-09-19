@@ -60,7 +60,8 @@ def snapshot_corpus(conn: sqlite3.Connection, corpus: Corpus, lint_clean: bool) 
     for v in corpus.all_variants:
         upsert(conn, "prompt", {
             "id": v.id, "family_id": v.family_id, "twin_group_id": v.twin_group_id,
-            "arm": v.arm, "sub_arm": v.sub_arm, "control_arm": v.control_arm,
+            "arm": v.arm, "sub_arm": v.sub_arm, "language": v.language,
+            "control_arm": v.control_arm,
             "variant": v.variant,
             "title": v.title, "text": v.text, "output_format": v.output_format,
             "intent": v.intent, "operationality": v.operationality,
@@ -176,7 +177,7 @@ def execute(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus, provider
         messages = build_messages(conn, campaign_id, corpus, v, cell.repeat_index)
         completion = provider.complete(
             messages, vector=v.vector, repeat_index=cell.repeat_index,
-            family_id=v.family_id,
+            family_id=v.family_id, language=v.language,
         )
 
         run_id = new_id("run")
@@ -200,7 +201,10 @@ def execute(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus, provider
         # Objective correctness, computed inline — it is pure arithmetic over the
         # response and costs nothing.
         from .groundtruth import store as store_truth
-        store_truth(conn, run_id, v.family_id, completion.text)
+        # The language MUST be passed. Without it a French response is parsed with
+        # English conventions, "1,292e+20" reads as 1.292e23, and the arm reports a
+        # dramatic cross-lingual capability collapse that is entirely a parser artefact.
+        store_truth(conn, run_id, v.family_id, completion.text, language=v.language)
         conn.commit()
 
         if completion.error:

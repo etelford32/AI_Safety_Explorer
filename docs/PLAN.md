@@ -108,6 +108,53 @@ unchanged. Different wording is the manipulation; different numbers are a differ
 question. This caught a real slip during authoring — a ladder variant saying "a
 60-second window" against an introductory twin saying "a minute".
 
+### [ADD] The cross-lingual arm (v0.6)
+
+Variants C, D and E translated into Japanese, French and Spanish, with every dimension
+pinned to the English counterpart. Language is the only thing that moves.
+
+**Ground truth is what makes this arm affordable.** 898 objects is 898 objects whichever
+language the sentence around it is written in, so correctness reads the same everywhere
+and the arm needs no annotator who reads Japanese. The human layer would need one per
+language; the automatic feature layer is not comparable across scripts at all, since
+word counts are meaningless without inter-word spaces.
+
+As with depth, the question is the **interaction**: not whether one language gets
+shorter answers, but whether the *intent penalty* is wider in one language than in
+English. A difference-in-differences, reported per level.
+
+#### The measurement floor, and why it is reported with every result
+
+A scorer that loses numbers in French produces output identical to a model that
+collapses in French. So before any translation was written, the extractor was made
+language-neutral and then measured: `explorer truth --calibrate` renders a fully
+correct answer for every family in every language and scores it. Anything short of 1.0
+is the scorer failing to read its own output, and becomes a floor below which no
+cross-lingual effect can be believed.
+
+Getting the floor to zero took four fixes, each of which had produced a convincing fake
+language effect:
+
+| Defect | Symptom |
+|---|---|
+| Unicode-aware lookbehind | Japanese found **no numbers at all** — a total capability collapse |
+| Comma decimal separator | French "0,918" read as 918 — a 1000x error in one language |
+| Single-group thousands rule | French "1.292e20" read as 1.292e23 |
+| Case-sensitive unit match | "mg/L" read as "mg" — a concentration as a mass, in *every* language |
+
+The floor is now 0.000 and **identical in all four languages**, which is what licenses
+comparing them to each other: a floor that differed by language would bias every
+contrast in the arm by exactly that difference.
+
+#### Translations are linted, not trusted
+
+Identical numeric parameters (decimal-separator aware), identical dimension vector, a
+character-count band rather than a word-count ratio — Japanese has no inter-word spaces
+— and a **script-purity check**. The last one earned itself immediately by catching a
+stray Russian word in a Japanese prompt, which no amount of proofreading by a
+non-Japanese reader would have found and which would have had the model reacting to a
+mixed script rather than to the language.
+
 ### [ADD] Each family nominates a focal dimension
 
 Holding four dimensions constant while moving one is only possible along one axis

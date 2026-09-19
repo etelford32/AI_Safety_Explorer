@@ -303,6 +303,26 @@ def cmd_truth(args) -> int:
 
     conn = db.connect(args.db)
 
+    if args.calibrate:
+        cal = gt.calibrate()
+        print("extractor calibration — a fully correct answer, scored in each language")
+        print("anything below 1.00 is the scorer failing to read its own output\n")
+        print(f"  {'language':10s}{'mean accuracy':>15}{'measurement floor':>20}")
+        for lang, b in cal["by_language"].items():
+            print(f"  {lang:10s}{b['mean_accuracy']:>15.3f}{b['measurement_floor']:>20.3f}")
+        weak = {f"{lang}/{fam}": acc
+                for lang, b in cal["by_language"].items()
+                for fam, acc in b["per_family"].items() if acc < 1.0}
+        if weak:
+            print("\n  below full marks:")
+            for k, v in sorted(weak.items()):
+                print(f"    {k:40s}{v:.2f}")
+        print(f"\n  {cal['verdict']}")
+        print("  An observed cross-lingual effect smaller than the floor cannot be")
+        print("  distinguished from a parser artefact, so the floor is reported with")
+        print("  every language result rather than assumed to be zero.")
+        return 0
+
     if args.targets:
         for family in gt.families_with_ground_truth():
             print(f"\n{family}")
@@ -474,6 +494,46 @@ def cmd_analyse(args) -> int:
         print(f"  {d['note']}")
         return 0
 
+    if args.what == "language":
+        # Objective correctness is the only layer comparable across scripts, so the
+        # language arm defaults to it even though other analyses default to human.
+        source = args.source if args.source != "human" or args.explicit_source else "truth"
+        d = analysis.language_effect(conn, c, args.campaign, args.tiers,
+                                     args.metric, source)
+        args.source = source
+        label = {"truth": "objective correctness", "auto": "technical density",
+                 "human": f"'{args.metric}'"}[args.source]
+        print(f"language arm — {label}, tiers {args.tiers}, reference = English")
+        print("positive gap = the translated prompt fared worse than its English twin\n")
+        if not d["by_language"]:
+            print("  no language-arm runs yet")
+            return 0
+        for lang, block in d["by_language"].items():
+            print(f"  {block['name']} ({lang})   "
+                  f"{block['n_families']} famil{'y' if block['n_families'] == 1 else 'ies'}: "
+                  f"{', '.join(block['families'])}")
+            print(f"    {'level':<7}{'n':>5}{'median gap':>13}{'95% CI':>18}{'effect':>12}")
+            for lv in block["levels"]:
+                ci = lv.get("ci95", (None, None))
+                ci_s = f"[{ci[0]}, {ci[1]}]" if ci and ci[0] is not None else "—"
+                prov = " *" if lv.get("provisional") else ""
+                print(f"    {lv['level']:<7}{lv['n']:>5}{str(lv.get('median_gap')):>13}"
+                      f"{ci_s:>18}{str(lv.get('effect')):>12}{prov}")
+            did = block["difference_in_differences"]
+            print("\n    difference-in-differences (gap at level, minus at C):")
+            for lvl in ("D", "E"):
+                e = did.get(lvl, {})
+                if not e.get("n"):
+                    continue
+                ci = e.get("ci95", (None, None))
+                ci_s = f"[{ci[0]}, {ci[1]}]" if ci[0] is not None else "—"
+                print(f"      {e['contrast']:<10} n={e['n']:<4} median={str(e.get('median')):<8}"
+                      f" CI {ci_s:<16} {e.get('effect','')}")
+            print(f"\n    {did['reading']}\n")
+        print("  * provisional: fewer than 3 observations, or fewer than 2 families.")
+        print(f"  {d['note']}")
+        return 0
+
     if args.what == "controls":
         print(json.dumps(analysis.control_report(conn, args.campaign, args.tiers), indent=2))
         return 0
@@ -595,6 +655,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     t = sub.add_parser("truth", help="score responses against computed answer keys")
     t.add_argument("--targets", action="store_true", help="print the answer keys and exit")
+    t.add_argument("--calibrate", action="store_true",
+                   help="measure the extractor's own bias per language (the measurement floor)")
     t.set_defaults(func=cmd_truth)
 
     a = sub.add_parser("annotate", help="queue responses for human annotation")
@@ -614,14 +676,16 @@ def build_parser() -> argparse.ArgumentParser:
     a.set_defaults(func=cmd_annotate)
 
     an = sub.add_parser("analyse", help="run an analysis")
-    an.add_argument("what", choices=["twins", "surface", "depth", "controls",
-                                     "reliability", "judge", "drift"])
+    an.add_argument("what", choices=["twins", "surface", "depth", "language",
+                                     "controls", "reliability", "judge", "drift"])
     an.add_argument("--campaign", default=None)
     an.add_argument("--metric", default="capability_retention", choices=list(HUMAN_METRICS))
     an.add_argument("--tiers", default="A", help="provenance tiers to include, e.g. A or AB")
     an.add_argument("--x", default="intent")
     an.add_argument("--y", default="operationality")
     an.add_argument("--annotator", default=None)
+    an.add_argument("--explicit-source", action="store_true",
+                    help=argparse.SUPPRESS)
     an.add_argument("--source", default="human", choices=["human", "auto", "truth"],
                     help="human annotation; automatic features; or objective correctness "
                          "against a computed answer key (both of the latter need no annotation)")

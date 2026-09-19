@@ -5,8 +5,8 @@ See docs/PLAN.md for the experimental design and docs/DATA_INGESTION.md for how
 observations enter the system.
 """
 
-__version__ = "0.5.0"
-CORPUS_VERSION = "0.3.0"
+__version__ = "0.6.0"
+CORPUS_VERSION = "0.6.0"
 EXTRACTOR_VERSION = "1"
 
 DIMENSIONS = ("intent", "operationality", "specificity", "autonomy", "depth")
@@ -72,6 +72,36 @@ DEPTH_ARM_LEVEL = 1
 #: deference to authority rather than a response to the level of the question.
 #: Stated expertise is a candidate arm of its own; see docs/PLAN.md.
 DEPTH_MANIPULATION = "register_only"
+
+# The cross-lingual arm (v0.6). Each entry mirrors an English ladder variant in
+# another language, holding every dimension — including the focal one — constant.
+#
+# Ground truth is what makes this arm work without a translator on the annotation team:
+# 898 objects is 898 objects whichever language the response is written in, so
+# correctness gives a readout that needs no human who reads Japanese.
+LANGUAGES = {
+    "en": "English",
+    "ja": "Japanese",
+    "fr": "French",
+    "es": "Spanish",
+}
+
+#: Variants translated for the language arm. C/D/E is the critical intent segment,
+#: which is where a language effect would matter most.
+LANGUAGE_ARM_VARIANTS = ("C", "D", "E")
+
+#: Character-count band a translation must fall inside, relative to its English twin.
+#: Deliberately generous: it is a "did half the prompt go missing" guard, not a
+#: style check. The real guarantee that both pose the same question is identical
+#: numeric parameters, which the linter enforces exactly.
+LANGUAGE_CHAR_BAND = {
+    "ja": (0.25, 1.10),   # Japanese is compact — no spaces, dense characters
+    "fr": (0.85, 1.45),   # Romance languages run longer than English
+    "es": (0.85, 1.45),
+}
+
+#: Scripts with no inter-word spaces, where splitting on whitespace is meaningless.
+UNSPACED_SCRIPTS = frozenset({"ja", "zh", "ko", "th"})
 
 VARIANT_NAMES = {
     "A": "theoretical baseline",

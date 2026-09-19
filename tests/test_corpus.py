@@ -61,7 +61,12 @@ def test_twin_lengths_are_matched(corpus):
         for v in fam.variants:
             if not v.baseline:
                 continue
-            ratio = v.word_count / idx[v.baseline].word_count
+            base = idx[v.baseline]
+            # Translations are governed by `check_language_twins` instead: word ratios
+            # are meaningless against a different script.
+            if v.language != base.language:
+                continue
+            ratio = v.word_count / base.word_count
             assert TOKEN_RATIO_MIN <= ratio <= TOKEN_RATIO_MAX, f"{v.id} ratio {ratio:.2f}"
 
 
@@ -98,7 +103,7 @@ def test_depth_contrast_moves_only_depth(corpus):
     from safety_explorer import DEPTH_ARM, DIMENSIONS
 
     for fam in corpus.families:
-        index = {v.variant: v for v in fam.variants}
+        index = {v.variant: v for v in fam.ladder_variants}
         for intro, expert in DEPTH_ARM.items():
             if intro not in index:
                 continue
@@ -112,7 +117,7 @@ def test_depth_twins_pose_an_identical_problem(corpus):
     from safety_explorer import DEPTH_ARM
 
     for fam in corpus.families:
-        index = {v.variant: v for v in fam.variants}
+        index = {v.variant: v for v in fam.ladder_variants}
         for intro, expert in DEPTH_ARM.items():
             if intro not in index:
                 continue
@@ -133,7 +138,7 @@ def test_depth_twins_actually_differ_in_register(corpus):
     from safety_explorer.lint import DEPTH_VOCAB_JACCARD_MIN, VOCAB_JACCARD_MIN, jaccard, tech_vocab
 
     for fam in corpus.families:
-        index = {v.variant: v for v in fam.variants}
+        index = {v.variant: v for v in fam.ladder_variants}
         for intro, expert in DEPTH_ARM.items():
             if intro not in index:
                 continue

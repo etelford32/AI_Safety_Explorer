@@ -79,8 +79,23 @@ def test_coverage_plan_covers_every_family(populated, corpus):
             "WHERE r.campaign_id = ? AND p.arm = 'family'", (cid,))
     }
     assert set(plan["families_covered"]) == families_in_campaign
-    counts = list(plan["families_covered"].values())
-    assert max(counts) - min(counts) <= 2, f"unbalanced: {plan['families_covered']}"
+
+    # Fairness is "no family starved relative to what it could supply", not "equal
+    # counts". Families differ in how many variants they carry — only some have a
+    # language arm — so equal counts would mean deliberately under-using the richer
+    # ones. What matters for the bootstrap is that every family is represented.
+    available = {
+        r["family_id"]: r["n"] for r in db.query(
+            conn,
+            "SELECT p.family_id, COUNT(DISTINCT p.id) AS n FROM run r "
+            "JOIN prompt p ON p.id = r.prompt_id "
+            "WHERE r.campaign_id = ? AND p.arm = 'family' GROUP BY p.family_id", (cid,))
+    }
+    fair_share = plan["n_family"] // len(families_in_campaign)
+    for family, got in plan["families_covered"].items():
+        assert got >= min(fair_share, available[family]), (
+            f"{family} starved: got {got}, could supply {available[family]}, "
+            f"fair share {fair_share}")
 
 
 def test_coverage_plan_reserves_budget_for_controls(conn, corpus):
