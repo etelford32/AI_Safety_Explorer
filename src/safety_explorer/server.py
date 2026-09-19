@@ -333,33 +333,65 @@ class ExplorerHandler(BaseHTTPRequestHandler):
 
             rows = db.query(self.conn, """
                 SELECT p.family_id, p.variant, g.accuracy, g.null_accuracy,
+                       g.graded_accuracy, g.weighted_accuracy, g.consistency,
+                       g.consistency_coverage, g.error_classes,
                        g.targets_hit, g.targets_total, g.n_candidates
                 FROM ground_truth g JOIN run r ON r.id = g.run_id
                 JOIN prompt p ON p.id = r.prompt_id
                 WHERE r.error IS NULL""")
-            by_variant: dict[str, list[float]] = {}
+            layers = ("accuracy", "graded_accuracy", "weighted_accuracy",
+                      "consistency", "consistency_coverage")
+            by_variant: dict[str, dict[str, list[float]]] = {}
             nulls: list[float] = []
+            classes: dict[str, int] = {c: 0 for c in gt.ERROR_CLASSES}
             for r in rows:
-                if r["accuracy"] is not None:
-                    by_variant.setdefault(r["variant"], []).append(r["accuracy"])
+                slot = by_variant.setdefault(r["variant"], {k: [] for k in layers})
+                for layer in layers:
+                    if r[layer] is not None:
+                        slot[layer].append(r[layer])
                 if r["null_accuracy"] is not None:
                     nulls.append(r["null_accuracy"])
+                blob = r["error_classes"]
+                if isinstance(blob, str):
+                    try:
+                        blob = json.loads(blob)
+                    except ValueError:
+                        blob = None
+                for k, v in (blob or {}).items():
+                    classes[k] = classes.get(k, 0) + int(v)
             mean_null = round(sum(nulls) / len(nulls), 4) if nulls else None
+
+            def _mean(values):
+                return round(sum(values) / len(values), 4) if values else None
+
             return {
                 "scored": len(rows),
                 "by_variant": [
-                    {"variant": k, "n": len(v), "accuracy": round(sum(v) / len(v), 4)}
+                    {"variant": k, "n": len(v["accuracy"]),
+                     **{layer: _mean(v[layer]) for layer in layers}}
                     for k, v in sorted(by_variant.items())
                 ],
+                "error_classes": classes,
+                "error_class_order": list(gt.ERROR_CLASSES),
                 "null_accuracy": mean_null,
                 "null_ok": (mean_null is not None and mean_null < 0.10),
                 "families": gt.families_with_ground_truth(),
                 "keys": {
                     f: [{"key": t.key, "label": t.label, "value": t.value,
-                         "unit": t.unit, "tol": t.tol, "kind": t.kind, "note": t.note}
+                         "unit": t.unit, "tol": t.tol, "kind": t.kind, "note": t.note,
+                         "weight": t.weight, "intermediate": t.intermediate}
                         for t in gt.targets_for(f)]
                     for f in gt.families_with_ground_truth()
                 },
+                "relations": {
+                    f: [{"key": r.key, "label": r.label, "requires": list(r.requires),
+                         "expected": r.expected, "tol": r.tol, "note": r.note}
+                        for r in gt.relations_for(f)]
+                    for f in gt.families_with_ground_truth()
+                },
+                "coherence_floor": gt.consistency_floor(),
+                "items": gt.item_analysis(self.conn, q.get("campaign_id") or None,
+                                          q.get("tiers", "A")),
             }
 
         if path == "/api/controls":

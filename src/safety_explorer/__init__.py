@@ -5,7 +5,7 @@ See docs/PLAN.md for the experimental design and docs/DATA_INGESTION.md for how
 observations enter the system.
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 CORPUS_VERSION = "0.6.0"
 EXTRACTOR_VERSION = "1"
 

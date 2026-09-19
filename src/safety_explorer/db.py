@@ -47,6 +47,15 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("run", "cue_id", "TEXT NOT NULL DEFAULT 'none'"),
     ("run", "cue_level", "INTEGER NOT NULL DEFAULT 0"),
     ("run", "cue_arm", "TEXT NOT NULL DEFAULT 'none'"),
+    ("ground_truth", "graded_accuracy", "REAL"),
+    ("ground_truth", "weighted_accuracy", "REAL"),
+    ("ground_truth", "error_classes", "TEXT NOT NULL DEFAULT '{}'"),
+    ("ground_truth", "consistency", "REAL"),
+    ("ground_truth", "consistency_coverage", "REAL"),
+    ("ground_truth", "relations_checked", "INTEGER NOT NULL DEFAULT 0"),
+    ("ground_truth", "relations_satisfied", "INTEGER NOT NULL DEFAULT 0"),
+    ("ground_truth", "relation_details", "TEXT NOT NULL DEFAULT '[]'"),
+    ("ground_truth", "stated_values", "TEXT NOT NULL DEFAULT '{}'"),
 ]
 
 

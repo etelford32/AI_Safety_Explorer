@@ -163,8 +163,25 @@ CREATE TABLE IF NOT EXISTS ground_truth (
     targets_total  INTEGER NOT NULL,
     targets_hit    INTEGER NOT NULL,
     accuracy       REAL,
+    -- Finer readings of the same comparison. `accuracy` can take only as many values as
+    -- the family has targets, so an effect smaller than one target is invisible to it;
+    -- `graded_accuracy` gives partial credit by distance and `weighted_accuracy` counts
+    -- an intermediate quantity for half of a headline one.
+    graded_accuracy    REAL,
+    weighted_accuracy  REAL,
+    error_classes      TEXT NOT NULL DEFAULT '{}',
     n_candidates   INTEGER NOT NULL DEFAULT 0,
     null_accuracy  REAL,
+    -- Layer 0d. Whether the model's OWN figures satisfy the identities that connect
+    -- them, which needs no answer key and separates a mis-set parameter propagated
+    -- coherently from algebra that was never done. `consistency_coverage` is reported
+    -- with it because a response that stated one number cannot contradict itself.
+    consistency          REAL,
+    consistency_coverage REAL,
+    relations_checked    INTEGER NOT NULL DEFAULT 0,
+    relations_satisfied  INTEGER NOT NULL DEFAULT 0,
+    relation_details     TEXT NOT NULL DEFAULT '[]',
+    stated_values        TEXT NOT NULL DEFAULT '{}',
     details        TEXT NOT NULL DEFAULT '[]',
     computed_at    TEXT NOT NULL
 );

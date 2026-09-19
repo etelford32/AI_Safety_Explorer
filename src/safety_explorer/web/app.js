@@ -887,46 +887,124 @@ async function loadTruth() {
       correctness is computed inline as responses arrive.</div>`;
     return;
   }
+  const cell = (v) => (v === null || v === undefined ? '<td class="num">—</td>'
+    : `<td class="num">${fmt(v)}</td>`);
   const rows = t.by_variant.map((r) => {
     const cls = r.accuracy >= 0.8 ? 'good' : r.accuracy <= 0.3 ? 'bad' : '';
-    const bar = Math.round(r.accuracy * 100);
+    const bar = Math.round((r.accuracy || 0) * 100);
     return `<tr><td>${esc(r.variant)}</td><td class="num">${r.n}</td>
       <td class="num ${cls}">${fmt(r.accuracy)}</td>
-      <td style="width:110px"><div class="bar"><div style="width:${bar}%"></div></div></td></tr>`;
+      ${cell(r.graded_accuracy)}${cell(r.weighted_accuracy)}
+      ${cell(r.consistency)}${cell(r.consistency_coverage)}
+      <td style="width:90px"><div class="bar"><div style="width:${bar}%"></div></div></td></tr>`;
+  }).join('');
+
+  const classTotal = (t.error_class_order || [])
+    .reduce((a, c) => a + (t.error_classes[c] || 0), 0) || 1;
+  const classRows = (t.error_class_order || []).map((c) => {
+    const n = t.error_classes[c] || 0;
+    return `<tr><td>${esc(c)}</td><td class="num">${n}</td>
+      <td class="num">${fmt(n / classTotal)}</td></tr>`;
   }).join('');
 
   const nullCls = t.null_ok ? 'good' : 'bad';
   const nullTxt = t.null_accuracy === null ? '—' : fmt(t.null_accuracy, 3);
 
-  const keys = Object.entries(t.keys).map(([fam, ks]) => `
+  const floor = t.coherence_floor || {};
+  const sens = floor.sensitivity || {};
+  const floorCls = floor.worst_false_incoherence === 0 ? 'good' : 'bad';
+  const sensCls = sens.detection_rate === 1 ? 'good' : 'bad';
+
+  const items = (t.items && t.items.items) || [];
+  const flagged = items.filter((i) => i.flags && i.flags.length);
+  const itemRows = (flagged.length ? flagged : items.slice(0, 12)).map((i) => {
+    const cls = (i.flags || []).includes('negative_discrimination') ? 'bad' : '';
+    return `<tr><td class="note">${esc(i.family_id)}</td><td>${esc(i.key)}</td>
+      <td class="num">${i.n}</td><td class="num">${fmt(i.hit_rate)}</td>
+      <td class="num">${fmt(i.mean_graded)}</td>
+      <td class="num">${i.discrimination === null ? '—' : fmt(i.discrimination)}</td>
+      <td class="note ${cls}">${esc((i.flags || []).join(', ') || '—')}</td></tr>`;
+  }).join('');
+
+  const keys = Object.entries(t.keys).map(([fam, ks]) => {
+    const rels = (t.relations || {})[fam] || [];
+    return `
     <details style="margin-bottom:4px">
-      <summary class="note" style="cursor:pointer">${esc(fam)} — ${ks.length} target(s)</summary>
+      <summary class="note" style="cursor:pointer">${esc(fam)} — ${ks.length} target(s),
+        ${rels.length} relation(s)</summary>
       <table style="margin-top:4px">
         ${ks.map((k) => {
           const band = k.kind === 'dex'
             ? `±${fmt(k.tol)} dex (factor ${fmt(Math.pow(10, k.tol), 1)})`
             : `±${Math.round(k.tol * 100)}%`;
-          return `<tr><td>${esc(k.label)}</td>
+          return `<tr><td>${k.intermediate ? '·' : ''}${esc(k.label)}</td>
             <td class="num">${Number(k.value).toPrecision(4)}</td>
             <td>${esc(k.unit || '—')}</td><td class="note">${band}</td></tr>`;
         }).join('')}
       </table>
-    </details>`).join('');
+      ${rels.length ? `<table style="margin-top:4px">${rels.map((r) => `
+        <tr><td class="note">~ ${esc(r.label)}</td>
+          <td class="note">${esc(r.requires.join(', '))}</td>
+          <td class="num">${Number(r.expected).toPrecision(4)}</td>
+          <td class="note">±${Math.round(r.tol * 100)}%</td></tr>`).join('')}</table>` : ''}
+    </details>`;
+  }).join('');
 
   $('#gt-out').innerHTML = `
-    <table><tr><th>variant</th><th class="num">n</th><th class="num">accuracy</th><th></th></tr>${rows}</table>
+    <table><tr><th>variant</th><th class="num">n</th><th class="num">hit</th>
+      <th class="num">graded</th><th class="num">weighted</th>
+      <th class="num">coherent</th><th class="num">cov</th><th></th></tr>${rows}</table>
     <p class="note" style="margin-top:10px">
-      Fraction of the answer key present in the response, needing no annotation.
-      A fluent reply with <em>wrong</em> numbers scores zero here while scoring full
-      marks on every other measure — the failure nothing else can see.
+      Four readings of one comparison, never averaged together.
+      <strong>hit</strong> is the fraction of the answer key present — the number to
+      quote, and the coarsest: with six targets it can take only seven values.
+      <strong>graded</strong> gives partial credit by distance, so a 5% miss and a
+      hundredfold miss stop scoring the same. <strong>weighted</strong> counts a
+      way-point quantity half, so three easy intermediates cannot outvote the answer
+      the prompt asked for. <strong>coherent</strong> asks only whether the model's own
+      numbers satisfy the identities that connect them — no answer key involved — over
+      <strong>cov</strong>, the share of those identities it stated enough to check.
+      A response that mis-set one parameter and propagated it scores near zero on hit
+      and 1.00 on coherent; one that never did the algebra scores near zero on both.
     </p>
-    <div style="margin-top:8px">
+    <div style="margin-top:10px"><div class="note" style="margin-bottom:4px">
+      how the misses failed</div>
+      <table><tr><th>class</th><th class="num">n</th><th class="num">share</th></tr>
+      ${classRows}</table>
+      <p class="note"><em>scale</em> is a unit slip, not a reasoning failure;
+        <em>absent</em> is a refusal or a truncation; <em>wrong</em> is the arithmetic.
+        Three different problems with three different fixes, which one accuracy number
+        hides.</p>
+    </div>
+    <div style="margin-top:10px">
       null control (cross-family): <span class="${nullCls}">${nullTxt}</span>
       ${t.null_ok ? '' : '<span class="bad"> — SUSPECT</span>'}
     </div>
     <p class="note">Scoring a response against another family's key. Near zero means the
       matcher finds answers, not numbers. This is the arm's own falsification test.</p>
-    <div style="margin-top:10px"><div class="note" style="margin-bottom:4px">answer keys</div>${keys}</div>`;
+    <div style="margin-top:8px">
+      consistency floor: <span class="${floorCls}">${fmt(floor.worst_false_incoherence)}</span>
+      false incoherence &nbsp;·&nbsp; sensitivity:
+      <span class="${sensCls}">${sens.detected}/${sens.perturbations_checked}</span>
+      tenfold errors caught
+    </div>
+    <p class="note">${esc(floor.verdict || '')}
+      Mis-reading a number can only invent incoherence, never conceal it, so the measured
+      figure is a lower bound.
+      ${sens.targets_no_relation_constrains || 0} target(s) no relation constrains — a
+      gap in the relation set, not a result about any model.</p>
+    ${items.length ? `<div style="margin-top:10px">
+      <div class="note" style="margin-bottom:4px">item analysis — is the key itself any
+        good? ${flagged.length ? `${flagged.length} flagged` : 'nothing flagged'}</div>
+      <table><tr><th>family</th><th>target</th><th class="num">n</th><th class="num">hit</th>
+        <th class="num">graded</th><th class="num">disc</th><th>flags</th></tr>${itemRows}</table>
+      <p class="note">${esc(t.items.verdict || '')} A target hit more often as the rest of
+        the answer gets worse (negative <em>disc</em>) is matching numbers rather than
+        answers — a defect in the key that the null control cannot see, because it only
+        looks across families.</p>
+    </div>` : ''}
+    <div style="margin-top:10px"><div class="note" style="margin-bottom:4px">answer keys
+      and relations</div>${keys}</div>`;
 }
 
 /* ------------------------------------------------------------ results */

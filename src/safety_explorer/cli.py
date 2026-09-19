@@ -339,14 +339,66 @@ def cmd_truth(args) -> int:
         return 0
 
     if args.targets:
+        n_t = n_r = 0
         for family in gt.families_with_ground_truth():
+            targets, relations = gt.targets_for(family), gt.relations_for(family)
+            n_t += len(targets)
+            n_r += len(relations)
+            constrained = {k for r in relations for k in r.requires}
             print(f"\n{family}")
-            for t in gt.targets_for(family):
+            for t in targets:
                 band = (f"±{t.tol:.2f} dex (factor {10 ** t.tol:.1f})"
                         if t.kind == "dex" else f"±{t.tol:.0%}")
-                print(f"  {t.key:24s} {t.value:>12.4g} {t.unit:<8s} {band}")
+                mark = "·" if t.intermediate else " "
+                free = "" if t.key in constrained else "   [no relation constrains it]"
+                print(f" {mark}{t.key:24s} {t.value:>12.4g} {t.unit:<8s} {band}{free}")
                 if t.note:
                     print(f"  {'':24s} {t.note}")
+            for r in relations:
+                print(f"  ~ {r.key:22s} {r.label}")
+                print(f"  {'':24s} needs {', '.join(r.requires)} "
+                      f"-> {r.expected:.4g} ±{r.tol:.0%}")
+        print(f"\n  {n_t} targets, {n_r} relations. A '·' marks an intermediate "
+              f"quantity, which counts half.")
+        print("  A '~' line is an identity the model's own numbers must satisfy; it "
+              "consults no answer key.")
+        return 0
+
+    if args.coherence:
+        rep = gt.consistency_floor()
+        print("consistency floor — the identities, checked against a correct answer\n")
+        print(f"  {'language':10s}{'clean families':>16}{'false incoherence':>20}")
+        for lang, b in rep["by_language"].items():
+            print(f"  {lang:10s}{b['clean_families']:>16d}"
+                  f"{b['false_incoherence']:>20.3f}")
+        sens = rep["sensitivity"]
+        print(f"\n  sensitivity: {sens['detected']}/{sens['perturbations_checked']} "
+              f"ten-fold errors detected")
+        if sens["missed"]:
+            print(f"    undetected: {', '.join(sens['missed'])}")
+        print(f"    {sens['targets_no_relation_constrains']} target(s) no relation "
+              f"constrains — a gap in the relation set, not a model result")
+        print(f"\n  {rep['verdict']}")
+        print("  Mis-reading a number can only manufacture incoherence, never hide it,")
+        print("  so measured inconsistency is a lower bound on the real thing.")
+        return 0
+
+    if args.items:
+        rep = gt.item_analysis(conn, args.campaign, args.tiers)
+        print(f"item analysis — tiers {args.tiers}\n")
+        if not rep["items"]:
+            print("  no scored runs yet; run a campaign first")
+            return 0
+        print(f"  {'family':<22}{'target':<24}{'n':>4}{'hit':>7}{'graded':>8}"
+              f"{'disc':>8}  flags")
+        for i in rep["items"]:
+            disc = "—" if i["discrimination"] is None else f"{i['discrimination']:.2f}"
+            print(f"  {i['family_id']:<22}{i['key']:<24}{i['n']:>4}"
+                  f"{i['hit_rate']:>7.2f}{i['mean_graded']:>8.2f}{disc:>8}  "
+                  f"{','.join(i['flags'])}")
+        print(f"\n  {rep['verdict']}")
+        print("  A target whose hit rate rises as the rest of the answer gets worse is")
+        print("  matching numbers, not answers: that is a defect in the key.")
         return 0
 
     stats = gt.recompute_all(conn)
@@ -354,6 +406,8 @@ def cmd_truth(args) -> int:
 
     rows = db.query(conn, """
         SELECT p.family_id, p.variant, AVG(g.accuracy) AS acc,
+               AVG(g.graded_accuracy) AS graded, AVG(g.weighted_accuracy) AS weighted,
+               AVG(g.consistency) AS coherence, AVG(g.consistency_coverage) AS cov,
                AVG(g.null_accuracy) AS null_acc, COUNT(*) AS n
         FROM ground_truth g JOIN run r ON r.id = g.run_id
         JOIN prompt p ON p.id = r.prompt_id
@@ -362,17 +416,52 @@ def cmd_truth(args) -> int:
         return 0
 
     from collections import defaultdict
-    by_variant: dict[str, list[float]] = defaultdict(list)
+    by_variant: dict[str, list[dict]] = defaultdict(list)
     nulls: list[float] = []
     for r in rows:
-        by_variant[r["variant"]].append(r["acc"] or 0.0)
+        by_variant[r["variant"]].append(r)
         if r["null_acc"] is not None:
             nulls.append(r["null_acc"])
 
-    print(f"\n  {'variant':<10}{'n':>4}{'mean accuracy':>16}")
+    def _mean(rs, key):
+        vals = [r[key] for r in rs if r[key] is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    print(f"\n  {'variant':<10}{'n':>4}{'hit':>8}{'graded':>9}{'weighted':>10}"
+          f"{'coherent':>10}{'cov':>7}")
     for variant in sorted(by_variant):
-        vals = by_variant[variant]
-        print(f"  {variant:<10}{len(vals):>4}{sum(vals) / len(vals):>16.3f}")
+        rs = by_variant[variant]
+        cells = [_mean(rs, k) for k in ("acc", "graded", "weighted", "coherence", "cov")]
+        line = f"  {variant:<10}{len(rs):>4}"
+        for value, width in zip(cells, (8, 9, 10, 10, 7)):
+            line += ("—" if value is None else f"{value:.3f}").rjust(width)
+        print(line)
+    print("  hit is the binary answer-key rate; graded gives partial credit by distance;")
+    print("  weighted counts an intermediate quantity half; coherent is the share of the")
+    print("  model's own identities that hold, over the share it stated enough to check.")
+
+    classes = db.query(conn, "SELECT error_classes FROM ground_truth "
+                             "WHERE error_classes IS NOT NULL AND error_classes != '{}'")
+    tally: dict[str, int] = {}
+    for row in classes:
+        blob = row["error_classes"]
+        if isinstance(blob, str):
+            try:
+                blob = json.loads(blob)
+            except ValueError:
+                continue
+        for k, v in (blob or {}).items():
+            tally[k] = tally.get(k, 0) + int(v)
+    if tally:
+        total = sum(tally.values()) or 1
+        print("\n  error classes over all scored targets:")
+        for cls in gt.ERROR_CLASSES:
+            n = tally.get(cls, 0)
+            print(f"    {cls:<10}{n:>7}{n / total:>9.1%}")
+        print("  'scale' is a unit slip, not a reasoning failure, and 'absent' is a "
+              "refusal or a truncation.")
+        print("  Three different problems; averaging them into one accuracy hides "
+              "which one you have.")
 
     if nulls:
         mean_null = sum(nulls) / len(nulls)
@@ -426,11 +515,16 @@ def cmd_analyse(args) -> int:
     if args.what == "twins":
         deltas = analysis.twin_deltas(conn, c, args.campaign, args.tiers, args.metric)
         value_key = {"human": "delta", "auto": "auto_density_ratio",
-                     "truth": "gt_delta"}[args.source]
+                     "truth": "gt_delta", "truth_graded": "gt_graded_delta",
+                     "truth_weighted": "gt_weighted_delta",
+                     "truth_consistency": "gt_consistency_delta"}[args.source]
         summary = analysis.summarise_deltas(deltas, value=value_key)
         label = {"human": f"'{args.metric}' (human annotation)",
                  "auto": "technical-density ratio (automatic)",
-                 "truth": "objective correctness (answer key)"}[args.source]
+                 "truth": "objective correctness (answer key)",
+                 "truth_graded": "objective correctness, graded by distance",
+                 "truth_weighted": "objective correctness, intermediates weighted half",
+                 "truth_consistency": "internal consistency (no answer key)"}[args.source]
         print(f"twin-pair deltas — {label}, tiers {args.tiers}\n")
         print(f"  {'variant':<9}{'n':>4}{'fams':>6}{'median':>9}{'mean':>8}"
               f"{'ci95':>18}{'effect':>12}")
@@ -444,7 +538,7 @@ def cmd_analyse(args) -> int:
         print("\n  * provisional: fewer than 3 observations or fewer than 2 families")
         print("  mean is reported because it is legible; the median and Cliff's delta "
               "are the values to cite.")
-        if args.source == "truth":
+        if args.source in analysis.TRUTH_SOURCES:
             null = db.query_one(
                 conn, "SELECT AVG(null_accuracy) AS n FROM ground_truth "
                       "WHERE null_accuracy IS NOT NULL")
@@ -516,7 +610,11 @@ def cmd_analyse(args) -> int:
         d = analysis.language_effect(conn, c, args.campaign, args.tiers,
                                      args.metric, source)
         args.source = source
-        label = {"truth": "objective correctness", "auto": "technical density",
+        label = {"truth": "objective correctness",
+                 "truth_graded": "objective correctness, graded",
+                 "truth_weighted": "objective correctness, weighted",
+                 "truth_consistency": "internal consistency",
+                 "auto": "technical density",
                  "human": f"'{args.metric}'"}[args.source]
         print(f"language arm — {label}, tiers {args.tiers}, reference = English")
         print("positive gap = the translated prompt fared worse than its English twin\n")
@@ -743,6 +841,14 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--targets", action="store_true", help="print the answer keys and exit")
     t.add_argument("--calibrate", action="store_true",
                    help="measure the extractor's own bias per language (the measurement floor)")
+    t.add_argument("--coherence", action="store_true",
+                   help="validate the internal-consistency relations: do they hold on a "
+                        "correct answer, and do they catch a tenfold error?")
+    t.add_argument("--items", action="store_true",
+                   help="item analysis: which targets carry information, and which are "
+                        "matching numbers rather than answers")
+    t.add_argument("--campaign", default=None)
+    t.add_argument("--tiers", default="A")
     t.set_defaults(func=cmd_truth)
 
     a = sub.add_parser("annotate", help="queue responses for human annotation")
@@ -773,9 +879,14 @@ def build_parser() -> argparse.ArgumentParser:
     an.add_argument("--annotator", default=None)
     an.add_argument("--explicit-source", action="store_true",
                     help=argparse.SUPPRESS)
-    an.add_argument("--source", default="human", choices=["human", "auto", "truth"],
-                    help="human annotation; automatic features; or objective correctness "
-                         "against a computed answer key (both of the latter need no annotation)")
+    an.add_argument("--source", default="human",
+                    choices=["human", "auto", "truth", "truth_graded",
+                             "truth_weighted", "truth_consistency"],
+                    help="human annotation; automatic features; or one of the Layer 0 "
+                         "readings — truth (binary hit rate), truth_graded (partial "
+                         "credit by distance), truth_weighted (intermediates count "
+                         "half), truth_consistency (do the model's own numbers agree). "
+                         "Everything but 'human' needs no annotation.")
     an.set_defaults(func=cmd_analyse)
 
     s = sub.add_parser("serve", help="start the Explorer UI")

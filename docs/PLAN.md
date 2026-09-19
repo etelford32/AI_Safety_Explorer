@@ -372,10 +372,102 @@ Three properties make it trustworthy:
   real key. `null_rate()` measures it and every report prints it. The two gates above
   took it from 0.129 to **0.005** with no loss of true positives.
 
-**Known limit: resolution is coarse.** With 2–4 targets per family, accuracy takes only
-a few discrete values, so a retention difference smaller than one target cannot be
-resolved. Layer 0 detects large effects reliably and small ones not at all; the human
-and automatic layers remain necessary for fine gradations.
+### [ADD] Layer 0 has five readings, not one (v0.8)
+
+v0.5 shipped Layer 0 with one number — the fraction of the answer key present — and one
+acknowledged limit: with 2–4 targets a family's accuracy could take only three to five
+values, so any effect smaller than a quarter was invisible. That limit is not a detail.
+It is the difference between an instrument that can see a framing effect and one that
+can only see a refusal.
+
+Worse, the binary hit rate is lossy *within* a target as well as across them. A 5% miss
+and a hundredfold miss score identically, which throws away the most diagnostic thing a
+wrong number carries: how wrong it is.
+
+v0.8 answers both, and adds the two questions the hit rate cannot ask at all. The five
+readings are reported side by side and **never averaged together** — each answers a
+different question, and merging them would lose exactly the distinctions they exist to
+draw.
+
+| | reading | what it answers |
+|---|---|---|
+| **0a** | `accuracy` | How much of the answer key is present? The headline, and the one number that needs no explanation. |
+| **0b** | `graded_accuracy` | How *close* was it? Full credit inside the band, decaying to zero half a dex past it. Scale-free, so the same curve applies to a concentration and to a shell volume. |
+| **0c** | `error_classes` | *How* did it fail — absent, scale, near or wrong? Four different problems with four different fixes. |
+| **0d** | `consistency` | Do the model's own numbers agree with each other? No answer key required. |
+| **0e** | `item_analysis` | Is the answer key itself any good? |
+
+**The corpus grew from 23 targets to 50**, six or more per family, which is what the
+finer readings need to be worth computing. Every family now also carries two to six
+**relations** — identities its outputs must satisfy, drawn from the prompt's own stated
+parameters.
+
+**0b, graded credit, has its own control.** Partial credit that flatters a wrong answer
+would undo the single thing this arm exists to do. The decay is deliberately steep — a
+factor of two keeps about half its credit, a factor of three keeps nothing — and the
+test suite requires that a response with every figure moved by 137x scores **0.000 on
+both the binary and the graded reading, in all eight families**. An earlier, shallower
+decay let such a response reach 0.83; that is not partial credit, it is a bug wearing
+its uniform.
+
+**0d, internal consistency, is the one that asks a new question.** Correctness and
+coherence are different properties. A response whose figures are all wrong but mutually
+consistent has done the algebra and mis-set a parameter; one whose figures contradict
+each other never did the algebra. Accuracy scores the two identically. A model that
+reads the clearance as 12 L/h instead of 6 scores 0.125 on accuracy and **1.000 on
+consistency** — and that pair of numbers says something neither one says alone.
+
+It needs no answer key, which also makes it the only Layer 0 signal available where a
+variant never states the parameters.
+
+Two rules keep it honest, and both were learned the hard way:
+
+- **A relation may use a parameter the prompt states, never a quantity the solver
+  derives.** A relation over a single output is a check against the answer key wearing
+  a different name. One such crept in while drafting and was removed; left in, the layer
+  would have been a second copy of Layer 0a reported as if it were independent.
+- **Quantities are read by name, not by proximity to the truth.** The obvious
+  implementation reuses the candidate the scorer already picked — but that candidate was
+  chosen for being closest to the reference, so the relations would agree with the answer
+  key by construction. `stated_values()` reads each figure by the words naming it, its
+  own line or sentence, and dimensional compatibility, with no reference to whether it is
+  right.
+
+Its validation mirrors `calibrate()`, in both directions. `consistency_floor()` checks
+that every identity holds on a correct answer in all four study languages — **0.00 false
+incoherence** — and that moving any constrained quantity by a factor of ten is caught —
+**39 of 39**. Mis-reading a figure can only ever manufacture incoherence, never conceal
+it, so measured inconsistency is a *lower bound*. The report also names the 11 targets no
+relation constrains, because that is a gap in the relation set rather than a result about
+any model.
+
+**0e, item analysis, checks the instrument rather than the model.** Every other layer
+assumes the answer key is sound. This one asks whether each target actually carries
+information: its hit rate, its variance, and its corrected item-total correlation. A
+target whose hit rate *rises* as the rest of the answer gets worse is matching numbers
+rather than answers — a defect in the key, invisible to the null control, which only
+looks across families. Targets never hit and targets always hit are reported too: both
+shift every score by a constant and shrink the scale the rest of the key works in.
+
+**What building the layers exposed.** Four defects in the matcher, each of which
+manufactured a result:
+
+- A Latin unit token was trimmed to its shortest prefix, so `0.918 transmissibility`
+  parsed as 918 *grams*, `3.83 gain` as 3.83 g and `0.52 mean` as 0.52 m. Each gave a
+  correct answer a dimension its target did not have, so the target could never match —
+  a false negative that fired precisely when the model named the quantity it had just
+  computed.
+- A subscript index was read as a measurement: `relative slenderness lambda/lambda_1:
+  1.609` scored as 1.
+- A number's context window reached into the neighbouring line, so a figure was admitted
+  by the name of the quantity *below* it.
+- Two targets sharing a dimension split each other's figures, because a matching
+  dimension was taken as sufficient identification even when the key contained two
+  candidates for it.
+
+Fixing them took the cross-family null control from 0.019 to **0.012**, and took a
+response with every figure wrong from 0.333 to **0.000** in the worst family. All four
+were found by building the controls, not by reading the solver.
 
 ### Layer 1 — automatic features (deterministic, free, always computed)
 

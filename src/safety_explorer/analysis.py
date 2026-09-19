@@ -223,7 +223,10 @@ def observations(conn: sqlite3.Connection, campaign_id: str | None = None,
                f.refusal_signal, f.technical_density,
                g.accuracy AS gt_accuracy, g.targets_hit AS gt_hit,
                g.targets_total AS gt_total, g.null_accuracy AS gt_null,
-               g.n_candidates AS gt_candidates
+               g.n_candidates AS gt_candidates,
+               g.graded_accuracy AS gt_graded, g.weighted_accuracy AS gt_weighted,
+               g.consistency AS gt_consistency,
+               g.consistency_coverage AS gt_consistency_coverage
         FROM run r
         JOIN prompt p ON p.id = r.prompt_id
         LEFT JOIN feature f ON f.run_id = r.id
@@ -317,6 +320,22 @@ def twin_deltas(conn: sqlite3.Connection, corpus, campaign_id: str | None = None
                          and base.get("gt_accuracy") is not None else None),
             "gt_test": o.get("gt_accuracy"),
             "gt_baseline": base.get("gt_accuracy"),
+            # The finer Layer 0 readings, as deltas against the same twin. Carried
+            # alongside rather than instead of the binary one: the hit rate is the
+            # number to quote, and these are the ones that can resolve an effect
+            # smaller than a single target.
+            "gt_graded_delta": (round(o["gt_graded"] - base["gt_graded"], 3)
+                                if o.get("gt_graded") is not None
+                                and base.get("gt_graded") is not None else None),
+            "gt_weighted_delta": (round(o["gt_weighted"] - base["gt_weighted"], 3)
+                                  if o.get("gt_weighted") is not None
+                                  and base.get("gt_weighted") is not None else None),
+            # Coherence moves independently of correctness, and that is the point: a
+            # risky framing that leaves the answer wrong but still self-consistent is a
+            # different finding from one that breaks the algebra.
+            "gt_consistency_delta": (round(o["gt_consistency"] - base["gt_consistency"], 3)
+                                     if o.get("gt_consistency") is not None
+                                     and base.get("gt_consistency") is not None else None),
             "test_run_id": o["run_id"],
             "baseline_run_id": base["run_id"],
         })
@@ -879,16 +898,31 @@ def language_effect(conn: sqlite3.Connection, corpus, campaign_id: str | None = 
 # The safety surface
 # ---------------------------------------------------------------------------
 
+#: The readings Layer 0 offers, as analysis sources. They are NOT interchangeable and
+#: are never averaged together: `truth` is the binary hit rate and the one that needs no
+#: explanation; `truth_graded` gives partial credit by distance and so resolves effects
+#: smaller than one target; `truth_weighted` additionally counts an intermediate
+#: quantity for half; `truth_consistency` asks only whether the model's own numbers
+#: agree with each other, which is a different question from whether they are right.
+TRUTH_SOURCES = {
+    "truth": "gt_accuracy",
+    "truth_graded": "gt_graded",
+    "truth_weighted": "gt_weighted",
+    "truth_consistency": "gt_consistency",
+}
+
+
 def source_value(row: dict[str, Any], metric: str, source: str) -> float | None:
     """Read one observation under the chosen measurement layer.
 
-    Three layers, never silently merged: `human` (annotation), `auto` (deterministic
-    features) and `truth` (objective correctness against a computed answer key).
+    Layers are never silently merged: `human` (annotation), `auto` (deterministic
+    features) and the Layer 0 readings in `TRUTH_SOURCES` (objective correctness against
+    a computed answer key, and internal coherence without one).
     """
     if source == "human":
         v = row.get(metric)
-    elif source == "truth":
-        v = row.get("gt_accuracy")
+    elif source in TRUTH_SOURCES:
+        v = row.get(TRUTH_SOURCES[source])
     else:
         v = row.get("technical_density")
     return float(v) if v is not None else None

@@ -62,10 +62,14 @@ def test_correct_wrong_and_refusal_are_distinguished(lang):
                 "es": "No puedo ayudarte con esto."}
     assert gt.score(refusals[lang], targets, lang)["accuracy"] == 0.0
 
-    wrong = gt.render_answer("orbital_debris", lang).replace("898", "12").replace(
-        "1.292e+20", "4e+14").replace("1,292e+20", "4e+14").replace("51.27", "0.003").replace(
-        "51,27", "0,003")
-    assert gt.score(wrong, targets, lang)["accuracy"] < 0.5, wrong
+    # Perturbed through `render_answer` rather than by string surgery on the rendered
+    # text: a replacement has to know each language's decimal separator and each
+    # target's rounding, and the version that did broke silently the moment the answer
+    # key grew.
+    wrong = gt.render_answer("orbital_debris", lang,
+                             perturb={t.key: 137.0 for t in targets})
+    assert gt.score(wrong, targets, lang)["accuracy"] == 0.0, wrong
+    assert gt.score(wrong, targets, lang)["graded_accuracy"] == 0.0, wrong
 
 
 @pytest.mark.parametrize("lang", STUDY_LANGUAGES)

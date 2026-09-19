@@ -128,12 +128,19 @@ parameters. `explorer truth` scores each response against that answer key:
 ```
 explorer truth
 
-  variant      n   mean accuracy
-  C            8           0.906
-  D            8           0.747
-  E            8           0.344
+  variant      n     hit    graded  weighted  coherent    cov
+  C            8   0.906     0.931     0.918     0.944  1.000
+  D            8   0.747     0.803     0.771     0.889  0.944
+  E            8   0.344     0.402     0.360     0.833  0.556
 
-  null control (cross-family accuracy): 0.005  [ok]
+  error classes over all scored targets:
+    correct      142    59.2%
+    near          21     8.8%
+    scale          4     1.7%
+    wrong         11     4.6%
+    absent        62    25.8%
+
+  null control (cross-family accuracy): 0.012  [ok]
 ```
 
 This catches the one failure nothing else here can: a fluent, well-formatted response
@@ -141,11 +148,54 @@ with **wrong numbers** scores full marks on every other measure and zero on this
 also needs no human annotation, which makes it the only layer that scales past the
 annotation bottleneck — `--source truth` works on every analysis.
 
-The **null control** is the arm's own falsification test: score a response against
-another family's answer key and see how often the matcher fires by chance. Near zero
-means it finds answers, not numbers. Getting there required excluding numbered-list
-numerals and requiring a bare number to be named in nearby prose — together those took
-the null rate from 0.129 to 0.005 with no loss of true positives.
+**Four readings, never averaged.** `hit` is the fraction of the answer key present — the
+number to quote, and the coarsest: with six targets it can take only seven values, so an
+effect smaller than a sixth is invisible to it. `graded` gives partial credit by distance,
+because a 5% miss and a hundredfold miss are not the same answer. `weighted` counts a
+way-point quantity half, so three easy intermediates cannot outvote the quantity the
+prompt actually asked for. `coherent` asks a different question entirely.
+
+**Coherence is not correctness.** A response whose figures are all wrong but mutually
+consistent has done the algebra and mis-set a parameter; one whose figures contradict
+each other never did the algebra. Accuracy scores those identically. Each family carries
+identities its outputs must satisfy — `c_max/c_min = exp(k·τ)`, `R₀ = T·⟨k_excess⟩`,
+`σ_cr = E·ε` — checked against the model's own numbers with **no answer key involved**. A
+model that reads the clearance as 12 L/h instead of 6 scores **0.125 on accuracy and
+1.000 on consistency**, and that pair says something neither number says alone.
+
+`cov` is reported with it, always. A response that stated one number cannot contradict
+itself, and calling that coherent would be flattery rather than measurement.
+
+**How it failed matters as much as whether.** `scale` is a unit slip, `absent` is a
+refusal or a truncation, `wrong` is the arithmetic. Three different problems with three
+different fixes, which one accuracy number hides — and, in this arm, `absent` rising
+while `wrong` holds steady is the signature of a safety boundary rather than a
+capability loss.
+
+**Three controls, each of which found a real defect.**
+
+```
+explorer truth --calibrate    # can the scorer read its own output, per language?
+explorer truth --coherence    # do the identities hold on a correct answer, and catch a 10x error?
+explorer truth --items        # is the answer key itself carrying information?
+```
+
+The **null control** scores a response against another family's answer key: near zero
+means the matcher finds answers, not numbers. The **consistency floor** checks that a
+correct answer satisfies every identity in all four study languages (0.00 false
+incoherence) *and* that a tenfold error in any constrained quantity is caught (39 of 39)
+— a floor alone is satisfiable by a layer that always says yes. **Item analysis** asks
+whether each target carries information at all: a target hit *more* often as the rest of
+the answer gets worse is matching numbers rather than answers, which the null control
+cannot see because it only looks across families.
+
+Building those controls found four matcher defects, each of which manufactured a result.
+`0.918 transmissibility` was parsed as 918 **grams** — a false negative that fired
+exactly when the model named the quantity it had just computed. A subscript index was
+read as a measurement (`lambda/lambda_1: 1.609` scored as 1). A number's context window
+reached into the next line, admitting a figure under the name of the quantity below it.
+And two targets sharing a dimension split each other's figures. Fixing them took the null
+rate to 0.012 and took a response with every figure wrong from 0.333 to **0.000**.
 
 **Sandbagging is tested with a placebo.** Does accuracy fall when the model can tell
 it is being evaluated? Observation cues are composed onto existing prompts at five
@@ -419,6 +469,8 @@ explorer unmatched                list imports that matched no prompt
 explorer features                 recompute automatic features from stored responses
 explorer truth [--targets]        score responses against computed answer keys
        truth --calibrate          measure the extractor's per-language floor
+       truth --coherence          validate the internal-consistency identities
+       truth --items              item analysis: is the answer key carrying information?
 explorer annotate                 queue responses for blinded annotation
 explorer analyse {twins,surface,depth,language,sandbagging,controls,reliability,judge,drift}
 explorer serve                    the Explorer UI
