@@ -143,6 +143,22 @@ CREATE TABLE IF NOT EXISTS feature (
     computed_at       TEXT NOT NULL
 );
 
+-- Layer 0: objective correctness against a computed answer key. Requires no human
+-- annotation, which is what lets it scale past the annotation bottleneck. `null_accuracy`
+-- stores the cross-family score — the built-in check that the matcher is finding answers
+-- rather than finding numbers.
+CREATE TABLE IF NOT EXISTS ground_truth (
+    run_id         TEXT PRIMARY KEY REFERENCES run(id) ON DELETE CASCADE,
+    solver_version TEXT NOT NULL,
+    targets_total  INTEGER NOT NULL,
+    targets_hit    INTEGER NOT NULL,
+    accuracy       REAL,
+    n_candidates   INTEGER NOT NULL DEFAULT 0,
+    null_accuracy  REAL,
+    details        TEXT NOT NULL DEFAULT '[]',
+    computed_at    TEXT NOT NULL
+);
+
 -- Layer 2: human annotation. The reference dataset.
 CREATE TABLE IF NOT EXISTS annotation (
     id                   TEXT PRIMARY KEY,

@@ -89,11 +89,11 @@ Two model-API facts it guards against:
 | Corpus | 8 families, all authored: 48 ladder + 24 depth-arm prompts + 10 false-positive controls = **82 runnable** |
 | Linter | twin matching, ladder deltas, hazard review, content deny-list, dimension independence |
 | Ingestion | 3 lanes — live API, manual chat capture, bulk import — with explicit provenance tiers |
-| Measurement | 17 automatic features · 9 ordinal human metrics · optional LLM judge (off by default) |
+| Measurement | **objective correctness vs computed answer keys** · 17 automatic features · 9 ordinal human metrics · optional LLM judge (off by default) |
 | Annotation | blinded, randomised, coverage-planned, with intra-rater reliability |
-| Analysis | twin-pair deltas, depth × risk interaction (difference-in-differences), bootstrap CIs over families, Cliff's delta, Krippendorff's α, safety surface |
+| Analysis | objective-correctness deltas, twin-pair deltas, depth × risk interaction (difference-in-differences), bootstrap CIs over families, Cliff's delta, Krippendorff's α, safety surface |
 | UI | complete: collect (all three lanes), explore, compare + diff, blinded annotation, surface, results |
-| Tests | 75, all passing, no network required |
+| Tests | 96, all passing, no network required |
 
 ## How it stays honest
 
@@ -120,6 +120,32 @@ retention" measures prompt-writing drift as much as model behaviour.
 instead: every figure in the question unchanged. Different wording is the manipulation;
 different numbers are a different question. This caught a real authoring slip, a
 "60-second window" against "a minute".
+
+**Correctness is measured, not just presence.** Every family's reasoning core is a
+closed-form computation, so the true answer is derivable from the prompt's own
+parameters. `explorer truth` scores each response against that answer key:
+
+```
+explorer truth
+
+  variant      n   mean accuracy
+  C            8           0.906
+  D            8           0.747
+  E            8           0.344
+
+  null control (cross-family accuracy): 0.005  [ok]
+```
+
+This catches the one failure nothing else here can: a fluent, well-formatted response
+with **wrong numbers** scores full marks on every other measure and zero on this one. It
+also needs no human annotation, which makes it the only layer that scales past the
+annotation bottleneck — `--source truth` works on every analysis.
+
+The **null control** is the arm's own falsification test: score a response against
+another family's answer key and see how often the matcher fires by chance. Near zero
+means it finds answers, not numbers. Getting there required excluding numbered-list
+numerals and requiring a bare number to be named in nearby prose — together those took
+the null rate from 0.129 to 0.005 with no loss of true positives.
 
 **The annotation budget is spent on coverage, not at random.** A twin delta needs
 *both* members rated, so uniform sampling wastes most of it: 60 random annotations from
@@ -331,6 +357,7 @@ explorer capture                  record a pasted chat response (Tier B)
 explorer import PATH              bulk-import transcripts (Tier C)
 explorer unmatched                list imports that matched no prompt
 explorer features                 recompute automatic features from stored responses
+explorer truth [--targets]        score responses against computed answer keys
 explorer annotate                 queue responses for blinded annotation
 explorer analyse {twins,surface,depth,controls,reliability,judge,drift}
 explorer serve                    the Explorer UI

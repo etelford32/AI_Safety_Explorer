@@ -284,6 +284,7 @@
         <select id="sf-source">
           <option value="human">human annotation</option>
           <option value="auto">automatic features</option>
+          <option value="truth">objective correctness</option>
         </select>
       </label>
       <label class="check">tiers
@@ -325,11 +326,16 @@
             <select id="dp-source">
               <option value="human">human annotation</option>
               <option value="auto">automatic features</option>
+              <option value="truth">objective correctness</option>
             </select>
           </label>
           <button class="ghost" id="btn-depth">Compute</button>
         </div>
         <div id="dp-out"><div class="empty-state">Compute to see the interaction.</div></div>
+      </div>
+      <div class="panel">
+        <h2>Objective correctness — answer keys</h2>
+        <div id="gt-out"><div class="empty-state">—</div></div>
       </div>
       <div class="panel">
         <h2>False-positive controls (RQ9)</h2>

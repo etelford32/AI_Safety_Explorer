@@ -42,6 +42,7 @@ def connect(path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
 MIGRATIONS: list[tuple[str, str, str]] = [
     ("run", "stop_details", "TEXT NOT NULL DEFAULT '{}'"),
     ("prompt", "sub_arm", "TEXT NOT NULL DEFAULT 'ladder'"),
+    ("ground_truth", "null_accuracy", "REAL"),
 ]
 
 

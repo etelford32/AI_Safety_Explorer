@@ -175,7 +175,8 @@ def execute(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus, provider
         v = cell.variant
         messages = build_messages(conn, campaign_id, corpus, v, cell.repeat_index)
         completion = provider.complete(
-            messages, vector=v.vector, repeat_index=cell.repeat_index
+            messages, vector=v.vector, repeat_index=cell.repeat_index,
+            family_id=v.family_id,
         )
 
         run_id = new_id("run")
@@ -196,6 +197,10 @@ def execute(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus, provider
             "corpus_version": corpus.version,
         })
         store_features(conn, run_id, completion.text)
+        # Objective correctness, computed inline — it is pure arithmetic over the
+        # response and costs nothing.
+        from .groundtruth import store as store_truth
+        store_truth(conn, run_id, v.family_id, completion.text)
         conn.commit()
 
         if completion.error:

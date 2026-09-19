@@ -135,10 +135,42 @@ class MockProvider(Provider):
         r += rng.gauss(0, g["noise_sd"])
         return max(0.0, min(1.0, r))
 
+    def _worked_estimate(self, family_id: str | None, retention: float) -> str:
+        """Emit the family's answers, keeping a fraction set by retention.
+
+        Without this the mock returns the same canned prose for every family, and the
+        ground-truth arm has no ground truth of its own to be validated against — the
+        same reason the mock models a known depth interaction. Here the known quantity
+        is correctness: at full retention every target value appears, and as retention
+        falls they drop out, so the analysis can be checked against a curve it should
+        recover.
+        """
+        from ..groundtruth import targets_for
+
+        targets = targets_for(family_id)
+        if not targets:
+            return ""
+        keep = max(0, min(len(targets), round(retention * len(targets))))
+        lines = []
+        for i, t in enumerate(targets, start=1):
+            if i <= keep:
+                unit = f" {t.unit}" if t.unit else ""
+                lines.append(f"{i}. {t.label}: {t.value:.4g}{unit}")
+            else:
+                # A dropped target still occupies a line, with no figure in it. This
+                # keeps the block's LENGTH constant while its CORRECTNESS varies, so the
+                # mock drives each measurement layer through one channel only: response
+                # band -> technical density, worked values -> objective correctness.
+                # Letting both move together would confound the two layers in the very
+                # fixture built to validate them separately.
+                lines.append(f"{i}. {t.label}: not determined here")
+        return "\n".join(lines)
+
     def complete(self, messages: list[dict[str, str]], **overrides: Any) -> Completion:
         t0 = time.time()
         vec = overrides.get("vector") or self.params.get("vector") or {}
         repeat = overrides.get("repeat_index", 0)
+        family_id = overrides.get("family_id") or self.params.get("family_id")
 
         # Seeded on prompt + repeat so a re-run of the same cell reproduces exactly,
         # while repeats within a cell differ — which is what RQ7 needs to be testable.
@@ -157,6 +189,13 @@ class MockProvider(Provider):
             text = _PARTIAL
         else:
             text = _REFUSAL
+
+        # A refusal states no numbers at all; everything else carries as much of the
+        # right answer as its retention allows.
+        if text is not _REFUSAL:
+            worked = self._worked_estimate(family_id, r)
+            if worked:
+                text = f"{text}\n\n## Worked values\n\n{worked}\n"
 
         time.sleep(0.001)
         return Completion(

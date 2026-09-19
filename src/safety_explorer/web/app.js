@@ -754,6 +754,58 @@ function renderSurface(s) {
     </div>`;
 }
 
+/* ------------------------------------------------- objective correctness */
+
+async function loadTruth() {
+  const t = await api('truth');
+  if (!t.scored) {
+    $('#gt-out').innerHTML = `<div class="empty-state">
+      Nothing scored yet. Run <code>explorer truth</code>, or start a campaign —
+      correctness is computed inline as responses arrive.</div>`;
+    return;
+  }
+  const rows = t.by_variant.map((r) => {
+    const cls = r.accuracy >= 0.8 ? 'good' : r.accuracy <= 0.3 ? 'bad' : '';
+    const bar = Math.round(r.accuracy * 100);
+    return `<tr><td>${esc(r.variant)}</td><td class="num">${r.n}</td>
+      <td class="num ${cls}">${fmt(r.accuracy)}</td>
+      <td style="width:110px"><div class="bar"><div style="width:${bar}%"></div></div></td></tr>`;
+  }).join('');
+
+  const nullCls = t.null_ok ? 'good' : 'bad';
+  const nullTxt = t.null_accuracy === null ? '—' : fmt(t.null_accuracy, 3);
+
+  const keys = Object.entries(t.keys).map(([fam, ks]) => `
+    <details style="margin-bottom:4px">
+      <summary class="note" style="cursor:pointer">${esc(fam)} — ${ks.length} target(s)</summary>
+      <table style="margin-top:4px">
+        ${ks.map((k) => {
+          const band = k.kind === 'dex'
+            ? `±${fmt(k.tol)} dex (factor ${fmt(Math.pow(10, k.tol), 1)})`
+            : `±${Math.round(k.tol * 100)}%`;
+          return `<tr><td>${esc(k.label)}</td>
+            <td class="num">${Number(k.value).toPrecision(4)}</td>
+            <td>${esc(k.unit || '—')}</td><td class="note">${band}</td></tr>`;
+        }).join('')}
+      </table>
+    </details>`).join('');
+
+  $('#gt-out').innerHTML = `
+    <table><tr><th>variant</th><th class="num">n</th><th class="num">accuracy</th><th></th></tr>${rows}</table>
+    <p class="note" style="margin-top:10px">
+      Fraction of the answer key present in the response, needing no annotation.
+      A fluent reply with <em>wrong</em> numbers scores zero here while scoring full
+      marks on every other measure — the failure nothing else can see.
+    </p>
+    <div style="margin-top:8px">
+      null control (cross-family): <span class="${nullCls}">${nullTxt}</span>
+      ${t.null_ok ? '' : '<span class="bad"> — SUSPECT</span>'}
+    </div>
+    <p class="note">Scoring a response against another family's key. Near zero means the
+      matcher finds answers, not numbers. This is the arm's own falsification test.</p>
+    <div style="margin-top:10px"><div class="note" style="margin-bottom:4px">answer keys</div>${keys}</div>`;
+}
+
 /* ------------------------------------------------------------ results */
 
 $('#btn-twins').addEventListener('click', loadTwins);
@@ -838,6 +890,7 @@ async function loadTwins() {
 
 async function loadResults() {
   loadDepth();
+  loadTruth();
   const [ctrl, rel, drift] = await Promise.all([
     api('controls', { tiers: 'A' }), api('reliability'), api('drift'),
   ]);

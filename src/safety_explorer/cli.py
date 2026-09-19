@@ -297,6 +297,57 @@ def cmd_features(args) -> int:
     return 0
 
 
+def cmd_truth(args) -> int:
+    """Score stored responses against computed answer keys."""
+    from . import groundtruth as gt
+
+    conn = db.connect(args.db)
+
+    if args.targets:
+        for family in gt.families_with_ground_truth():
+            print(f"\n{family}")
+            for t in gt.targets_for(family):
+                band = (f"±{t.tol:.2f} dex (factor {10 ** t.tol:.1f})"
+                        if t.kind == "dex" else f"±{t.tol:.0%}")
+                print(f"  {t.key:24s} {t.value:>12.4g} {t.unit:<8s} {band}")
+                if t.note:
+                    print(f"  {'':24s} {t.note}")
+        return 0
+
+    stats = gt.recompute_all(conn)
+    print(f"scored {stats['scored']} run(s); {stats['skipped_no_solver']} had no solver")
+
+    rows = db.query(conn, """
+        SELECT p.family_id, p.variant, AVG(g.accuracy) AS acc,
+               AVG(g.null_accuracy) AS null_acc, COUNT(*) AS n
+        FROM ground_truth g JOIN run r ON r.id = g.run_id
+        JOIN prompt p ON p.id = r.prompt_id
+        GROUP BY p.family_id, p.variant ORDER BY p.family_id, p.variant""")
+    if not rows:
+        return 0
+
+    from collections import defaultdict
+    by_variant: dict[str, list[float]] = defaultdict(list)
+    nulls: list[float] = []
+    for r in rows:
+        by_variant[r["variant"]].append(r["acc"] or 0.0)
+        if r["null_acc"] is not None:
+            nulls.append(r["null_acc"])
+
+    print(f"\n  {'variant':<10}{'n':>4}{'mean accuracy':>16}")
+    for variant in sorted(by_variant):
+        vals = by_variant[variant]
+        print(f"  {variant:<10}{len(vals):>4}{sum(vals) / len(vals):>16.3f}")
+
+    if nulls:
+        mean_null = sum(nulls) / len(nulls)
+        verdict = "ok" if mean_null < 0.10 else "SUSPECT — matcher may be finding numbers"
+        print(f"\n  null control (cross-family accuracy): {mean_null:.3f}  [{verdict}]")
+        print("  A matcher that finds answers scores near zero here. If this is not near")
+        print("  zero, the arm is measuring number density rather than correctness.")
+    return 0
+
+
 def cmd_annotate(args) -> int:
     conn = db.connect(args.db)
     if args.progress:
@@ -339,8 +390,13 @@ def cmd_analyse(args) -> int:
 
     if args.what == "twins":
         deltas = analysis.twin_deltas(conn, c, args.campaign, args.tiers, args.metric)
-        summary = analysis.summarise_deltas(deltas)
-        print(f"twin-pair deltas for '{args.metric}' (tiers {args.tiers})\n")
+        value_key = {"human": "delta", "auto": "auto_density_ratio",
+                     "truth": "gt_delta"}[args.source]
+        summary = analysis.summarise_deltas(deltas, value=value_key)
+        label = {"human": f"'{args.metric}' (human annotation)",
+                 "auto": "technical-density ratio (automatic)",
+                 "truth": "objective correctness (answer key)"}[args.source]
+        print(f"twin-pair deltas — {label}, tiers {args.tiers}\n")
         print(f"  {'variant':<9}{'n':>4}{'fams':>6}{'median':>9}{'mean':>8}"
               f"{'ci95':>18}{'effect':>12}")
         for row in summary:
@@ -353,6 +409,13 @@ def cmd_analyse(args) -> int:
         print("\n  * provisional: fewer than 3 observations or fewer than 2 families")
         print("  mean is reported because it is legible; the median and Cliff's delta "
               "are the values to cite.")
+        if args.source == "truth":
+            null = db.query_one(
+                conn, "SELECT AVG(null_accuracy) AS n FROM ground_truth "
+                      "WHERE null_accuracy IS NOT NULL")
+            if null and null["n"] is not None:
+                print(f"\n  null control: cross-family accuracy {null['n']:.3f} — "
+                      f"{'ok' if null['n'] < 0.10 else 'SUSPECT'}")
         return 0
 
     if args.what == "surface":
@@ -530,6 +593,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("unmatched", help="list imported runs that matched no prompt").set_defaults(func=cmd_unmatched)
     sub.add_parser("features", help="recompute automatic features from stored responses").set_defaults(func=cmd_features)
 
+    t = sub.add_parser("truth", help="score responses against computed answer keys")
+    t.add_argument("--targets", action="store_true", help="print the answer keys and exit")
+    t.set_defaults(func=cmd_truth)
+
     a = sub.add_parser("annotate", help="queue responses for human annotation")
     a.add_argument("--annotator", default="local")
     a.add_argument("--limit", type=int, default=60)
@@ -555,8 +622,9 @@ def build_parser() -> argparse.ArgumentParser:
     an.add_argument("--x", default="intent")
     an.add_argument("--y", default="operationality")
     an.add_argument("--annotator", default=None)
-    an.add_argument("--source", default="human", choices=["human", "auto"],
-                    help="human annotation, or automatic features (needs no annotation)")
+    an.add_argument("--source", default="human", choices=["human", "auto", "truth"],
+                    help="human annotation; automatic features; or objective correctness "
+                         "against a computed answer key (both of the latter need no annotation)")
     an.set_defaults(func=cmd_analyse)
 
     s = sub.add_parser("serve", help="start the Explorer UI")

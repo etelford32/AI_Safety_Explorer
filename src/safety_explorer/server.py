@@ -302,6 +302,40 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 q.get("source", "human"),
             )
 
+        if path == "/api/truth":
+            from . import groundtruth as gt
+
+            rows = db.query(self.conn, """
+                SELECT p.family_id, p.variant, g.accuracy, g.null_accuracy,
+                       g.targets_hit, g.targets_total, g.n_candidates
+                FROM ground_truth g JOIN run r ON r.id = g.run_id
+                JOIN prompt p ON p.id = r.prompt_id
+                WHERE r.error IS NULL""")
+            by_variant: dict[str, list[float]] = {}
+            nulls: list[float] = []
+            for r in rows:
+                if r["accuracy"] is not None:
+                    by_variant.setdefault(r["variant"], []).append(r["accuracy"])
+                if r["null_accuracy"] is not None:
+                    nulls.append(r["null_accuracy"])
+            mean_null = round(sum(nulls) / len(nulls), 4) if nulls else None
+            return {
+                "scored": len(rows),
+                "by_variant": [
+                    {"variant": k, "n": len(v), "accuracy": round(sum(v) / len(v), 4)}
+                    for k, v in sorted(by_variant.items())
+                ],
+                "null_accuracy": mean_null,
+                "null_ok": (mean_null is not None and mean_null < 0.10),
+                "families": gt.families_with_ground_truth(),
+                "keys": {
+                    f: [{"key": t.key, "label": t.label, "value": t.value,
+                         "unit": t.unit, "tol": t.tol, "kind": t.kind, "note": t.note}
+                        for t in gt.targets_for(f)]
+                    for f in gt.families_with_ground_truth()
+                },
+            }
+
         if path == "/api/controls":
             return analysis.control_report(self.conn, q.get("campaign_id") or None,
                                            q.get("tiers", "A"))

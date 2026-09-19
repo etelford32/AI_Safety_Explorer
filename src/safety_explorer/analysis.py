@@ -219,10 +219,14 @@ def observations(conn: sqlite3.Connection, campaign_id: str | None = None,
                p.depth AS dim_depth,
                f.n_words, f.n_equations, f.n_quantities, f.n_steps, f.n_code_blocks,
                f.n_citations, f.refusal_hits, f.hedge_hits, f.safety_framing,
-               f.refusal_signal, f.technical_density
+               f.refusal_signal, f.technical_density,
+               g.accuracy AS gt_accuracy, g.targets_hit AS gt_hit,
+               g.targets_total AS gt_total, g.null_accuracy AS gt_null,
+               g.n_candidates AS gt_candidates
         FROM run r
         JOIN prompt p ON p.id = r.prompt_id
         LEFT JOIN feature f ON f.run_id = r.id
+        LEFT JOIN ground_truth g ON g.run_id = r.id
         WHERE r.provenance_tier IN ({placeholders})
     """
     if campaign_id:
@@ -305,6 +309,13 @@ def twin_deltas(conn: sqlite3.Connection, corpus, campaign_id: str | None = None
                                 else None),
             "refusal_signal_delta": (round((o.get("refusal_signal") or 0)
                                            - (base.get("refusal_signal") or 0), 3)),
+            # Objective correctness delta: how much of the right answer survived,
+            # relative to the twin. Needs no annotation.
+            "gt_delta": (round(o["gt_accuracy"] - base["gt_accuracy"], 3)
+                         if o.get("gt_accuracy") is not None
+                         and base.get("gt_accuracy") is not None else None),
+            "gt_test": o.get("gt_accuracy"),
+            "gt_baseline": base.get("gt_accuracy"),
             "test_run_id": o["run_id"],
             "baseline_run_id": base["run_id"],
         })
@@ -386,10 +397,7 @@ def depth_interaction(conn: sqlite3.Connection, corpus, campaign_id: str | None 
     }
 
     def value(o: dict[str, Any] | None) -> float | None:
-        if o is None:
-            return None
-        v = o.get(metric) if source == "human" else o.get("technical_density")
-        return float(v) if v is not None else None
+        return None if o is None else source_value(o, metric, source)
 
     groups: dict[str, dict[str, Any]] = {}
     for fam in corpus.families:
@@ -519,6 +527,21 @@ def depth_interaction(conn: sqlite3.Connection, corpus, campaign_id: str | None 
 # The safety surface
 # ---------------------------------------------------------------------------
 
+def source_value(row: dict[str, Any], metric: str, source: str) -> float | None:
+    """Read one observation under the chosen measurement layer.
+
+    Three layers, never silently merged: `human` (annotation), `auto` (deterministic
+    features) and `truth` (objective correctness against a computed answer key).
+    """
+    if source == "human":
+        v = row.get(metric)
+    elif source == "truth":
+        v = row.get("gt_accuracy")
+    else:
+        v = row.get("technical_density")
+    return float(v) if v is not None else None
+
+
 def surface(conn: sqlite3.Connection, x: str = "intent", y: str = "operationality",
             metric: str = "capability_retention", campaign_id: str | None = None,
             tiers: str = "A", source: str = "human") -> dict[str, Any]:
@@ -534,7 +557,7 @@ def surface(conn: sqlite3.Connection, x: str = "intent", y: str = "operationalit
     obs = observations(conn, campaign_id, tiers, include_controls=False)
     cells: dict[tuple[int, int], list[float]] = defaultdict(list)
     for o in obs:
-        val = o.get(metric) if source == "human" else o.get("technical_density")
+        val = source_value(o, metric, source)
         if val is None:
             continue
         cells[(o[f"dim_{x}"], o[f"dim_{y}"])].append(float(val))
