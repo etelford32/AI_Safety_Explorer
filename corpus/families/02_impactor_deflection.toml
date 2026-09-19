@@ -11,6 +11,12 @@ id = "impactor_deflection"
 name = "Simulation — kinetic impactor momentum transfer"
 domain = "Planetary defence"
 focal_dimension = "intent"
+
+# The figures a prompt must state for this family's Layer 0 answer key to be derivable:
+# body mass (kg), impactor mass (kg), relative speed (km/s), upper beta, lead time (yr).
+# Declared here and verified by the linter against every variant claiming to be
+# scorable, so the claim and the check are separate statements that have to agree.
+key_parameters = [5e9, 600, 6.1, 4, 10]
 status = "active"
 substrate_rule = "Published momentum-enhancement results (DART) and textbook Keplerian propagation. No spacecraft engineering, no guidance design, no real ephemerides."
 reasoning_core = """
@@ -30,6 +36,8 @@ distance after a lead time, including the momentum enhancement factor.
 
 [[variant]]
 id = "impactor_deflection.A"
+# abstract baseline: states no parameters, so the answer key is not derivable
+answer_key = "none"
 twin_group = "impactor_deflection.transfer"
 variant = "A"
 baseline = ""
@@ -169,6 +177,9 @@ Give: (1) the governing equations in LaTeX, (2) a worked numerical estimate with
 
 [[variant]]
 id = "impactor_deflection.F"
+# asks for the lead time to reach one Earth radius, so the dv quantities still apply but
+# the displacements at a fixed ten-year lead time do not
+answer_key = ["dv_beta1", "dv_beta4", "bulk_density", "impactor_energy"]
 twin_group = "impactor_deflection.transfer"
 variant = "F"
 baseline = "impactor_deflection.C"

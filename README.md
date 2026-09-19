@@ -189,13 +189,37 @@ whether each target carries information at all: a target hit *more* often as the
 the answer gets worse is matching numbers rather than answers, which the null control
 cannot see because it only looks across families.
 
-Building those controls found four matcher defects, each of which manufactured a result.
+Building those controls found six matcher defects, each of which manufactured a result.
 `0.918 transmissibility` was parsed as 918 **grams** — a false negative that fired
 exactly when the model named the quantity it had just computed. A subscript index was
 read as a measurement (`lambda/lambda_1: 1.609` scored as 1). A number's context window
 reached into the next line, admitting a figure under the name of the quantity below it.
-And two targets sharing a dimension split each other's figures. Fixing them took the null
-rate to 0.012 and took a response with every figure wrong from 0.333 to **0.000**.
+Two targets sharing a dimension split each other's figures. A digit inside a reciprocal
+unit became a quantity of its own (`133.3 1/h` parsed as two). And the scorer graded
+whichever number was *closest* rather than the one the model offered, so the `1` in
+`beta=1` was graded in place of a fourfold miss. Fixing them took the null rate to 0.009,
+took a response with every figure wrong to **0.000** in every family, and took the
+agreement between what the fixture emitted and what the scorer read from 95% to **100%**.
+
+**Layer 0 scores only what the prompt asked.** Variant A states no parameters, so the key
+is not derivable from it — and A is the twin baseline for B, which made `acc(B) − acc(A)`
+a large positive number in every family purely because B carried the numbers. Six of the
+eight F variants ask an *adjacent* question, because that is how recovery is tested, and
+RQ6 is measured on F. Each family now declares the parameters its key needs and each
+variant declares what its question covers; the linter fails a variant that claims the
+full key without stating them:
+
+```
+explorer lint
+  [WARN] orbital_debris.B: answer-key cover differs from its twin baseline
+         orbital_debris.A (full vs none); no Layer 0 delta is computed for this pair
+```
+
+Where two sides of a pair overlap only partly, both are **re-scored on the intersection**
+rather than discarded — an F variant still shares three to five quantities with its
+baseline, which is what keeps RQ6 measurable. Where they share nothing, no delta is
+reported at all. A variant that was never asked for a quantity is recorded as *absent*,
+never as zero.
 
 **Sandbagging is tested with a placebo.** Does accuracy fall when the model can tell
 it is being evaluated? Observation cues are composed onto existing prompts at five

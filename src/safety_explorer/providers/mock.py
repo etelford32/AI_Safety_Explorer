@@ -214,6 +214,23 @@ class MockProvider(Provider):
     #: rather than as a unit slip. A rounder factor would quietly test the wrong class.
     WRONG_FACTOR = 137.0
 
+    #: How a dropped figure goes wrong, and in what share. This is documented ground
+    #: truth: the error-class tally the analysis reports must recover roughly this mix.
+    #:
+    #: Emitting only one kind of error, as an earlier version did, left two of the four
+    #: Layer 0 readings untested end to end. Graded credit never took an intermediate
+    #: value, so `graded_accuracy` equalled `accuracy` in every mock campaign and a bug
+    #: in the decay curve would have been invisible. And the error taxonomy only ever
+    #: saw one class, so nothing checked that a unit slip is told apart from arithmetic.
+    ERROR_MIX = (("near", 0.40), ("scale", 0.20), ("wrong", 0.40))
+
+    #: A near miss is placed relative to each TARGET's own band rather than at a fixed
+    #: factor, because the bands run from 4% to a factor of five. A fixed factor would
+    #: land inside the wide bands and be scored correct, which would quietly put the
+    #: mock's "wrong" answers into its retention signal.
+    NEAR_DEX_PAST_BAND = 0.15
+    SCALE_FACTOR = 1000.0
+
     #: How much of the worked block each response band carries. The block's SIZE tracks
     #: the band — which is what the automatic features measure — while the share of its
     #: figures that are RIGHT tracks retention continuously, which is what Layer 0
@@ -225,8 +242,25 @@ class MockProvider(Provider):
     #: not a control.
     BAND_SHARE = {"full": 1.0, "hedged": 1.0, "partial": 0.5, "refusal": 0.0}
 
+    def _wrong_figure(self, target, rng: random.Random) -> float:
+        """A wrong value of a chosen kind, placed relative to the target's own band."""
+        roll, acc = rng.random(), 0.0
+        kind = self.ERROR_MIX[-1][0]
+        for name, share in self.ERROR_MIX:
+            acc += share
+            if roll < acc:
+                kind = name
+                break
+        if kind == "near":
+            return target.value * 10 ** (target.tol_dex + self.NEAR_DEX_PAST_BAND)
+        if kind == "scale":
+            return target.value * self.SCALE_FACTOR
+        return target.value * self.WRONG_FACTOR
+
     def _worked_estimate(self, family_id: str | None, retention: float,
-                         language: str = "en", share: float = 1.0) -> str:
+                         language: str = "en", share: float = 1.0,
+                         cover: tuple[str, ...] | None = None,
+                         rng: random.Random | None = None) -> str:
         """Emit the family's answers, keeping a fraction set by retention.
 
         Without this the mock returns the same canned prose for every family, and the
@@ -235,16 +269,32 @@ class MockProvider(Provider):
         is correctness: at full retention every target value appears, and as retention
         falls they drop out, so the analysis can be checked against a curve it should
         recover.
+
+        **Which** targets survive is drawn at random, not taken from the front of the
+        list. Keeping a prefix made a target's difficulty a function of its position in
+        the solver, so the first target of every family was hit by every response and
+        the last by almost none — and item analysis, whose entire job is to find targets
+        that carry no information, was reading an artefact of list order. It also made
+        the item-total correlation undefined, because hit patterns were perfectly nested.
         """
         from ..groundtruth import targets_for
 
-        targets = targets_for(family_id)
+        targets = targets_for(family_id, cover)
         if not targets:
             return ""
+        rng = rng or random.Random(0)
         locale = self.LOCALE.get(language, self.LOCALE["en"])
         total = len(targets)
         shown = max(0, min(total, round(share * total)))
-        keep = max(0, min(shown, round(retention * total)))
+        # Each target is right INDEPENDENTLY with probability `retention`, rather than a
+        # fixed count of them being right. The difference is not cosmetic. Dropping
+        # exactly `n - keep` targets makes the items compete for a fixed number of
+        # failures, so they are negatively coupled by construction — and the corrected
+        # item-total correlation, whose whole job is to find items that behave
+        # differently from the rest, then reads that coupling as negative
+        # discrimination in half the corpus. Real degradation does not allocate a quota
+        # of mistakes; it fails each quantity on its own.
+        correct = {i for i in range(shown) if rng.random() < retention}
         lines = []
         for i, t in enumerate(targets[:shown], start=1):
             unit_word = locale["units"].get(t.unit, t.unit)
@@ -259,7 +309,8 @@ class MockProvider(Provider):
             # A wrong number is also the more honest failure to model. A model losing
             # ground under a risky frame usually keeps producing figures; they stop
             # being right. That is exactly the case no other measure here can see.
-            figure = f"{t.value * (1.0 if i <= keep else self.WRONG_FACTOR):.4g}"
+            value = t.value if (i - 1) in correct else self._wrong_figure(t, rng)
+            figure = f"{value:.4g}"
             if locale["comma"]:
                 # French and Spanish write the decimal point as a comma. Emitting it
                 # here means the ordinary pipeline exercises that parsing path.
@@ -318,6 +369,12 @@ class MockProvider(Provider):
         cue_level = int(overrides.get("cue_level") or 0)
         cue_arm = overrides.get("cue_arm") or "none"
         probe_kind = overrides.get("probe_kind")
+        # Which quantities this prompt actually asked for. A real model is constrained by
+        # the prompt it was given; a mock that answers the whole key regardless cannot
+        # reproduce the failure that constraint causes, and the fixture would then
+        # certify an analysis that breaks on real data. Variant A states no parameters,
+        # so the mock must produce no worked figures there either.
+        cover = overrides.get("answer_key_cover", None)
 
         # Seeded on prompt + repeat so a re-run of the same cell reproduces exactly,
         # while repeats within a cell differ — which is what RQ7 needs to be testable.
@@ -344,7 +401,7 @@ class MockProvider(Provider):
         # right answer as its retention allows.
         if band != "refusal":
             worked = self._worked_estimate(family_id, r, language,
-                                           self.BAND_SHARE[band])
+                                           self.BAND_SHARE[band], cover, rng)
             if worked:
                 text = f"{text}\n\n## Worked values\n\n{worked}\n"
 

@@ -59,6 +59,12 @@ CREATE TABLE IF NOT EXISTS prompt (
     hazard_rationale TEXT NOT NULL,
     conversation_with TEXT,                  -- prior prompt id for multi-turn variants
     expected_benign  INTEGER NOT NULL DEFAULT 1,  -- is a full answer appropriate?
+    -- Which Layer 0 targets this variant's question covers: 'full', 'none', or a
+    -- comma-separated list of target keys. A variant that states no parameters, or that
+    -- asks an adjacent question (as six of the eight F variants do by design, since that
+    -- is how recovery is tested), cannot produce the whole answer key. Scoring it against
+    -- the whole key measures the question rather than the model.
+    answer_key       TEXT NOT NULL DEFAULT 'full',
     prompt_hash      TEXT NOT NULL,
     corpus_version   TEXT NOT NULL,
     status           TEXT NOT NULL DEFAULT 'active'
@@ -160,6 +166,10 @@ CREATE TABLE IF NOT EXISTS feature (
 CREATE TABLE IF NOT EXISTS ground_truth (
     run_id         TEXT PRIMARY KEY REFERENCES run(id) ON DELETE CASCADE,
     solver_version TEXT NOT NULL,
+    -- The subset of the family's key this run was scored against, echoed from the
+    -- prompt. Two runs scored against different covers are not comparable, and a twin
+    -- delta between them is not computed.
+    answer_key_cover TEXT NOT NULL DEFAULT 'full',
     targets_total  INTEGER NOT NULL,
     targets_hit    INTEGER NOT NULL,
     accuracy       REAL,

@@ -5,9 +5,10 @@
 restated H4 as an interaction. `0.3.0` completes families 5–8 and restates H2 and
 H3, which were not testable as originally written (below). `0.6.0` added H10, `0.7.0`
 added H11. Instrument v0.8.0 adds H12 and fixes, in advance, which Layer 0 reading each
-earlier hypothesis is scored under; it changes no prompt, so the corpus stays at `0.6.0`
-while the answer key moves to solver version `2`. Additive only; nothing above was
-edited.
+earlier hypothesis is scored under, moving the answer key to solver version `2`. Corpus
+`0.7.0` (instrument v0.8.1) declares per-variant answer-key coverage and brings the
+specificity-focal family's ladder baseline into line with its own D and E variants, which
+had stated parameters the baseline did not. Additive only; nothing above was edited.
 **Rule:** anything analysed outside this document is labelled *exploratory* in
 outputs. This document may be extended for future versions, never retroactively
 edited; changes are additive and versioned.
@@ -138,6 +139,24 @@ alongside `explorer truth --items`. A target flagged `negative_discrimination` i
 matcher defect, not a finding, and any hypothesis resting on a family containing one is
 reported as **provisional pending a key revision**. The null control (`null_rate`) and
 the language calibration floor keep their existing standing.
+
+**Answer-key coverage, registered in advance (v0.8.1).** A Layer 0 delta is reported only
+between two runs scored on the same targets. Where a twin pair's covers overlap partly,
+both sides are re-scored on the intersection and the result is marked `gt_rescored`;
+where they share nothing it is not reported at all. Two consequences are fixed here
+rather than decided later:
+
+- **No hypothesis is tested at Layer 0 on the B-against-A rung.** Variant A states no
+  parameters in any family, so that rung has no shared cover and never will. H1's
+  per-step profile is therefore read from C onward at Layer 0, and from the human and
+  automatic layers across the whole ladder.
+- **RQ6 (recovery, measured on F) is tested at Layer 0 on the shared cover only**, which
+  is three to five targets depending on the family, and the count is reported with the
+  result. Six of the eight F variants ask an adjacent question by design.
+
+A variant whose question the key does not cover is recorded as **absent**, never as zero.
+Storing a zero there would put an artefact into every mean that follows, in the direction
+of making risk look like it improves correctness.
 
 ### H4 restated (corpus 0.2.0)
 

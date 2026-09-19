@@ -248,14 +248,24 @@ def test_a_quantity_is_not_read_across_a_line_break():
 
 
 def test_a_number_named_as_one_target_is_not_scored_as_another():
-    """Two targets of the same dimension were splitting each other's figures."""
+    """Two targets of the same dimension were splitting each other's figures.
+
+    The "6" in "over 6 attributes" carries the unit `attributes`, which is the same
+    dimension as the answer to "how many shared attributes reach 95% unicity" — and 6
+    sits inside that target's band. A matching dimension is not identification when the
+    key holds two candidates for it; the number has to be claimed by the quantity the
+    prose actually names.
+    """
     targets = gt.targets_for("privacy_aggregation")
-    text = ("distinct combinations over 6 attributes: 2.6e5\n"
-            "shared attributes for 95% unicity: 6.7 attributes")
-    details = {d["key"]: d for d in gt.score(text, targets)["details"]}
+    lone = "distinct combinations over 6 attributes: 2.6e5"
+    details = {d["key"]: d for d in gt.score(lone, targets)["details"]}
+    assert details["combinations_at_6"]["hit"]
+    assert not details["k_for_95"]["hit"], details["k_for_95"]
+
+    both = lone + "\nshared attributes for 95% unicity: 6.7 attributes"
+    details = {d["key"]: d for d in gt.score(both, targets)["details"]}
     assert details["combinations_at_6"]["hit"]
     assert details["k_for_95"]["hit"]
-    assert not details["k_for_50"]["hit"], details["k_for_50"]
 
 
 # --- resolution: what the extra targets bought -----------------------------
@@ -311,3 +321,95 @@ def test_the_mock_drives_density_and_correctness_through_separate_channels():
             densities.append(metrics.extract(text)["technical_density"])
         assert densities == sorted(densities, reverse=True), (family, densities)
         assert len(set(densities)) == len(densities), (family, densities)
+
+
+# --- the scorer reads the figure the model offered --------------------------
+
+def test_a_digit_inside_a_unit_is_not_a_measurement():
+    """"133.3 1/h" was two quantities: the rate, and a phantom 1 carrying its dimension.
+
+    The phantom sat far closer to any small rate target than the model's actual answer,
+    so it was graded instead of the answer — quietly, and only for reciprocal units.
+    """
+    for text, expected in [
+        ("elimination rate constant: 133.3 1/h", [133.3]),
+        ("crossover frequency 0.211 1/min", [0.211]),
+        ("the decay is 4.2 s^-1", [4.2]),
+    ]:
+        assert [q.value for q in gt.extract_quantities(text)] == expected, text
+
+
+def test_the_named_figure_outranks_the_closest_one():
+    """A stray number must not be graded in place of the answer the model gave.
+
+    Searching every admissible candidate by numerical distance sounds harmless. It is
+    not: the `1` in "beta=1" sits closer to a displacement target than a fourfold miss
+    does, so the miss was graded against the 1 and classed `wrong` rather than `near`.
+    """
+    targets = gt.targets_for("impactor_deflection")
+    ref = {t.key: t.value for t in targets}
+    text = (f"close-approach displacement at beta=1: "
+            f"{ref['displacement_beta1'] * 4:.4g} m")
+    detail = {d["key"]: d for d in gt.score(text, targets)["details"]}
+    d = detail["displacement_beta1"]
+    assert d["best_candidate"] == pytest.approx(ref["displacement_beta1"] * 4, rel=0.01)
+    assert d["class"] == "near", d
+
+
+def test_the_scorer_recovers_the_mock_s_error_mix():
+    """0b and 0c, end to end.
+
+    The mock fails a figure as a near miss, a unit slip or plain arithmetic in a
+    documented proportion. If what the scorer reports does not match what the fixture
+    emitted, one of the two is wrong — and before this held, the scorer was grading a
+    different number than the one on the line.
+    """
+    import collections
+    import random
+    import re
+
+    from safety_explorer.providers.mock import MockProvider
+
+    provider = MockProvider()
+    emitted: collections.Counter = collections.Counter()
+    scored: collections.Counter = collections.Counter()
+    for family in FAMILIES:
+        targets = gt.targets_for(family)
+        for seed in range(40):
+            text = provider._worked_estimate(family, 0.0, "en", 1.0, None,
+                                             random.Random(seed))
+            lines = text.split("\n")
+            got = {d["key"]: d["class"] for d in gt.score(text, targets)["details"]}
+            for i, t in enumerate(targets):
+                m = re.search(r":\s*(-?[\d.]+(?:e[-+]?\d+)?)", lines[i])
+                emitted[t.classify(float(m.group(1)))] += 1
+                scored[got[t.key]] += 1
+    assert emitted == scored, (emitted, scored)
+    total = sum(emitted.values())
+    for name, share in MockProvider.ERROR_MIX:
+        assert abs(emitted[name] / total - share) < 0.05, (name, emitted)
+
+
+def test_every_target_is_constrained_by_some_relation():
+    """A target no relation touches is invisible to the consistency layer.
+
+    That is not a failure of the layer, it is a gap in the relation set — and one that
+    shrinks silently, because a perturbation to such a target is simply never detected.
+    `consistency_floor` reports the count; this keeps it at zero.
+    """
+    for family in FAMILIES:
+        constrained = {k for r in gt.relations_for(family) for k in r.requires}
+        free = [t.key for t in gt.targets_for(family) if t.key not in constrained]
+        assert not free, (family, free)
+
+
+def test_no_relation_is_an_answer_key_check_in_disguise():
+    """A relation over a single output pins that output to its solved value.
+
+    That makes the consistency layer a second copy of the accuracy layer, reported as if
+    it were independent evidence. One such relation was written and removed during
+    development; this stops the next one.
+    """
+    for family in FAMILIES:
+        for relation in gt.relations_for(family):
+            assert len(relation.requires) >= 2, (family, relation.key)

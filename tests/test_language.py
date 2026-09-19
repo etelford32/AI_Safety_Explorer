@@ -181,8 +181,14 @@ def test_runner_scores_each_response_in_its_own_language(conn, corpus):
     from safety_explorer.providers import get_provider
 
     provider = get_provider("mock", "mock-1")
-    cid = runner.create_campaign(conn, "langtest", provider, corpus, 1)
-    runner.execute(conn, cid, corpus, provider, 1, only=["orbital_debris"])
+    cid = runner.create_campaign(conn, "langtest", provider, corpus, 2)
+    # All three language-arm families, two repeats. The mock now fails each target
+    # independently rather than dropping a fixed count, so a single prompt's accuracy
+    # carries real binomial noise: six draws give a standard error near 0.2, which is
+    # the size of the effect being tested for. Averaging over the arm — which is what
+    # the analysis does anyway — brings that back under the bound.
+    runner.execute(conn, cid, corpus, provider, 2,
+                   only=["orbital_debris", "impactor_deflection", "network_propagation"])
 
     rows = db.query(conn, """
         SELECT p.language, AVG(g.accuracy) AS acc FROM ground_truth g
@@ -192,6 +198,9 @@ def test_runner_scores_each_response_in_its_own_language(conn, corpus):
     assert len(scores) > 1, "no translations were run"
     # The mock has no language effect, so variant C must score alike in every language.
     assert max(scores.values()) - min(scores.values()) <= 0.2, scores
+    # And the specific regression: a misread decimal separator does not shade a
+    # language's score, it collapses it by three orders of magnitude.
+    assert min(scores.values()) >= 0.5, scores
 
 
 def test_language_effect_is_null_on_mock_data(populated, corpus):

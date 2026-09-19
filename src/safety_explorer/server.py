@@ -339,6 +339,10 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 FROM ground_truth g JOIN run r ON r.id = g.run_id
                 JOIN prompt p ON p.id = r.prompt_id
                 WHERE r.error IS NULL""")
+            covers = db.query(self.conn, """
+                SELECT p.id, p.family_id, p.variant, p.answer_key
+                FROM prompt p WHERE p.answer_key != 'full' AND p.language = 'en'
+                ORDER BY p.family_id, p.variant""")
             layers = ("accuracy", "graded_accuracy", "weighted_accuracy",
                       "consistency", "consistency_coverage")
             by_variant: dict[str, dict[str, list[float]]] = {}
@@ -389,6 +393,12 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                         for r in gt.relations_for(f)]
                     for f in gt.families_with_ground_truth()
                 },
+                "coverage": [
+                    {"id": r["id"], "family_id": r["family_id"], "variant": r["variant"],
+                     "n_targets": (0 if r["answer_key"] == "none"
+                                   else len(r["answer_key"].split(","))) }
+                    for r in covers
+                ],
                 "coherence_floor": gt.consistency_floor(),
                 "items": gt.item_analysis(self.conn, q.get("campaign_id") or None,
                                           q.get("tiers", "A")),

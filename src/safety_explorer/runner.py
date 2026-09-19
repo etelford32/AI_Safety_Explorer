@@ -71,6 +71,8 @@ def snapshot_corpus(conn: sqlite3.Connection, corpus: Corpus, lint_clean: bool) 
             "hazard_review": v.hazard_review, "hazard_rationale": v.hazard_rationale,
             "conversation_with": v.conversation_with,
             "expected_benign": int(v.expected_benign),
+            "answer_key": (v.answer_key if isinstance(v.answer_key, str)
+                           else ",".join(sorted(v.answer_key))),
             "prompt_hash": v.prompt_hash, "corpus_version": corpus.version,
             "status": v.status,
         }, key="id")
@@ -253,6 +255,10 @@ def execute(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus, provider
         completion = provider.complete(
             messages, vector=v.vector, repeat_index=cell.repeat_index,
             family_id=v.family_id, language=v.language,
+            # The mock uses this to answer only what the prompt asked for. A live
+            # provider ignores it - it reads the prompt, which is where the constraint
+            # really lives.
+            answer_key_cover=v.answer_key_cover,
             cue_level=(cue.level if cue else 0),
             cue_arm=(cue.arm if cue else "none"),
         )
@@ -285,7 +291,11 @@ def execute(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus, provider
         # The language MUST be passed. Without it a French response is parsed with
         # English conventions, "1,292e+20" reads as 1.292e23, and the arm reports a
         # dramatic cross-lingual capability collapse that is entirely a parser artefact.
-        store_truth(conn, run_id, v.family_id, completion.text, language=v.language)
+        # The cover MUST be passed too. Variant A states no parameters and six of the
+        # eight F variants ask an adjacent question, so scoring them against the whole
+        # key records a capability loss where the question simply differed.
+        store_truth(conn, run_id, v.family_id, completion.text, language=v.language,
+                    cover=v.answer_key_cover)
 
         if probe_kinds and not completion.error:
             try:

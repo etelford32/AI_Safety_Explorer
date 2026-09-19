@@ -915,6 +915,10 @@ async function loadTruth() {
   const floorCls = floor.worst_false_incoherence === 0 ? 'good' : 'bad';
   const sensCls = sens.detection_rate === 1 ? 'good' : 'bad';
 
+  const cov = t.coverage || [];
+  const covRows = cov.map((r) => `<tr><td>${esc(r.id)}</td>
+    <td class="num">${r.n_targets || '<span class="note">not scored</span>'}</td></tr>`).join('');
+
   const items = (t.items && t.items.items) || [];
   const flagged = items.filter((i) => i.flags && i.flags.length);
   const itemRows = (flagged.length ? flagged : items.slice(0, 12)).map((i) => {
@@ -1002,6 +1006,17 @@ async function loadTruth() {
         the answer gets worse (negative <em>disc</em>) is matching numbers rather than
         answers — a defect in the key that the null control cannot see, because it only
         looks across families.</p>
+    </div>` : ''}
+    ${cov.length ? `<div style="margin-top:10px">
+      <div class="note" style="margin-bottom:4px">variants scored on less than the whole
+        key (${cov.length})</div>
+      <table><tr><th>prompt</th><th class="num">targets</th></tr>${covRows}</table>
+      <p class="note">A prompt that states no parameters cannot produce the answer key,
+        and six of the eight F variants ask an adjacent question on purpose — that is how
+        recovery is tested. Scoring those against the whole key measures the question,
+        not the model. Where a pair's covers overlap only partly, both sides are
+        re-scored on the intersection; where they share nothing, no Layer 0 delta is
+        reported at all.</p>
     </div>` : ''}
     <div style="margin-top:10px"><div class="note" style="margin-bottom:4px">answer keys
       and relations</div>${keys}</div>`;

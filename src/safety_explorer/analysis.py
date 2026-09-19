@@ -209,7 +209,7 @@ def observations(conn: sqlite3.Connection, campaign_id: str | None = None,
                r.finish_reason, r.stop_details,
                r.cue_id, r.cue_level, r.cue_arm,
                p.family_id, p.twin_group_id, p.variant, p.arm, p.sub_arm, p.control_arm,
-               p.title, p.text AS prompt_text, p.expected_benign,
+               p.title, p.text AS prompt_text, p.expected_benign, p.answer_key,
                -- Dimensions are namespaced because `specificity` is BOTH a design
                -- dimension and a human metric. Without the prefix the annotation score
                -- silently overwrites the design coordinate below, and any analysis
@@ -262,16 +262,116 @@ def observations(conn: sqlite3.Connection, campaign_id: str | None = None,
 
 
 # ---------------------------------------------------------------------------
+# Answer-key coverage
+# ---------------------------------------------------------------------------
+
+#: The Layer 0 deltas a twin pair carries. Each is against the SAME cover on both
+#: sides, or absent.
+_GT_LAYERS = (("gt_delta", "gt_accuracy"), ("gt_graded_delta", "gt_graded"),
+              ("gt_weighted_delta", "gt_weighted"),
+              ("gt_consistency_delta", "gt_consistency"))
+
+
+def _gt_block(test: dict[str, Any], base: dict[str, Any],
+              shared, on_cover) -> dict[str, Any]:
+    """Layer 0 deltas, computed only where both sides answered the same question.
+
+    Where the covers differ but overlap, both sides are re-scored on the intersection.
+    Where they share nothing, every Layer 0 delta is None and `gt_comparable` says so.
+
+    Emitting a delta across mismatched covers is the failure this exists to prevent.
+    Variant B states the parameters and its baseline A does not, so acc(B) - acc(A) is
+    a large positive number in every family — and it is entirely an artefact of which
+    prompt carried the numbers. Reported naively it would read as risk framing IMPROVING
+    correctness, which is both wrong and the kind of wrong that gets quoted.
+    """
+    block: dict[str, Any] = {
+        "gt_comparable": shared is not False,
+        "gt_cover": ("full" if shared is None else
+                     "none" if shared is False else ",".join(shared)),
+        "gt_rescored": isinstance(shared, tuple),
+    }
+    if shared is False:
+        for name, _ in _GT_LAYERS:
+            block[name] = None
+        block["gt_test"] = block["gt_baseline"] = None
+        return block
+
+    t = test if shared is None else on_cover(test, shared)
+    b = base if shared is None else on_cover(base, shared)
+    for name, field_name in _GT_LAYERS:
+        tv, bv = t.get(field_name), b.get(field_name)
+        block[name] = (round(tv - bv, 3) if tv is not None and bv is not None else None)
+    block["gt_test"] = t.get("gt_accuracy")
+    block["gt_baseline"] = b.get("gt_accuracy")
+    return block
+
+
+def _cover_set(row: dict[str, Any]) -> set[str] | None:
+    """The Layer 0 targets a run was scored on. None means the family's whole key."""
+    declared = row.get("answer_key") or "full"
+    if declared == "full":
+        return None
+    if declared == "none":
+        return set()
+    return set(declared.split(","))
+
+
+def _comparable_cover(a: dict[str, Any], b: dict[str, Any],
+                      family_id: str | None) -> tuple[str, ...] | None | bool:
+    """What two runs can honestly be differenced on.
+
+    Returns the shared cover as a tuple, None when both carry the whole key, or False
+    when they share nothing. Variant A states no parameters, so B-against-A shares
+    nothing and no Layer 0 delta exists for that rung — that is a fact about the design,
+    not a gap to paper over. Where the overlap is partial, both sides are re-scored on
+    the intersection instead of being discarded, which is what keeps RQ6 measurable at
+    Layer 0: six of the eight F variants ask an adjacent question, but they still share
+    three to five quantities with their baseline.
+    """
+    from . import groundtruth as gt
+
+    ca, cb = _cover_set(a), _cover_set(b)
+    if ca is None and cb is None:
+        return None
+    full = {t.key for t in gt.targets_for(family_id)}
+    shared = (ca if ca is not None else full) & (cb if cb is not None else full)
+    if not shared:
+        return False
+    if shared == full:
+        return None
+    return tuple(sorted(shared))
+
+
+# ---------------------------------------------------------------------------
 # Twin-pair deltas — the primary analysis unit
 # ---------------------------------------------------------------------------
 
 def twin_deltas(conn: sqlite3.Connection, corpus, campaign_id: str | None = None,
                 tiers: str = "A", metric: str = "capability_retention") -> list[dict[str, Any]]:
     """Compute per-pair deltas of a metric against each variant's declared twin baseline."""
+    from . import groundtruth as gt
+
     obs = observations(conn, campaign_id, tiers, include_controls=False)
     by_cell: dict[tuple[str, int], dict[str, Any]] = {
         (o["prompt_id"], o["repeat_index"]): o for o in obs
     }
+
+    rescored: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+
+    def on_cover(row: dict[str, Any], cover: tuple[str, ...]) -> dict[str, Any]:
+        """Re-score a stored response against a narrower key. Costs no API call."""
+        key = (row["run_id"], cover)
+        if key not in rescored:
+            targets = gt.targets_for(row["family_id"], cover)
+            s = gt.score(row.get("response"), targets, row.get("language") or "en")
+            c = gt.consistency(row.get("response"), row["family_id"],
+                               row.get("language") or "en", cover)
+            rescored[key] = {"gt_accuracy": s["accuracy"],
+                             "gt_graded": s["graded_accuracy"],
+                             "gt_weighted": s["weighted_accuracy"],
+                             "gt_consistency": c["consistency"]}
+        return rescored[key]
 
     out: list[dict[str, Any]] = []
     for o in obs:
@@ -281,6 +381,7 @@ def twin_deltas(conn: sqlite3.Connection, corpus, campaign_id: str | None = None
         base = by_cell.get((variant.baseline, o["repeat_index"]))
         if base is None:
             continue
+        shared = _comparable_cover(o, base, o["family_id"])
 
         test_val, base_val = o.get(metric), base.get(metric)
         auto_test = o.get("technical_density")
@@ -313,29 +414,7 @@ def twin_deltas(conn: sqlite3.Connection, corpus, campaign_id: str | None = None
                                 else None),
             "refusal_signal_delta": (round((o.get("refusal_signal") or 0)
                                            - (base.get("refusal_signal") or 0), 3)),
-            # Objective correctness delta: how much of the right answer survived,
-            # relative to the twin. Needs no annotation.
-            "gt_delta": (round(o["gt_accuracy"] - base["gt_accuracy"], 3)
-                         if o.get("gt_accuracy") is not None
-                         and base.get("gt_accuracy") is not None else None),
-            "gt_test": o.get("gt_accuracy"),
-            "gt_baseline": base.get("gt_accuracy"),
-            # The finer Layer 0 readings, as deltas against the same twin. Carried
-            # alongside rather than instead of the binary one: the hit rate is the
-            # number to quote, and these are the ones that can resolve an effect
-            # smaller than a single target.
-            "gt_graded_delta": (round(o["gt_graded"] - base["gt_graded"], 3)
-                                if o.get("gt_graded") is not None
-                                and base.get("gt_graded") is not None else None),
-            "gt_weighted_delta": (round(o["gt_weighted"] - base["gt_weighted"], 3)
-                                  if o.get("gt_weighted") is not None
-                                  and base.get("gt_weighted") is not None else None),
-            # Coherence moves independently of correctness, and that is the point: a
-            # risky framing that leaves the answer wrong but still self-consistent is a
-            # different finding from one that breaks the algebra.
-            "gt_consistency_delta": (round(o["gt_consistency"] - base["gt_consistency"], 3)
-                                     if o.get("gt_consistency") is not None
-                                     and base.get("gt_consistency") is not None else None),
+            **_gt_block(o, base, shared, on_cover),
             "test_run_id": o["run_id"],
             "baseline_run_id": base["run_id"],
         })

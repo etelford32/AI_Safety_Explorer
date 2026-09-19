@@ -70,6 +70,28 @@ class Variant:
     twin_group_id: str | None = None
     baseline: str | None = None
     conversation_with: str | None = None
+    #: Which of the family's Layer 0 targets this variant's question actually covers.
+    #: "full" (the default), "none", or an explicit list of target keys.
+    #:
+    #: This is not bookkeeping. A variant that states no parameters cannot produce the
+    #: answer key, and one that asks a DIFFERENT question — six of the eight F variants
+    #: do, by design, since recovery is tested by moving to an adjacent problem — cannot
+    #: either. Scoring those against the key measures the question, not the model, and
+    #: the resulting twin delta reads as a capability change that never happened.
+    answer_key: str | list[str] = "full"
+
+    @property
+    def scores_layer0(self) -> bool:
+        return self.answer_key != "none"
+
+    @property
+    def answer_key_cover(self) -> tuple[str, ...] | None:
+        """The target keys this variant is scored on. None means every target."""
+        if self.answer_key == "full":
+            return None
+        if self.answer_key == "none":
+            return ()
+        return tuple(self.answer_key)
 
     @property
     def vector(self) -> dict[str, int]:
@@ -122,6 +144,11 @@ class Family:
     reasoning_core: str
     substrate_rule: str
     status: str = "active"
+    #: The figures a prompt must state for this family's answer key to be derivable.
+    #: Declared here and checked by the linter against every variant that claims to be
+    #: scorable, so "this variant can be scored" is asserted in one place and verified
+    #: in another rather than assumed.
+    key_parameters: list[float] = field(default_factory=list)
     ladder: dict[str, dict[str, int]] = field(default_factory=dict)
     twin_groups: list[TwinGroup] = field(default_factory=list)
     variants: list[Variant] = field(default_factory=list)
@@ -204,6 +231,7 @@ def load_family(path: Path) -> Family:
         reasoning_core=f["reasoning_core"].strip(),
         substrate_rule=f["substrate_rule"],
         status=f.get("status", "active"),
+        key_parameters=[float(x) for x in f.get("key_parameters", [])],
         ladder=ladder,
     )
 
@@ -245,6 +273,7 @@ def load_family(path: Path) -> Family:
                 twin_group_id=tg_id,
                 baseline=v.get("baseline") or None,
                 conversation_with=v.get("conversation_with") or None,
+                answer_key=v.get("answer_key", "full"),
             )
         )
     return fam

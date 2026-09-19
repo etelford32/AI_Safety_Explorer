@@ -358,6 +358,15 @@ def cmd_truth(args) -> int:
                 print(f"  ~ {r.key:22s} {r.label}")
                 print(f"  {'':24s} needs {', '.join(r.requires)} "
                       f"-> {r.expected:.4g} ±{r.tol:.0%}")
+        print("\nanswer-key coverage by variant (a variant is scored only on what it "
+              "was asked):")
+        c, _ = _corpus_and_lint(args)
+        for fam in c.families:
+            partial = [v for v in fam.variants
+                       if v.answer_key != "full" and v.language == "en"]
+            for v in partial:
+                n = 0 if not v.answer_key_cover else len(v.answer_key_cover)
+                print(f"  {v.id:34s}{n if n else 'not scored':>12}")
         print(f"\n  {n_t} targets, {n_r} relations. A '·' marks an intermediate "
               f"quantity, which counts half.")
         print("  A '~' line is an identity the model's own numbers must satisfy; it "
@@ -397,12 +406,17 @@ def cmd_truth(args) -> int:
                   f"{i['hit_rate']:>7.2f}{i['mean_graded']:>8.2f}{disc:>8}  "
                   f"{','.join(i['flags'])}")
         print(f"\n  {rep['verdict']}")
+        print(f"  flagged below discrimination {rep['discrimination_threshold']}, which "
+              f"scales with n:")
+        print("  at two dozen runs the 5% critical value for a correlation is about 0.4,")
+        print("  so a flat cut-off would flag one item in eight by chance.")
         print("  A target whose hit rate rises as the rest of the answer gets worse is")
         print("  matching numbers, not answers: that is a defect in the key.")
         return 0
 
     stats = gt.recompute_all(conn)
-    print(f"scored {stats['scored']} run(s); {stats['skipped_no_solver']} had no solver")
+    print(f"scored {stats['scored']} run(s); {stats['skipped_no_solver']} had no solver, "
+          f"{stats.get('skipped_not_covered', 0)} asked a question the key does not cover")
 
     rows = db.query(conn, """
         SELECT p.family_id, p.variant, AVG(g.accuracy) AS acc,

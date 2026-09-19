@@ -445,6 +445,87 @@ def check_scripts(corpus: Corpus) -> list[Finding]:
     return out
 
 
+def check_answer_key(corpus: Corpus) -> list[Finding]:
+    """A variant claiming the full answer key must state the parameters it needs.
+
+    The family declares `key_parameters`; each variant declares what its question
+    covers. Two separate statements that have to agree, checked here — which is the only
+    reason the coverage declaration is worth anything. Left unchecked it is a comment.
+
+    This caught a real and expensive corpus bug. In the specificity-focal family the
+    ladder baseline said "a fixed number of values" while its own D and E variants said
+    "8 values" and "60,000 riders". The baseline therefore could not produce the answer
+    key at all, so the C->D and C->E deltas for the family carrying H3 would have read
+    as a large capability GAIN caused by risk — an artefact of which prompt happened to
+    carry the numbers.
+    """
+    from . import groundtruth as gt
+
+    out: list[Finding] = []
+    for fam in corpus.families:
+        if not fam.is_active:
+            continue
+        known = {t.key for t in gt.targets_for(fam.id)}
+        for v in fam.variants:
+            if v.status != "active":
+                continue
+            cover = v.answer_key_cover
+            if cover is not None and cover:
+                unknown = sorted(set(cover) - known)
+                if unknown:
+                    out.append(Finding(
+                        "error", v.id,
+                        f"answer_key names target(s) this family has no solver for: "
+                        f"{', '.join(unknown)}",
+                    ))
+                continue
+            if cover == ():
+                continue                       # declared out of scope; nothing to verify
+            if not fam.key_parameters:
+                continue                       # family declares no parameters to check
+            values = [q.value for q in gt.extract_quantities(v.text, v.language)]
+            missing = [p for p in fam.key_parameters
+                       if not any(abs(x - p) <= 0.01 * abs(p) for x in values)]
+            if missing:
+                out.append(Finding(
+                    "error", v.id,
+                    f"claims the full answer key but does not state "
+                    f"{', '.join(f'{m:g}' for m in missing)} — either state the "
+                    f"parameter or declare what the question covers with answer_key",
+                ))
+    return out
+
+
+def check_answer_key_twins(corpus: Corpus) -> list[Finding]:
+    """A twin pair whose two sides are scored on different keys cannot be differenced.
+
+    Reported as a warning, not an error: it is sometimes the honest state of affairs.
+    Variant A states no parameters by design, so B-against-A has no Layer 0 delta and
+    never will. What must not happen is that difference going unnoticed and being
+    averaged into a result — so it is named here and excluded in `twin_deltas`.
+    """
+    out: list[Finding] = []
+    index = {v.id: v for v in corpus.all_variants}
+    for v in corpus.all_variants:
+        if v.status != "active" or not v.baseline:
+            continue
+        base = index.get(v.baseline)
+        if base is None:
+            continue
+        if v.answer_key_cover != base.answer_key_cover:
+            mine = "none" if v.answer_key_cover == () else (
+                "full" if v.answer_key_cover is None else f"{len(v.answer_key_cover)} targets")
+            theirs = "none" if base.answer_key_cover == () else (
+                "full" if base.answer_key_cover is None else
+                f"{len(base.answer_key_cover)} targets")
+            out.append(Finding(
+                "warn", v.id,
+                f"answer-key cover differs from its twin baseline {base.id} "
+                f"({mine} vs {theirs}); no Layer 0 delta is computed for this pair",
+            ))
+    return out
+
+
 def check_ladder(corpus: Corpus) -> list[Finding]:
     """Each A-F step must move only the dimensions the family declared."""
     out: list[Finding] = []
@@ -593,6 +674,8 @@ def run(corpus: Corpus) -> LintReport:
     findings += check_language_twins(corpus)
     findings += check_scripts(corpus)
     findings += check_ladder(corpus)
+    findings += check_answer_key(corpus)
+    findings += check_answer_key_twins(corpus)
     findings += check_completeness(corpus)
     indep, matrix, critical = check_independence(corpus)
     findings += indep

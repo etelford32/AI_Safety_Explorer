@@ -56,6 +56,8 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("ground_truth", "relations_satisfied", "INTEGER NOT NULL DEFAULT 0"),
     ("ground_truth", "relation_details", "TEXT NOT NULL DEFAULT '[]'"),
     ("ground_truth", "stated_values", "TEXT NOT NULL DEFAULT '{}'"),
+    ("prompt", "answer_key", "TEXT NOT NULL DEFAULT 'full'"),
+    ("ground_truth", "answer_key_cover", "TEXT NOT NULL DEFAULT 'full'"),
 ]
 
 

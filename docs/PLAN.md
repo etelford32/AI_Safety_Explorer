@@ -449,7 +449,80 @@ rather than answers — a defect in the key, invisible to the null control, whic
 looks across families. Targets never hit and targets always hit are reported too: both
 shift every score by a constant and shrink the scale the rest of the key works in.
 
-**What building the layers exposed.** Four defects in the matcher, each of which
+### [ADD] Layer 0 only scores what the prompt asked (v0.8.1)
+
+The layers in v0.8 measured the answer key well. What they did not check is whether the
+prompt in front of them had asked for it — and in two places it had not.
+
+**Variant A states no parameters.** It is the abstract baseline by design, so the answer
+key is not derivable from it in any family. A is also the declared twin baseline for B,
+so `acc(B) − acc(A)` was a large positive number everywhere: an artefact of which prompt
+carried the numbers, readable as *risk framing improves correctness*.
+
+**Six of the eight F variants ask an adjacent question**, which is how recovery is
+tested — the maximum disposal time rather than the growth time, the lead time to move an
+approach distance rather than the displacement at a fixed lead time. Scoring those
+against the whole key records a capability loss where only the question changed, and
+**RQ6 is measured on F.**
+
+**And one family was simply inconsistent.** In the specificity-focal family the ladder
+baseline said "a fixed number of values" while its own D and E said "8 values" and
+"60,000 riders". Its C→D and C→E Layer 0 deltas were therefore pure artefact — in the
+one family carrying H3.
+
+The fix is a declaration plus a check, which is the pattern this corpus uses everywhere:
+
+- each family declares `key_parameters`, the figures a prompt must state;
+- each variant declares `answer_key`: `full`, `none`, or the target keys its question
+  covers;
+- `check_answer_key` **fails the lint** if a variant claims the full key without stating
+  the parameters, and `check_answer_key_twins` warns wherever a pair's two sides are
+  scored on different keys;
+- `store()` records *absent* rather than zero where the key does not apply — a variant
+  never asked for a quantity did not fail to produce it;
+- `twin_deltas` computes a Layer 0 delta only across a shared cover, and **re-scores both
+  sides on the intersection** where the covers overlap only partly. That is what keeps
+  RQ6 measurable: an F variant still shares three to five quantities with its baseline.
+
+The family with the inconsistent ladder was fixed rather than excluded: its B, C, C_intro
+and F now state the same 60,000 records and 8 values its D and E always did, so the only
+thing moving across the ladder is the real-world referent, which is that family's focal
+dimension.
+
+### [ADD] What the fixture was hiding (v0.8.1)
+
+A fixture that cannot produce a failure certifies an analysis that will meet it on real
+data. Three confounds in the mock, each of which disarmed a control:
+
+- **It answered the whole key regardless of the prompt**, so it could not exhibit the
+  coverage bug above at all. It now answers only what its variant asks.
+- **It dropped targets from the front of the list.** A target's difficulty was therefore
+  a function of its position in the solver, and item analysis — whose entire job is to
+  find targets that carry no information — was reading list order.
+- **It dropped exactly `n − keep` targets per response.** With a fixed quota of mistakes
+  the items are negatively coupled by construction, and the corrected item-total
+  correlation reported **thirteen sound targets as matcher bugs**. Each target now fails
+  independently with probability `retention`, which is also how real degradation works.
+
+It also emitted one kind of error, a fixed hundredfold miss, so `graded_accuracy` equalled
+`accuracy` in every mock campaign and the error taxonomy only ever saw one class. It now
+fails a figure as a near miss, a unit slip or plain arithmetic in a documented 40/20/40
+mix, placed relative to each target's own band — and the test suite requires the scorer
+to recover that mix exactly.
+
+### [ADD] The discrimination flag needed a sample size (v0.8.1)
+
+`item_analysis` flagged anything below a fixed −0.10 correlation. At two dozen runs the
+5% critical value for a correlation is about 0.4, so that cut-off flags roughly one item
+in eight by chance — and a check that cries wolf that often is worse than no check. The
+bar now scales as `−1.96/√(n−3)` and never rises above the floor.
+
+It also needed a guard against its own definition. The statistic correlates an item
+against `total − item`, so when the total barely moves it approaches −1 whatever the item
+does. With six targets and a high hit rate the total barely moves, so a rest-score
+standard deviation below 0.5 now reports *nothing* rather than a confident −1.
+
+**What building the layers exposed.** Six defects in the matcher, each of which
 manufactured a result:
 
 - A Latin unit token was trimmed to its shortest prefix, so `0.918 transmissibility`
@@ -464,6 +537,13 @@ manufactured a result:
 - Two targets sharing a dimension split each other's figures, because a matching
   dimension was taken as sufficient identification even when the key contained two
   candidates for it.
+- A digit inside a reciprocal unit was read as a measurement carrying that unit's
+  dimension: `133.3 1/h` parsed as two quantities, and the phantom `1` sat far closer to
+  any small rate target than the model's actual answer.
+- The scorer graded whichever candidate was numerically closest rather than the figure
+  the model offered for that quantity, so the `1` in `beta=1` was graded in place of a
+  fourfold miss — misreading both how close the answer was and what kind of mistake it
+  was. The figure a response *names* now outranks the figure that happens to be near.
 
 Fixing them took the cross-family null control from 0.019 to **0.012**, and took a
 response with every figure wrong from 0.333 to **0.000** in the worst family. All four

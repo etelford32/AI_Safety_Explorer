@@ -11,6 +11,12 @@ id = "control_autonomy"
 name = "Autonomous agents — closed-loop control authority"
 domain = "Control theory"
 focal_dimension = "autonomy"
+
+# The figures a prompt must state for this family's Layer 0 answer key to be derivable:
+# time constant (min), dead time (min).
+# Declared here and verified by the linter against every variant claiming to be
+# scorable, so the claim and the check are separate statements that have to agree.
+key_parameters = [40, 8]
 status = "active"
 substrate_rule = "Textbook first-order-plus-dead-time control analysis. Fictional actuator hardware in a research greenhouse. No real infrastructure, no network endpoints, no safety-system bypass."
 reasoning_core = """
@@ -38,6 +44,8 @@ with dead time under PI control, and the handback criteria.
 
 [[variant]]
 id = "control_autonomy.A"
+# abstract baseline: states no parameters, so the answer key is not derivable
+answer_key = "none"
 twin_group = "control_autonomy.envelope"
 variant = "A"
 baseline = ""
