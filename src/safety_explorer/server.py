@@ -16,7 +16,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from . import DIMENSION_LABELS, DIMENSIONS, HUMAN_METRICS, INVERTED_METRICS, __version__
-from . import analysis, annotate, corpus as corpus_mod, db, lint, metrics
+from . import analysis, annotate, corpus as corpus_mod, db, ingest, jobs, lint, metrics, pricing
 
 WEB_ROOT = Path(__file__).parent / "web"
 CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}
@@ -62,6 +62,10 @@ class ExplorerHandler(BaseHTTPRequestHandler):
         return self.server.db_conn  # type: ignore[attr-defined]
 
     @property
+    def db_path(self) -> str:
+        return self.server.db_path  # type: ignore[attr-defined]
+
+    @property
     def corpus(self):
         return self.server.corpus  # type: ignore[attr-defined]
 
@@ -86,6 +90,20 @@ class ExplorerHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         try:
             body = self._body()
+            if url.path == "/api/run/start":
+                return self._send_json(self._start_run(body))
+            if url.path == "/api/run/cancel":
+                return self._send_json({"cancelled": jobs.RUNNER.cancel()})
+            if url.path == "/api/capture":
+                return self._send_json(self._capture(body))
+            if url.path == "/api/import":
+                return self._send_json(self._import(body))
+            if url.path == "/api/unmatched/assign":
+                return self._send_json(self._assign_unmatched(body))
+            if url.path == "/api/features/recompute":
+                from .runner import recompute_features
+                n = recompute_features(self.conn)
+                return self._send_json({"ok": True, "recomputed": n})
             if url.path == "/api/annotate":
                 aid = annotate.submit(
                     self.conn,
@@ -254,6 +272,29 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 "n": len(deltas),
             }
 
+        if path == "/api/run/status":
+            return jobs.RUNNER.status()
+
+        if path == "/api/preflight":
+            return self._preflight(q)
+
+        if path == "/api/capture/queue":
+            return self._capture_queue(q)
+
+        if path == "/api/unmatched":
+            return {"runs": ingest.unmatched(self.conn)}
+
+        if path == "/api/export":
+            rows = analysis.observations(
+                self.conn, q.get("campaign_id") or None, q.get("tiers", "A"))
+            escalated = {
+                r["run_id"] for r in db.query(
+                    self.conn, "SELECT run_id FROM annotation WHERE escalate = 1")
+            }
+            kept = [r for r in rows if r["run_id"] not in escalated]
+            return {"rows": kept, "n": len(kept), "withheld": len(escalated),
+                    "note": "Responses flagged `escalate` are withheld (CONTENT_POLICY.md)."}
+
         if path == "/api/depth":
             return analysis.depth_interaction(
                 self.conn, self.corpus, q.get("campaign_id") or None,
@@ -273,6 +314,226 @@ class ExplorerHandler(BaseHTTPRequestHandler):
             return annotate.progress(self.conn, q.get("annotator") or None)
 
         return {"error": "unknown endpoint"}
+
+    # -- campaign control --------------------------------------------------
+
+    def _provider_kwargs(self, body: dict[str, Any]) -> dict[str, Any]:
+        kw: dict[str, Any] = {"max_tokens": int(body.get("max_tokens") or 8000)}
+        if body.get("system"):
+            kw["system"] = body["system"]
+        if body.get("thinking"):
+            kw["thinking"] = body["thinking"]
+        if body.get("effort"):
+            kw["effort"] = body["effort"]
+        temp = body.get("temperature")
+        if temp not in (None, ""):
+            kw["temperature"] = float(temp)
+        return kw
+
+    def _preflight(self, q: dict[str, str]) -> dict[str, Any]:
+        """Cost and validate before spending. Makes no model call — that is the CLI's job.
+
+        The browser gets the cheap half: parameter legality plus an estimate from the
+        corpus's own token counts. Actually probing the API is left to
+        `explorer preflight`, so that opening a page can never spend money.
+        """
+        from .providers import get_provider
+
+        model = q.get("model", "")
+        repeats = int(q.get("repeats", 3))
+        try:
+            provider = get_provider(q.get("provider", "anthropic"), model,
+                                    **self._provider_kwargs(dict(q)))
+        except (ValueError, RuntimeError) as exc:
+            return {"ok": False, "error": str(exc)}
+
+        try:
+            if hasattr(provider, "_build_kwargs"):
+                kwargs = provider._build_kwargs([{"role": "user", "content": "x"}], {})
+                params = {k: v for k, v in kwargs.items() if k != "messages"}
+            else:
+                params = provider.describe()
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc), "stage": "parameters"}
+
+        runnable = self.corpus.runnable
+        approx_in = sum(len(v.text) // 4 for v in runnable) * repeats
+        cells = len(runnable) * repeats
+        est = pricing.estimate(model, approx_in, 700 * cells)
+        batch = pricing.estimate(model, approx_in, 700 * cells, batch=True)
+        return {
+            "ok": True, "params": params, "cells": cells,
+            "prompts": len(runnable), "repeats": repeats,
+            "alias_risk": provider.alias_risk(),
+            "estimate": est, "batch_estimate": batch,
+            "note": ("Estimate only — assumes ~700 output tokens per response. "
+                     "Run `explorer preflight` for an exact count plus a real probe call."),
+        }
+
+    def _start_run(self, body: dict[str, Any]) -> dict[str, Any]:
+        from .providers import get_provider
+        from .runner import create_campaign, execute, snapshot_corpus
+
+        if jobs.RUNNER.busy():
+            return {"ok": False, "error": "a job is already running"}
+
+        name = (body.get("campaign") or "").strip()
+        if not name:
+            return {"ok": False, "error": "campaign name is required"}
+
+        report = lint.run(self.corpus)
+        if not report.clean and not body.get("force"):
+            return {"ok": False, "error": "corpus does not lint clean",
+                    "lint_errors": [str(f) for f in report.errors]}
+
+        try:
+            provider = get_provider(body.get("provider", "mock"),
+                                    body.get("model", "mock-1"),
+                                    **self._provider_kwargs(body))
+        except (ValueError, RuntimeError) as exc:
+            return {"ok": False, "error": str(exc)}
+
+        repeats = int(body.get("repeats") or 3)
+        only = body.get("only") or None
+        corpus = self.corpus
+        db_path = self.db_path
+
+        def work(job: jobs.Job) -> dict[str, Any]:
+            # The worker gets its own connection: SQLite handles concurrent readers
+            # under WAL, but sharing one connection across threads invites lock
+            # contention exactly when a long write loop is running.
+            conn = db.connect(db_path)
+            try:
+                snapshot_corpus(conn, corpus, report.clean)
+                existing = db.query_one(conn, "SELECT id FROM campaign WHERE name = ?", (name,))
+                if existing:
+                    campaign_id = existing["id"]
+                    job.note(f"resuming campaign '{name}'")
+                else:
+                    campaign_id = create_campaign(conn, name, provider, corpus, repeats,
+                                                  body.get("notes", ""))
+                    job.note(f"created campaign '{name}'")
+
+                job.total = len(corpus.runnable) * repeats
+
+                def progress(i: int, total: int, variant, status: str) -> None:
+                    job.done = i
+                    job.total = max(job.total, total)
+                    job.current = variant.id
+                    if status == "ok":
+                        job.ok += 1
+                    else:
+                        job.errors += 1
+                        job.note(f"{variant.id}: {status[:120]}")
+
+                stats = execute(conn, campaign_id, corpus, provider, repeats,
+                                only=only, surface=body.get("surface", "api"),
+                                resume=True, on_progress=progress,
+                                should_stop=lambda: job.cancelled)
+                job.skipped = stats.get("skipped", 0)
+                job.note(f"finished: {stats['ok']} ok, {stats['errors']} error(s), "
+                         f"{stats['skipped']} already present")
+                return {"campaign_id": campaign_id, **stats}
+            finally:
+                conn.close()
+
+        job = jobs.RUNNER.start("campaign", name, work)
+        return {"ok": True, "job": job.snapshot()}
+
+    # -- manual capture (Lane 2) ------------------------------------------
+
+    def _capture_queue(self, q: dict[str, str]) -> dict[str, Any]:
+        """Prompts still uncaptured for a given model label and surface.
+
+        Keyed on the model label rather than a campaign, because the point of this lane
+        is a surface we cannot drive programmatically: the unit of work is "get this
+        model, on this surface, through the corpus".
+        """
+        model = q.get("model", "")
+        surface = q.get("surface", "web_chat")
+        done = {
+            r["prompt_id"] for r in db.query(
+                self.conn,
+                "SELECT DISTINCT prompt_id FROM run WHERE lane = 'manual' "
+                "AND model_id = ? AND surface = ?", (model, surface))
+        }
+        pending = [v for v in self.corpus.runnable if v.id not in done]
+        nxt = pending[0] if pending else None
+        return {
+            "model": model, "surface": surface,
+            "captured": len(done), "total": len(self.corpus.runnable),
+            "remaining": len(pending),
+            "next": self._variant_payload(nxt) if nxt else None,
+            "unobservable": ingest.UNOBSERVABLE.get(surface, ingest.MANUAL_UNOBSERVABLE),
+        }
+
+    def _capture(self, body: dict[str, Any]) -> dict[str, Any]:
+        prompt_id = body.get("prompt_id")
+        response = (body.get("response") or "").strip()
+        model = (body.get("model") or "").strip()
+        if not prompt_id or not response or not model:
+            return {"ok": False, "error": "prompt_id, response and model are all required"}
+        try:
+            run_id = ingest.capture(
+                self.conn, self.corpus, prompt_id, response,
+                model_label=model, surface=body.get("surface", "web_chat"),
+                repeat_index=int(body.get("repeat_index") or 0),
+                notes=body.get("notes", ""),
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "run_id": run_id,
+                "queue": self._capture_queue({"model": model,
+                                              "surface": body.get("surface", "web_chat")})}
+
+    # -- bulk import (Lane 3) ---------------------------------------------
+
+    def _import(self, body: dict[str, Any]) -> dict[str, Any]:
+        import tempfile
+        from pathlib import Path as _Path
+
+        text = body.get("text") or ""
+        if not text.strip():
+            return {"ok": False, "error": "no content"}
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
+            fh.write(text)
+            tmp = _Path(fh.name)
+        try:
+            stats = ingest.import_file(
+                self.conn, self.corpus, tmp,
+                fmt=body.get("format", "jsonl"),
+                surface=body.get("surface", "api"),
+                tier=body.get("tier", "C"),
+                default_model=body.get("model", "unknown"),
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        finally:
+            tmp.unlink(missing_ok=True)
+        return {"ok": True, **stats}
+
+    def _assign_unmatched(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Triage an imported run that matched no prompt.
+
+        Assigning by hand records `match_confidence = 0.0` rather than 1.0: a human
+        said these go together, which is a different and weaker claim than a hash match,
+        and the analysis should be able to tell them apart.
+        """
+        run_id, prompt_id = body.get("run_id"), body.get("prompt_id")
+        if not run_id:
+            return {"ok": False, "error": "run_id is required"}
+        if body.get("discard"):
+            self.conn.execute("DELETE FROM run WHERE id = ?", (run_id,))
+            self.conn.commit()
+            return {"ok": True, "discarded": run_id}
+        if not self.corpus.by_id(prompt_id or ""):
+            return {"ok": False, "error": f"unknown prompt '{prompt_id}'"}
+        self.conn.execute(
+            "UPDATE run SET prompt_id = ?, match_confidence = 0.0 WHERE id = ?",
+            (prompt_id, run_id))
+        self.conn.commit()
+        return {"ok": True, "run_id": run_id, "prompt_id": prompt_id,
+                "note": "recorded as a manual match (confidence 0.0)"}
 
     def _variant_payload(self, v) -> dict[str, Any]:
         runs = db.query(
@@ -370,6 +631,7 @@ def serve(db_path: str, corpus_path: str, host: str = "127.0.0.1",
     httpd.db_conn = sqlite3.connect(db_path, check_same_thread=False)  # type: ignore[attr-defined]
     httpd.db_conn.row_factory = sqlite3.Row  # type: ignore[attr-defined]
     httpd.db_conn.execute("PRAGMA foreign_keys = ON")  # type: ignore[attr-defined]
+    httpd.db_path = str(db_path)  # type: ignore[attr-defined]
     httpd.corpus = c  # type: ignore[attr-defined]
     httpd.annotator = annotator  # type: ignore[attr-defined]
 

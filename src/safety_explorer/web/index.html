@@ -18,6 +18,7 @@
   </span>
   <nav>
     <button data-view="explore" class="on">Explore</button>
+    <button data-view="collect">Collect</button>
     <button data-view="compare">Compare</button>
     <button data-view="annotate">Annotate</button>
     <button data-view="surface">Surface</button>
@@ -60,6 +61,153 @@
       <div class="panel" id="response-panel" style="display:none">
         <h2>Response</h2>
         <div id="response-body"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ COLLECT ============================ -->
+<section id="v-collect" class="view">
+  <div class="panel">
+    <h2>Lanes</h2>
+    <div style="display:flex;gap:2px;margin-bottom:4px">
+      <button class="ghost lane-tab on" data-lane="api">Lane 1 — live API</button>
+      <button class="ghost lane-tab" data-lane="manual">Lane 2 — chat capture</button>
+      <button class="ghost lane-tab" data-lane="import">Lane 3 — bulk import</button>
+      <button class="ghost lane-tab" data-lane="data">Data</button>
+    </div>
+    <p class="note">Every lane writes a <code>run</code> row with an explicit provenance
+      tier. Analyses default to Tier A; mixing tiers is always labelled.</p>
+  </div>
+
+  <!-- Lane 1 -->
+  <div class="lane" id="lane-api">
+    <div class="cols-2">
+      <div class="panel">
+        <h2>Run a campaign — Tier A</h2>
+        <div style="display:grid;gap:8px">
+          <label class="check">campaign <input type="text" id="rn-campaign" value="v1-baseline" style="width:180px"></label>
+          <label class="check">provider
+            <select id="rn-provider">
+              <option value="mock">mock (free, offline)</option>
+              <option value="anthropic">anthropic</option>
+              <option value="openai">openai</option>
+              <option value="local">local (pinned weights)</option>
+            </select>
+          </label>
+          <label class="check">model <input type="text" id="rn-model" value="mock-1" style="width:200px"></label>
+          <label class="check">repeats <input type="text" id="rn-repeats" value="3" style="width:50px"></label>
+          <label class="check">max tokens <input type="text" id="rn-maxtok" value="8000" style="width:70px"></label>
+          <label class="check">thinking
+            <select id="rn-thinking">
+              <option value="">model default</option>
+              <option value="adaptive">adaptive</option>
+              <option value="off">off</option>
+            </select>
+          </label>
+          <label class="check">effort
+            <select id="rn-effort">
+              <option value="">default</option>
+              <option>low</option><option>medium</option><option>high</option>
+              <option>xhigh</option><option>max</option>
+            </select>
+          </label>
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button class="ghost" id="btn-preflight">Preflight &amp; cost</button>
+            <button class="run" id="btn-run" style="width:auto;padding:7px 18px">Start</button>
+            <button class="ghost" id="btn-cancel">Cancel</button>
+          </div>
+        </div>
+        <div id="rn-preflight" class="note" style="margin-top:10px"></div>
+      </div>
+      <div class="panel">
+        <h2>Progress</h2>
+        <div id="rn-status"><div class="empty-state">No job running.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lane 2 -->
+  <div class="lane" id="lane-manual" style="display:none">
+    <div class="panel">
+      <h2>Capture from a chat surface — Tier B</h2>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label class="check">model label
+          <input type="text" id="cap-model" placeholder="as the surface displays it" style="width:200px">
+        </label>
+        <label class="check">surface
+          <select id="cap-surface">
+            <option value="web_chat">web_chat</option>
+            <option value="app">app</option>
+            <option value="cli">cli</option>
+            <option value="third_party">third_party</option>
+          </select>
+        </label>
+        <button class="ghost" id="btn-cap-start">Start / resume</button>
+      </div>
+      <p class="note" style="margin-top:8px">
+        The models people complain about are usually reached through a chat window, not
+        an API. Excluding that surface because it is inconvenient would measure the wrong
+        thing — so it gets a first-class lane with an honest tier, not API data in
+        disguise.
+      </p>
+    </div>
+    <div id="cap-body"></div>
+  </div>
+
+  <!-- Lane 3 -->
+  <div class="lane" id="lane-import" style="display:none">
+    <div class="cols-2">
+      <div class="panel">
+        <h2>Import transcripts — Tier C</h2>
+        <div style="display:grid;gap:8px">
+          <label class="check">format
+            <select id="im-format"><option value="jsonl">jsonl</option><option value="chatml">chatml</option></select>
+          </label>
+          <label class="check">model label <input type="text" id="im-model" value="unknown" style="width:160px"></label>
+          <label class="check">surface <input type="text" id="im-surface" value="api" style="width:120px"></label>
+          <label class="check">tier
+            <select id="im-tier"><option>C</option><option>B</option><option>A</option></select>
+          </label>
+        </div>
+        <div id="im-drop" style="margin-top:10px;border:1px dashed var(--line);padding:18px;text-align:center;color:var(--ink-faint);font-size:11px;cursor:pointer">
+          drop a .jsonl file here, or click to choose
+          <input type="file" id="im-file" accept=".jsonl,.json,.txt" style="display:none">
+        </div>
+        <textarea id="im-text" placeholder="…or paste JSONL directly" style="margin-top:8px;min-height:90px"></textarea>
+        <button class="ghost" id="btn-import" style="margin-top:8px">Import</button>
+        <div id="im-out" class="note" style="margin-top:8px"></div>
+      </div>
+      <div class="panel">
+        <h2>Unmatched — triage</h2>
+        <p class="note" style="margin-bottom:8px">
+          Rows that matched no corpus prompt are kept, not dropped — silently discarding
+          them would hide exactly the cases worth looking at. Assign or discard each one.
+        </p>
+        <div id="um-out"><div class="empty-state">—</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Data -->
+  <div class="lane" id="lane-data" style="display:none">
+    <div class="cols-2">
+      <div class="panel">
+        <h2>Stored data</h2>
+        <div id="dt-out"><div class="empty-state">—</div></div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="ghost" id="btn-features">Recompute features</button>
+          <button class="ghost" id="btn-export">Export JSONL</button>
+        </div>
+        <p class="note" style="margin-top:8px">
+          Recomputing features re-derives every automatic measure from stored responses —
+          improving the extractor never costs an API call. Export withholds anything
+          flagged <code>escalate</code>.
+        </p>
+      </div>
+      <div class="panel">
+        <h2>Provenance</h2>
+        <div id="dt-prov"><div class="empty-state">—</div></div>
       </div>
     </div>
   </div>

@@ -155,14 +155,23 @@ def build_messages(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus,
 def execute(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus, provider: Provider,
             n_repeats: int, only: list[str] | None = None, surface: str = "api",
             resume: bool = True,
-            on_progress: Callable[[int, int, Variant, str], None] | None = None) -> dict[str, Any]:
+            on_progress: Callable[[int, int, Variant, str], None] | None = None,
+            should_stop: Callable[[], bool] | None = None) -> dict[str, Any]:
     cells = plan(corpus, n_repeats, only)
     done = existing_cells(conn, campaign_id) if resume else set()
     todo = [c for c in cells if (c.variant.id, c.repeat_index) not in done]
 
-    stats = {"total": len(cells), "skipped": len(cells) - len(todo), "ok": 0, "errors": 0}
+    stats: dict[str, Any] = {
+        "total": len(cells), "skipped": len(cells) - len(todo),
+        "ok": 0, "errors": 0, "cancelled": False,
+    }
 
     for i, cell in enumerate(todo, start=1):
+        # Cancellation is checked between cells, never mid-call: a response already
+        # paid for is always written. Campaigns resume, so stopping loses nothing.
+        if should_stop is not None and should_stop():
+            stats["cancelled"] = True
+            break
         v = cell.variant
         messages = build_messages(conn, campaign_id, corpus, v, cell.repeat_index)
         completion = provider.complete(

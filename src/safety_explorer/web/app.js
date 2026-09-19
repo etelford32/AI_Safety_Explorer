@@ -33,6 +33,7 @@ $$('nav button').forEach((b) => b.addEventListener('click', () => {
   $$('.view').forEach((v) => v.classList.toggle('on', v.id === `v-${b.dataset.view}`));
   if (b.dataset.view === 'results') loadResults();
   if (b.dataset.view === 'compare') loadCompareOptions();
+  if (b.dataset.view === 'collect') loadData();
 }));
 
 /* ------------------------------------------------------------- startup */
@@ -194,6 +195,277 @@ async function showRun(runId) {
     </div>
     <pre class="resp">${esc(r.response || '(no response)')}</pre>`;
 }
+
+/* ------------------------------------------------------------ collect */
+
+$$('.lane-tab').forEach((b) => b.addEventListener('click', () => {
+  $$('.lane-tab').forEach((x) => x.classList.toggle('on', x === b));
+  $$('.lane').forEach((l) => { l.style.display = l.id === `lane-${b.dataset.lane}` ? '' : 'none'; });
+  if (b.dataset.lane === 'import') loadUnmatched();
+  if (b.dataset.lane === 'data') loadData();
+}));
+
+/* -- Lane 1: campaigns -- */
+
+function runBody() {
+  return {
+    campaign: $('#rn-campaign').value,
+    provider: $('#rn-provider').value,
+    model: $('#rn-model').value,
+    repeats: Number($('#rn-repeats').value) || 3,
+    max_tokens: Number($('#rn-maxtok').value) || 8000,
+    thinking: $('#rn-thinking').value || null,
+    effort: $('#rn-effort').value || null,
+  };
+}
+
+$('#rn-provider').addEventListener('change', () => {
+  const defaults = { mock: 'mock-1', anthropic: 'claude-opus-5', openai: 'gpt-4o', local: 'llama3' };
+  $('#rn-model').value = defaults[$('#rn-provider').value] || '';
+});
+
+$('#btn-preflight').addEventListener('click', async () => {
+  const b = runBody();
+  const out = $('#rn-preflight');
+  out.innerHTML = 'checking…';
+  const r = await api('preflight', {
+    provider: b.provider, model: b.model, repeats: b.repeats,
+    max_tokens: b.max_tokens, thinking: b.thinking || '', effort: b.effort || '',
+  });
+  if (!r.ok) {
+    out.innerHTML = `<span class="bad">${esc(r.error)}</span>`;
+    return;
+  }
+  const e = r.estimate, bt = r.batch_estimate;
+  const cost = e.known
+    ? `<tr><td>estimated cost</td><td class="num">$${e.cost_total}</td></tr>
+       <tr><td>via Batch API</td><td class="num">$${bt.cost_total}</td></tr>`
+    : `<tr><td colspan="2" class="warn">no cached price for this model</td></tr>`;
+  out.innerHTML = `
+    <table style="margin-bottom:6px">
+      <tr><td>cells</td><td class="num">${r.cells} (${r.prompts} x ${r.repeats})</td></tr>
+      ${cost}
+    </table>
+    <div>request parameters: <code>${esc(JSON.stringify(r.params))}</code></div>
+    ${r.alias_risk ? '<div class="warn">model id looks like a moving alias</div>' : ''}
+    <div style="margin-top:6px">${esc(r.note)}</div>`;
+});
+
+$('#btn-run').addEventListener('click', async () => {
+  const r = await post('run/start', runBody());
+  if (!r.ok) {
+    $('#rn-status').innerHTML = `<div class="bad">${esc(r.error)}</div>` +
+      (r.lint_errors || []).map((l) => `<div class="note">${esc(l)}</div>`).join('');
+    return;
+  }
+  pollRun();
+});
+
+$('#btn-cancel').addEventListener('click', async () => { await post('run/cancel', {}); });
+
+let runTimer = null;
+async function pollRun() {
+  const s = await api('run/status');
+  renderRunStatus(s);
+  clearTimeout(runTimer);
+  if (s.state === 'running') runTimer = setTimeout(pollRun, 1000);
+  else if (s.state === 'done' || s.state === 'cancelled') loadData();
+}
+
+function renderRunStatus(s) {
+  if (!s || s.state === 'idle') {
+    $('#rn-status').innerHTML = '<div class="empty-state">No job running.</div>';
+    return;
+  }
+  const cls = { running: '', done: 'good', error: 'bad', cancelled: 'warn' }[s.state] || '';
+  $('#rn-status').innerHTML = `
+    <div><span class="tag ${cls}">${esc(s.state)}</span> ${esc(s.label || '')}</div>
+    <div class="bar" style="margin:8px 0"><div style="width:${s.percent || 0}%"></div></div>
+    <table>
+      <tr><td>progress</td><td class="num">${s.done} / ${s.total} (${s.percent}%)</td></tr>
+      <tr><td>ok</td><td class="num good">${s.ok}</td></tr>
+      <tr><td>errors</td><td class="num ${s.errors ? 'bad' : ''}">${s.errors}</td></tr>
+      <tr><td>already present</td><td class="num">${s.skipped}</td></tr>
+      <tr><td>current</td><td>${esc(s.current || '—')}</td></tr>
+    </table>
+    ${s.error ? `<div class="bad" style="margin-top:6px">${esc(s.error)}</div>` : ''}
+    <pre class="text" style="margin-top:8px;max-height:200px;font-size:11px">${esc((s.log || []).join('\n')) || '(no log)'}</pre>`;
+}
+
+/* -- Lane 2: chat capture -- */
+
+$('#btn-cap-start').addEventListener('click', loadCapture);
+
+async function loadCapture() {
+  const model = $('#cap-model').value.trim();
+  if (!model) { alert('Enter the model label exactly as the surface displays it.'); return; }
+  const q = await api('capture/queue', { model, surface: $('#cap-surface').value });
+  renderCapture(q);
+}
+
+function renderCapture(q) {
+  if (!q.next) {
+    $('#cap-body').innerHTML = `<div class="panel"><div class="empty-state">
+      All ${q.total} prompts captured for <strong>${esc(q.model)}</strong> on ${esc(q.surface)}.
+      </div></div>`;
+    return;
+  }
+  const v = q.next;
+  const pct = q.total ? (q.captured / q.total) * 100 : 0;
+  $('#cap-body').innerHTML = `
+    <div class="panel">
+      <h2>${q.captured} / ${q.total} captured — ${q.remaining} remaining</h2>
+      <div class="bar" style="margin-bottom:10px"><div style="width:${pct.toFixed(1)}%"></div></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <div><strong>${esc(v.title)}</strong> <span class="note">${esc(v.id)}</span></div>
+        <button class="ghost" id="btn-cap-copy">Copy prompt</button>
+      </div>
+      <pre class="text" id="cap-prompt" style="margin-top:8px">${esc(v.text)}</pre>
+    </div>
+    <div class="panel">
+      <h2>Paste the response</h2>
+      <textarea id="cap-response" style="min-height:220px" placeholder="paste verbatim — do not edit or trim"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+        <button class="run" id="btn-cap-save" style="width:auto;padding:7px 18px">Save &amp; next</button>
+        <button class="ghost" id="btn-cap-skip">Skip</button>
+        <span class="note">Ctrl/Cmd+Enter saves</span>
+      </div>
+      <p class="note" style="margin-top:10px">
+        Recorded as Tier B. Not observable on this surface, and stored as such:
+        <code>${(q.unobservable || []).join(', ')}</code>
+      </p>
+    </div>`;
+
+  $('#btn-cap-copy').addEventListener('click', () => {
+    navigator.clipboard.writeText(v.text).then(() => {
+      $('#btn-cap-copy').textContent = 'Copied';
+      setTimeout(() => { $('#btn-cap-copy').textContent = 'Copy prompt'; }, 1200);
+    });
+  });
+  const save = async () => {
+    const response = $('#cap-response').value.trim();
+    if (!response) { alert('Nothing pasted.'); return; }
+    const r = await post('capture', {
+      prompt_id: v.id, response, model: q.model, surface: q.surface,
+    });
+    if (!r.ok) { alert(r.error); return; }
+    renderCapture(r.queue);
+  };
+  $('#btn-cap-save').addEventListener('click', save);
+  $('#btn-cap-skip').addEventListener('click', loadCapture);
+  $('#cap-response').addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') save();
+  });
+  $('#cap-response').focus();
+}
+
+/* -- Lane 3: import -- */
+
+$('#im-drop').addEventListener('click', () => $('#im-file').click());
+$('#im-file').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  if (f) $('#im-text').value = await f.text();
+});
+['dragover', 'dragleave', 'drop'].forEach((ev) => {
+  $('#im-drop').addEventListener(ev, async (e) => {
+    e.preventDefault();
+    $('#im-drop').style.borderColor = ev === 'dragover' ? 'var(--accent)' : 'var(--line)';
+    if (ev === 'drop' && e.dataTransfer.files[0]) {
+      $('#im-text').value = await e.dataTransfer.files[0].text();
+    }
+  });
+});
+
+$('#btn-import').addEventListener('click', async () => {
+  const r = await post('import', {
+    text: $('#im-text').value, format: $('#im-format').value,
+    model: $('#im-model').value, surface: $('#im-surface').value, tier: $('#im-tier').value,
+  });
+  $('#im-out').innerHTML = r.ok
+    ? `${r.rows} row(s): <span class="good">${r.matched} matched</span>, ` +
+      `<span class="${r.unmatched ? 'warn' : ''}">${r.unmatched} unmatched</span>`
+    : `<span class="bad">${esc(r.error)}</span>`;
+  if (r.ok) { loadUnmatched(); loadData(); }
+});
+
+async function loadUnmatched() {
+  const { runs } = await api('unmatched');
+  if (!runs.length) {
+    $('#um-out').innerHTML = '<div class="empty-state">Nothing unmatched.</div>';
+    return;
+  }
+  const opts = META.families.flatMap((f) => f.variants.map((v) => v.id))
+    .concat(META.controls.map((c) => c.id))
+    .map((id) => `<option value="${id}">${id}</option>`).join('');
+  $('#um-out').innerHTML = runs.map((r) => `
+    <div style="border-bottom:1px solid var(--line);padding:8px 0">
+      <div class="note">${esc(r.id)} · ${esc(r.model_id)} · best match ${r.match_confidence}</div>
+      <pre class="text" style="max-height:80px;margin:4px 0">${esc((r.preview || '').trim())}</pre>
+      <div style="display:flex;gap:6px">
+        <select data-assign="${r.id}"><option value="">choose a prompt…</option>${opts}</select>
+        <button class="ghost" data-do="${r.id}">Assign</button>
+        <button class="ghost" data-discard="${r.id}">Discard</button>
+      </div>
+    </div>`).join('');
+  $$('[data-do]').forEach((b) => b.addEventListener('click', async () => {
+    const sel = $(`[data-assign="${b.dataset.do}"]`);
+    if (!sel.value) return;
+    await post('unmatched/assign', { run_id: b.dataset.do, prompt_id: sel.value });
+    loadUnmatched();
+  }));
+  $$('[data-discard]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Delete this run permanently?')) return;
+    await post('unmatched/assign', { run_id: b.dataset.discard, discard: true });
+    loadUnmatched();
+  }));
+}
+
+/* -- Data -- */
+
+async function loadData() {
+  const [runs, prog, status] = await Promise.all([
+    api('runs'), api('progress'), api('run/status'),
+  ]);
+  renderRunStatus(status);
+  if (status.state === 'running') pollRun();
+
+  const byTier = {}, byLane = {}, byModel = {};
+  runs.runs.forEach((r) => {
+    byTier[r.provenance_tier] = (byTier[r.provenance_tier] || 0) + 1;
+    byLane[r.lane] = (byLane[r.lane] || 0) + 1;
+    byModel[r.model_id] = (byModel[r.model_id] || 0) + 1;
+  });
+  const row = (o) => Object.entries(o).sort().map(([k, v]) =>
+    `<tr><td>${esc(k)}</td><td class="num">${v}</td></tr>`).join('') ||
+    '<tr><td colspan="2" class="note">none</td></tr>';
+
+  $('#dt-out').innerHTML = `
+    <table><tr><th>models</th><th class="num">runs</th></tr>${row(byModel)}</table>
+    <p class="note" style="margin-top:8px">${prog.annotated} of ${prog.runs_with_response}
+      responses annotated · ${prog.escalated} escalated</p>`;
+  $('#dt-prov').innerHTML = `
+    <table><tr><th>tier</th><th class="num">runs</th></tr>${row(byTier)}</table>
+    <table style="margin-top:10px"><tr><th>lane</th><th class="num">runs</th></tr>${row(byLane)}</table>
+    <p class="note" style="margin-top:8px">
+      Tier A is fully specified (API). Tier B is a chat surface — system prompt and
+      sampling unknown. Tier C is externally sourced. Analyses default to Tier A.</p>`;
+}
+
+$('#btn-features').addEventListener('click', async () => {
+  const r = await post('features/recompute', {});
+  alert(`Recomputed features for ${r.recomputed} runs.`);
+});
+
+$('#btn-export').addEventListener('click', async () => {
+  const r = await api('export', { tiers: 'A' });
+  const blob = new Blob([r.rows.map((x) => JSON.stringify(x)).join('\n')],
+                        { type: 'application/x-ndjson' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'observations.jsonl';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
 
 /* ------------------------------------------------------------ compare */
 

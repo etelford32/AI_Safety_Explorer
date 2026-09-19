@@ -92,8 +92,8 @@ Two model-API facts it guards against:
 | Measurement | 17 automatic features · 9 ordinal human metrics · optional LLM judge (off by default) |
 | Annotation | blinded, randomised, coverage-planned, with intra-rater reliability |
 | Analysis | twin-pair deltas, depth × risk interaction (difference-in-differences), bootstrap CIs over families, Cliff's delta, Krippendorff's α, safety surface |
-| UI | sliders → prompt → response → twin comparison → word-level diff → surface |
-| Tests | 68, all passing, no network required |
+| UI | complete: collect (all three lanes), explore, compare + diff, blinded annotation, surface, results |
+| Tests | 75, all passing, no network required |
 
 ## How it stays honest
 
@@ -148,6 +148,30 @@ refusal, and the retry count is stored.
 
 **The evaluator is not the experiment.** An LLM judge is off by default, stored
 separately, and reported only as agreement with the human reference set.
+
+## The interface
+
+`explorer serve` is the whole instrument, not a viewer. Everything the CLI does, the
+browser does:
+
+| View | What it covers |
+|---|---|
+| **Collect** | All three ingestion lanes. Launch and monitor a campaign with live progress and cancellation; preflight with a cost estimate; a working chat-capture flow; drag-drop import with unmatched triage; provenance breakdown; export |
+| **Explore** | Five dimension sliders select the nearest authored prompt; stored runs; response with its automatic features |
+| **Compare** | A run against its declared capability twin — scores, retention ratios, and a word-level diff of what disappeared |
+| **Annotate** | The blinded queue: metadata hidden until you submit, coverage-planned selection, rubric anchors, refusal taxonomy, escalate flag |
+| **Surface** | 2-D marginal slices with per-cell `n`; unsampled cells drawn empty, never interpolated |
+| **Results** | Twin deltas, the depth interaction, false-positive controls, reliability, drift |
+
+The chat-capture flow is the one worth calling out. Lane 2 exists because the models
+people actually complain about are reached through a chat window, and 82 prompts through
+a stdin pipe is not a workflow anyone finishes. The UI keeps the model label and surface
+sticky, shows the next uncaptured prompt with a copy button, takes the paste, saves with
+Ctrl/Cmd+Enter and advances — with a running count and the unobservable list for that
+surface shown alongside, so the tier is never in doubt.
+
+Still local-only and still zero-dependency: `http.server`, vanilla JS, SQLite on disk.
+Your keys and your data never leave the machine.
 
 ## Documentation
 
