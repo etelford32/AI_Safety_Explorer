@@ -1,0 +1,28 @@
+# Data — experiment databases are local artifacts, not source.
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/exports/
+*.sqlite3
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,396 @@
+"""Corpus linter.
+
+"Keep complexity, format, length and vocabulary as constant as practical" is not
+verifiable by good intentions. Everything here exists because a failure of it would
+make the central comparison measure prompt-writing drift instead of model behaviour.
+
+A corpus that does not lint clean cannot be run.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass
+
+from . import DIMENSIONS, LADDER_DELTAS, VARIANT_ORDER
+from .corpus import Corpus, Variant, normalise
+
+# Twin-matching tolerances. Deliberately strict: a twin pair that drifts past these
+# is a corpus bug, not a borderline call.
+TOKEN_RATIO_MIN = 0.75
+TOKEN_RATIO_MAX = 1.33
+VOCAB_JACCARD_MIN = 0.50
+DIMENSION_CORR_MAX = 0.50
+
+STOPWORDS = frozenset("""
+a an the and or but if then than that this these those with without within for from into onto
+of in on at by to as is are was were be been being it its their there here which who whom whose
+i you we they me my our your not no nor so such can could should would may might must will
+shall do does did done have has had having about above after again against all also am any
+because before below between both each few further more most other over same some through
+under until up very when where while why how what want need give consider derive assume take
+one two three four five six seven eight nine ten per out get got make made set sets using use
+""".split())
+
+# Patterns that must never appear in a prompt. See docs/CONTENT_POLICY.md — the
+# specificity dimension tops out at "real system class", never "real named instance".
+DENY_PATTERNS: list[tuple[str, str]] = [
+    (r"\bCVE-\d{4}-\d{4,}\b", "CVE identifier"),
+    (r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "IPv4 address"),
+    (r"[\w.+-]+@[\w-]+\.[\w.]+", "email address"),
+    (r"\bhttps?://(?!example\.)", "live URL"),
+    (r"\b[A-Za-z0-9._-]+\.(?:com|net|org|gov|mil|io)\b", "domain name"),
+    (r"\b(?:ssh|ftp|rdp)://", "remote access URI"),
+    (r"\b\d{1,5}\s+[A-Z][a-z]+\s+(?:Street|Road|Avenue|Lane)\b", "street address"),
+]
+
+
+@dataclass
+class Finding:
+    level: str          # error | warn | info
+    where: str
+    message: str
+
+    def __str__(self) -> str:
+        mark = {"error": "FAIL", "warn": "WARN", "info": "INFO"}[self.level]
+        return f"  [{mark}] {self.where}: {self.message}"
+
+
+def tech_vocab(text: str) -> set[str]:
+    """Content words plus numeric tokens — a rough stand-in for technical vocabulary."""
+    toks = re.findall(r"[A-Za-z][A-Za-z-]{3,}|\d+(?:\.\d+)?(?:e-?\d+)?", text.lower())
+    return {t for t in toks if t not in STOPWORDS}
+
+
+def jaccard(a: set[str], b: set[str]) -> float:
+    if not a and not b:
+        return 1.0
+    union = a | b
+    return len(a & b) / len(union) if union else 0.0
+
+
+def spearman(xs: list[float], ys: list[float]) -> float:
+    """Spearman rank correlation, ties averaged. Kept local to avoid a scipy dependency."""
+    n = len(xs)
+    if n < 3:
+        return 0.0
+
+    def ranks(vals: list[float]) -> list[float]:
+        order = sorted(range(n), key=lambda i: vals[i])
+        out = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j + 1 < n and vals[order[j + 1]] == vals[order[i]]:
+                j += 1
+            avg = (i + j) / 2 + 1
+            for k in range(i, j + 1):
+                out[order[k]] = avg
+            i = j + 1
+        return out
+
+    rx, ry = ranks(xs), ranks(ys)
+    mx, my = sum(rx) / n, sum(ry) / n
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    den = math.sqrt(sum((a - mx) ** 2 for a in rx) * sum((b - my) ** 2 for b in ry))
+    return num / den if den else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Individual checks
+# ---------------------------------------------------------------------------
+
+def check_ids(corpus: Corpus) -> list[Finding]:
+    out: list[Finding] = []
+    seen: dict[str, int] = {}
+    for v in corpus.all_variants:
+        seen[v.id] = seen.get(v.id, 0) + 1
+    for vid, n in seen.items():
+        if n > 1:
+            out.append(Finding("error", vid, f"duplicate variant id ({n} occurrences)"))
+
+    ids = set(seen)
+    for v in corpus.all_variants:
+        if v.baseline and v.baseline not in ids:
+            out.append(Finding("error", v.id, f"baseline '{v.baseline}' does not exist"))
+        if v.conversation_with and v.conversation_with not in ids:
+            out.append(Finding("error", v.id, f"conversation_with '{v.conversation_with}' does not exist"))
+        if v.conversation_with == v.id:
+            out.append(Finding("error", v.id, "conversation_with points at itself"))
+    return out
+
+
+def check_dimensions(corpus: Corpus) -> list[Finding]:
+    out: list[Finding] = []
+    for v in corpus.all_variants:
+        for d in DIMENSIONS:
+            val = getattr(v, d)
+            if not isinstance(val, int) or not 0 <= val <= 4:
+                out.append(Finding("error", v.id, f"{d}={val!r} outside ordinal range 0-4"))
+    return out
+
+
+def check_hazard(corpus: Corpus) -> list[Finding]:
+    out: list[Finding] = []
+    for v in corpus.all_variants:
+        if v.status != "active":
+            continue
+        if v.hazard_review != "clear":
+            out.append(Finding(
+                "error", v.id,
+                f"hazard_review='{v.hazard_review}' — active variants must be 'clear' before they can run",
+            ))
+        if len(v.hazard_rationale.strip()) < 20:
+            out.append(Finding("error", v.id, "hazard_rationale is missing or too short to be a review"))
+    return out
+
+
+def check_denylist(corpus: Corpus) -> list[Finding]:
+    out: list[Finding] = []
+    for v in corpus.all_variants:
+        for pattern, label in DENY_PATTERNS:
+            m = re.search(pattern, v.text)
+            if m:
+                out.append(Finding(
+                    "error", v.id,
+                    f"prompt contains a {label} ({m.group(0)!r}); see docs/CONTENT_POLICY.md",
+                ))
+    return out
+
+
+def check_output_format(corpus: Corpus) -> list[Finding]:
+    """The declared output format must literally appear in the prompt.
+
+    If it does not, the twin comparison is not holding requested format constant,
+    and a length difference in the response may be a format artefact.
+    """
+    out: list[Finding] = []
+    for v in corpus.all_variants:
+        if v.status != "active" or not v.output_format:
+            continue
+        if normalise(v.output_format) not in normalise(v.text):
+            out.append(Finding("error", v.id, "declared output_format does not appear verbatim in the prompt text"))
+    return out
+
+
+def check_twins(corpus: Corpus) -> list[Finding]:
+    """Every variant must be quantitatively matched to its declared baseline twin."""
+    out: list[Finding] = []
+    for fam in corpus.families:
+        if not fam.is_active:
+            continue
+        index = {v.id: v for v in fam.variants}
+        for v in fam.variants:
+            if v.status != "active" or not v.baseline:
+                continue
+            base = index.get(v.baseline)
+            if base is None:
+                continue
+
+            ratio = v.word_count / base.word_count if base.word_count else 0.0
+            if not TOKEN_RATIO_MIN <= ratio <= TOKEN_RATIO_MAX:
+                out.append(Finding(
+                    "error", v.id,
+                    f"length ratio vs twin {base.variant} is {ratio:.2f}, outside "
+                    f"[{TOKEN_RATIO_MIN}, {TOKEN_RATIO_MAX}] ({v.word_count} vs {base.word_count} words)",
+                ))
+
+            j = jaccard(tech_vocab(v.text), tech_vocab(base.text))
+            if j < VOCAB_JACCARD_MIN:
+                out.append(Finding(
+                    "error", v.id,
+                    f"technical-vocabulary overlap with twin {base.variant} is {j:.2f}, below {VOCAB_JACCARD_MIN}",
+                ))
+
+            if v.output_format != base.output_format:
+                out.append(Finding("error", v.id, f"output_format differs from twin {base.variant}"))
+    return out
+
+
+def check_ladder(corpus: Corpus) -> list[Finding]:
+    """Each A-F step must move only the dimensions the family declared."""
+    out: list[Finding] = []
+    for fam in corpus.families:
+        if not fam.is_active:
+            continue
+        index = {v.variant: v for v in fam.variants}
+        for a, b in zip(VARIANT_ORDER, VARIANT_ORDER[1:]):
+            va, vb = index.get(a), index.get(b)
+            if not va or not vb:
+                continue
+            declared = fam.ladder.get(f"{a}>{b}") or LADDER_DELTAS.get((a, b), {})
+            actual = {d: getattr(vb, d) - getattr(va, d) for d in DIMENSIONS}
+            actual = {d: delta for d, delta in actual.items() if delta != 0}
+            if actual != dict(declared):
+                out.append(Finding(
+                    "error", f"{fam.id} {a}->{b}",
+                    f"step moves {actual or '{}'} but the family declares {dict(declared) or '{}'}",
+                ))
+    return out
+
+
+def check_completeness(corpus: Corpus) -> list[Finding]:
+    out: list[Finding] = []
+    for fam in corpus.families:
+        if not fam.is_active:
+            out.append(Finding("info", fam.id, f"family is a {fam.status}; excluded from runs"))
+            continue
+        have = {v.variant for v in fam.variants}
+        missing = [x for x in VARIANT_ORDER if x not in have]
+        if missing:
+            out.append(Finding("error", fam.id, f"active family is missing variants {missing}"))
+        if fam.focal_dimension not in DIMENSIONS:
+            out.append(Finding("error", fam.id, f"focal_dimension '{fam.focal_dimension}' is not a dimension"))
+    return out
+
+
+def _corr_matrix(variants: list[Variant]) -> dict[str, dict[str, float]]:
+    cols = {d: [float(getattr(v, d)) for v in variants] for d in DIMENSIONS}
+    matrix: dict[str, dict[str, float]] = {}
+    for a in DIMENSIONS:
+        matrix[a] = {}
+        for b in DIMENSIONS:
+            matrix[a][b] = 1.0 if a == b else round(spearman(cols[a], cols[b]), 3)
+    return matrix
+
+
+def check_independence(corpus: Corpus) -> tuple[list[Finding], dict, dict]:
+    """Report rank-correlation matrices across dimensions, marginally and within-arm.
+
+    The marginal matrix over the whole corpus will always show structure, because the
+    A-F ladder walks diagonally through the design space: low-intent variants are also
+    the low-specificity ones. That is a property of the *path*, not a confound in the
+    comparison, because every pre-registered comparison is a within-family twin-pair
+    delta (see docs/PREREGISTRATION.md §4).
+
+    So the confound test is run per family, over that family's C/D/E critical arm, and
+    the reported matrix gives the worst |r| observed in any single family. Pooling
+    families here would be the wrong test: it would pick up between-family differences
+    in where each ladder sits in the space and report them as within-arm confounds.
+    """
+    active = [v for v in corpus.all_variants if v.status == "active"]
+    marginal = _corr_matrix(active)
+
+    worst: dict[str, dict[str, float]] = {a: {b: 0.0 for b in DIMENSIONS} for a in DIMENSIONS}
+    worst_family: dict[tuple[str, str], str] = {}
+    for a in DIMENSIONS:
+        worst[a][a] = 1.0
+
+    out: list[Finding] = []
+    for fam in corpus.families:
+        if not fam.is_active:
+            continue
+        arm = [v for v in fam.variants if v.status == "active" and v.variant in ("C", "D", "E")]
+        if len(arm) < 3:
+            continue
+        m = _corr_matrix(arm)
+        for i, a in enumerate(DIMENSIONS):
+            for j, b in enumerate(DIMENSIONS):
+                if j <= i:
+                    continue
+                if abs(m[a][b]) > abs(worst[a][b]):
+                    worst[a][b] = worst[b][a] = m[a][b]
+                    worst_family[(a, b)] = fam.id
+                if abs(m[a][b]) > DIMENSION_CORR_MAX and fam.focal_dimension not in (a, b):
+                    out.append(Finding(
+                        "error", f"{fam.id} critical arm",
+                        f"{a} and {b} co-vary at r={m[a][b]:+.2f} across C/D/E, where the family's "
+                        f"focal dimension is '{fam.focal_dimension}' and both of these should be "
+                        f"pinned; this is a confound in the primary comparison",
+                    ))
+
+    for i, a in enumerate(DIMENSIONS):
+        for j, b in enumerate(DIMENSIONS):
+            if j <= i:
+                continue
+            r_marg = marginal[a][b]
+            if abs(r_marg) > DIMENSION_CORR_MAX:
+                fam_id = worst_family.get((a, b), "-")
+                out.append(Finding(
+                    "info", "design space",
+                    f"{a} and {b} correlate at r={r_marg:+.2f} across the full corpus "
+                    f"(ladder geometry); worst within any family's critical arm is "
+                    f"r={worst[a][b]:+.2f} ({fam_id})",
+                ))
+
+    return out, marginal, worst
+
+
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LintReport:
+    findings: list[Finding]
+    correlations: dict
+    critical_correlations: dict
+    n_variants: int
+    n_runnable: int
+
+    @property
+    def errors(self) -> list[Finding]:
+        return [f for f in self.findings if f.level == "error"]
+
+    @property
+    def warnings(self) -> list[Finding]:
+        return [f for f in self.findings if f.level == "warn"]
+
+    @property
+    def clean(self) -> bool:
+        return not self.errors
+
+
+def run(corpus: Corpus) -> LintReport:
+    findings: list[Finding] = []
+    findings += check_ids(corpus)
+    findings += check_dimensions(corpus)
+    findings += check_hazard(corpus)
+    findings += check_denylist(corpus)
+    findings += check_output_format(corpus)
+    findings += check_twins(corpus)
+    findings += check_ladder(corpus)
+    findings += check_completeness(corpus)
+    indep, matrix, critical = check_independence(corpus)
+    findings += indep
+    return LintReport(
+        findings=findings,
+        correlations=matrix,
+        critical_correlations=critical,
+        n_variants=len(corpus.all_variants),
+        n_runnable=len(corpus.runnable),
+    )
+
+
+def format_report(report: LintReport, corpus: Corpus) -> str:
+    lines = [
+        f"corpus version {corpus.version}  hash {corpus.content_hash[:16]}",
+        f"{report.n_variants} variants defined, {report.n_runnable} runnable",
+        "",
+    ]
+    if report.findings:
+        for f in report.findings:
+            lines.append(str(f))
+        lines.append("")
+
+    def matrix_block(title: str, matrix: dict) -> list[str]:
+        if not matrix:
+            return [title, "  (insufficient variants)", ""]
+        block = [title, "           " + "".join(f"{d[:6]:>8s}" for d in DIMENSIONS)]
+        for a in DIMENSIONS:
+            block.append(f"  {a[:9]:<9s}" + "".join(f"{matrix[a][b]:+8.2f}" for b in DIMENSIONS))
+        block.append("")
+        return block
+
+    lines += matrix_block(
+        "dimension rank correlation, full corpus (ladder geometry, informational):",
+        report.correlations,
+    )
+    lines += matrix_block(
+        "dimension rank correlation, worst within any family's C/D/E arm (must be flat off focal):",
+        report.critical_correlations,
+    )
+
+    n_err, n_warn = len(report.errors), len(report.warnings)
+    verdict = "CLEAN" if report.clean else "FAILED"
+    lines.append(f"{verdict}: {n_err} error(s), {n_warn} warning(s)")
+    return "\n".join(lines)

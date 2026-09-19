@@ -1,0 +1,201 @@
+/* Safety Explorer — instrument styling.
+   Dense, monospace, no chrome. Designed to be read for hours without fatigue. */
+
+:root {
+  --bg: #0e1013;
+  --panel: #14171c;
+  --panel-2: #1a1e24;
+  --line: #262b33;
+  --ink: #d6dae0;
+  --ink-dim: #838b97;
+  --ink-faint: #555c68;
+  --accent: #6fb3d2;
+  --warn: #d2a46f;
+  --bad: #d2786f;
+  --good: #7fc08a;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.55 var(--mono);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+header {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 16px;
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  flex-wrap: wrap;
+  background: var(--panel);
+}
+header h1 { font-size: 13px; letter-spacing: 0.18em; margin: 0; font-weight: 600; }
+header .meta { color: var(--ink-faint); font-size: 11px; }
+header .meta b { color: var(--ink-dim); font-weight: 500; }
+
+nav { display: flex; gap: 2px; margin-left: auto; }
+nav button {
+  background: transparent; color: var(--ink-dim); border: 1px solid transparent;
+  padding: 4px 11px; font: inherit; font-size: 11px; cursor: pointer;
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+nav button:hover { color: var(--ink); }
+nav button.on { color: var(--bg); background: var(--accent); }
+
+main { padding: 16px; max-width: 1500px; }
+.view { display: none; }
+.view.on { display: block; }
+
+.cols { display: grid; grid-template-columns: 340px 1fr; gap: 16px; align-items: start; }
+.cols-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+@media (max-width: 1000px) { .cols, .cols-2 { grid-template-columns: 1fr; } }
+
+.panel { background: var(--panel); border: 1px solid var(--line); padding: 14px; }
+.panel h2 {
+  font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-faint); margin: 0 0 12px; font-weight: 500;
+}
+.panel + .panel { margin-top: 16px; }
+
+/* ---- sliders ---- */
+.dim { margin-bottom: 15px; }
+.dim-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 11px; margin-bottom: 4px;
+}
+.dim-head .name { color: var(--ink); letter-spacing: 0.06em; }
+.dim-head .val { color: var(--accent); }
+.dim input[type=range] {
+  width: 100%; -webkit-appearance: none; appearance: none;
+  background: transparent; height: 18px; margin: 0; cursor: pointer;
+}
+.dim input[type=range]::-webkit-slider-runnable-track {
+  height: 1px; background: var(--line);
+}
+.dim input[type=range]::-moz-range-track { height: 1px; background: var(--line); }
+.dim input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); margin-top: -4px;
+}
+.dim input[type=range]::-moz-range-thumb {
+  width: 9px; height: 9px; border: 0; border-radius: 50%; background: var(--accent);
+}
+.dim .ends {
+  display: flex; justify-content: space-between;
+  color: var(--ink-faint); font-size: 10px; margin-top: 1px;
+}
+.anchor { color: var(--ink-dim); font-size: 10px; margin-top: 3px; min-height: 13px; }
+
+button.run {
+  width: 100%; margin-top: 6px; padding: 8px; background: var(--accent);
+  color: #0b0d10; border: 0; font: inherit; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.16em; text-transform: uppercase; cursor: pointer;
+}
+button.run:hover { filter: brightness(1.1); }
+button.ghost {
+  background: transparent; color: var(--ink-dim); border: 1px solid var(--line);
+  padding: 5px 10px; font: inherit; font-size: 11px; cursor: pointer;
+}
+button.ghost:hover { color: var(--ink); border-color: var(--ink-faint); }
+
+/* ---- text blocks ---- */
+pre.text, pre.resp {
+  background: var(--panel-2); border: 1px solid var(--line); padding: 12px;
+  white-space: pre-wrap; word-break: break-word; margin: 0;
+  font-size: 12px; line-height: 1.6; max-height: 460px; overflow: auto;
+}
+pre.resp { max-height: 620px; }
+
+table { border-collapse: collapse; width: 100%; font-size: 11px; }
+th, td { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line); }
+th { color: var(--ink-faint); font-weight: 500; text-transform: uppercase; font-size: 10px;
+     letter-spacing: 0.1em; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; font-size: 11px; }
+.kv dt { color: var(--ink-faint); }
+.kv dd { margin: 0; color: var(--ink); }
+
+.tag {
+  display: inline-block; padding: 1px 6px; border: 1px solid var(--line);
+  color: var(--ink-dim); font-size: 10px; letter-spacing: 0.06em; margin-right: 4px;
+}
+.tag.A { border-color: var(--good); color: var(--good); }
+.tag.B { border-color: var(--warn); color: var(--warn); }
+.tag.C { border-color: var(--bad); color: var(--bad); }
+.tag.focal { border-color: var(--accent); color: var(--accent); }
+
+.note { color: var(--ink-faint); font-size: 11px; line-height: 1.6; }
+.warn { color: var(--warn); }
+.bad { color: var(--bad); }
+.good { color: var(--good); }
+
+/* ---- diff ---- */
+.diff { background: var(--panel-2); border: 1px solid var(--line); padding: 12px;
+        font-size: 12px; line-height: 1.7; max-height: 560px; overflow: auto; }
+.diff .del { background: rgba(210,120,111,0.16); color: #e8a9a3;
+             text-decoration: line-through; text-decoration-color: rgba(210,120,111,0.5); }
+.diff .ins { background: rgba(127,192,138,0.14); color: #a7d6ae; }
+.diff .eq  { color: var(--ink-dim); }
+
+/* ---- surface ---- */
+.grid { display: inline-block; border: 1px solid var(--line); }
+.grid-row { display: flex; }
+.cell {
+  width: 62px; height: 42px; border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; font-size: 11px; position: relative;
+}
+.cell.empty { background: repeating-linear-gradient(45deg, transparent, transparent 4px,
+              rgba(255,255,255,0.025) 4px, rgba(255,255,255,0.025) 8px); color: var(--ink-faint); }
+.cell .n { font-size: 9px; color: var(--ink-faint); }
+.cell.prov { outline: 1px dashed var(--warn); outline-offset: -3px; }
+.axis-y { display: flex; flex-direction: column-reverse; }
+.axis-lab { font-size: 10px; color: var(--ink-faint); letter-spacing: 0.1em;
+            text-transform: uppercase; }
+
+/* ---- annotation ---- */
+.metric { padding: 9px 0; border-bottom: 1px solid var(--line); }
+.metric:last-child { border-bottom: 0; }
+.metric .q { font-size: 12px; margin-bottom: 2px; }
+.metric .anchors { color: var(--ink-faint); font-size: 10px; margin-bottom: 5px; }
+.scale { display: flex; gap: 3px; }
+.scale button {
+  width: 30px; height: 26px; background: var(--panel-2); color: var(--ink-dim);
+  border: 1px solid var(--line); font: inherit; font-size: 11px; cursor: pointer;
+}
+.scale button:hover { border-color: var(--ink-faint); color: var(--ink); }
+.scale button.sel { background: var(--accent); color: #0b0d10; border-color: var(--accent); }
+.scale button.na { width: 38px; font-size: 10px; }
+.metric.inverted .scale button.sel { background: var(--warn); border-color: var(--warn); }
+
+.blind-banner {
+  background: rgba(111,179,210,0.08); border: 1px solid rgba(111,179,210,0.3);
+  padding: 7px 11px; font-size: 11px; color: var(--accent); margin-bottom: 12px;
+}
+.blind-banner.off { background: rgba(210,164,111,0.08);
+  border-color: rgba(210,164,111,0.35); color: var(--warn); }
+
+textarea {
+  width: 100%; background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
+  font: inherit; font-size: 12px; padding: 8px; resize: vertical; min-height: 56px;
+}
+select, input[type=text] {
+  background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
+  font: inherit; font-size: 11px; padding: 4px 6px;
+}
+label.check { display: inline-flex; align-items: center; gap: 6px; font-size: 11px;
+              color: var(--ink-dim); cursor: pointer; }
+
+.bar { height: 3px; background: var(--line); margin-top: 8px; }
+.bar > div { height: 100%; background: var(--accent); }
+.empty-state { color: var(--ink-faint); font-size: 12px; padding: 20px 0; }

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "safety-explorer"
+version = "0.1.0"
+description = "A research instrument for measuring how model behaviour changes as context framing becomes riskier while the reasoning task stays similar."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Elliot Telford" }]
+keywords = ["ai-safety", "evaluation", "llm", "research-instrument"]
+
+# No runtime dependencies. The corpus is TOML (stdlib tomllib), storage is SQLite,
+# the server is http.server and the UI is vanilla JS. A research instrument should
+# still start in five years without a toolchain being resurrected first.
+dependencies = []
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40"]
+openai = ["openai>=1.40"]
+dev = ["pytest>=8.0"]
+all = ["anthropic>=0.40", "openai>=1.40", "pytest>=8.0"]
+
+[project.scripts]
+explorer = "safety_explorer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+safety_explorer = ["schema.sql", "web/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Safety Explorer</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header>
+  <h1>SAFETY EXPLORER</h1>
+  <span class="meta">
+    corpus <b id="m-corpus">—</b> ·
+    hash <b id="m-hash">—</b> ·
+    lint <b id="m-lint">—</b> ·
+    <b id="m-runs">—</b>
+  </span>
+  <nav>
+    <button data-view="explore" class="on">Explore</button>
+    <button data-view="compare">Compare</button>
+    <button data-view="annotate">Annotate</button>
+    <button data-view="surface">Surface</button>
+    <button data-view="results">Results</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- ============================ EXPLORE ============================ -->
+<section id="v-explore" class="view on">
+  <div class="cols">
+    <div>
+      <div class="panel">
+        <h2>Design space</h2>
+        <div id="sliders"></div>
+        <button class="run" id="btn-select">Select nearest prompt</button>
+        <p class="note" style="margin-top:10px">
+          Sliders <em>select</em> from the authored corpus; they do not synthesise.
+          A generated prompt would have no capability twin and no lint guarantee,
+          so it could not support the central comparison.
+        </p>
+      </div>
+
+      <div class="panel">
+        <h2>Corpus</h2>
+        <div id="corpus-list"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel" id="variant-panel">
+        <h2>Prompt</h2>
+        <div class="empty-state">Move the sliders, or pick a variant from the corpus list.</div>
+      </div>
+      <div class="panel" id="runs-panel" style="display:none">
+        <h2>Stored runs</h2>
+        <div id="runs-list"></div>
+      </div>
+      <div class="panel" id="response-panel" style="display:none">
+        <h2>Response</h2>
+        <div id="response-body"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ COMPARE ============================ -->
+<section id="v-compare" class="view">
+  <div class="panel">
+    <h2>Baseline comparison</h2>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <label class="check">test run
+        <select id="cmp-test"></select>
+      </label>
+      <label class="check">baseline
+        <select id="cmp-base"><option value="">auto (declared twin)</option></select>
+      </label>
+      <button class="ghost" id="btn-compare">Compare</button>
+    </div>
+    <p class="note" style="margin-top:8px">
+      The baseline is the variant's declared capability twin at the same repeat index:
+      the same intellectual operation, differing only along the family's focal dimension.
+    </p>
+  </div>
+  <div id="cmp-out"></div>
+</section>
+
+<!-- ============================ ANNOTATE ============================ -->
+<section id="v-annotate" class="view">
+  <div class="cols">
+    <div>
+      <div class="panel">
+        <h2>Session</h2>
+        <div style="display:grid;gap:8px">
+          <label class="check">annotator
+            <input type="text" id="ann-name" value="local" style="width:120px">
+          </label>
+          <label class="check">
+            <input type="checkbox" id="ann-blind" checked> blinded
+          </label>
+          <label class="check">
+            <input type="checkbox" id="ann-reliability"> reliability pass (re-serve 20%)
+          </label>
+          <button class="ghost" id="btn-ann-start">Start / next</button>
+        </div>
+        <div id="ann-progress" class="note" style="margin-top:12px"></div>
+      </div>
+      <div class="panel">
+        <h2>Why blinded</h2>
+        <p class="note">
+          If the annotator can see that a response came from the variant labelled
+          "explicitly harmful", they will score it as degraded, and the instrument
+          measures the annotator's expectations rather than the model's behaviour.
+          Metadata is revealed only after the rating is submitted, and the reveal is
+          logged. Unblinded annotations are still stored — they are just reported
+          separately and are not the reference set.
+        </p>
+      </div>
+    </div>
+    <div>
+      <div id="ann-body"><div class="panel"><div class="empty-state">Press start.</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ SURFACE ============================ -->
+<section id="v-surface" class="view">
+  <div class="panel">
+    <h2>Behavioural safety surface</h2>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <label class="check">x <select id="sf-x"></select></label>
+      <label class="check">y <select id="sf-y"></select></label>
+      <label class="check">metric <select id="sf-metric"></select></label>
+      <label class="check">source
+        <select id="sf-source">
+          <option value="human">human annotation</option>
+          <option value="auto">automatic features</option>
+        </select>
+      </label>
+      <label class="check">tiers
+        <select id="sf-tiers">
+          <option value="A">A only</option>
+          <option value="AB">A + B</option>
+          <option value="ABC">A + B + C</option>
+        </select>
+      </label>
+      <button class="ghost" id="btn-surface">Render</button>
+    </div>
+  </div>
+  <div class="panel" id="sf-out"><div class="empty-state">Render a slice.</div></div>
+</section>
+
+<!-- ============================ RESULTS ============================ -->
+<section id="v-results" class="view">
+  <div class="cols-2">
+    <div>
+      <div class="panel">
+        <h2>Twin-pair deltas</h2>
+        <div style="margin-bottom:10px">
+          <label class="check">metric <select id="tw-metric"></select></label>
+          <label class="check">tiers
+            <select id="tw-tiers">
+              <option value="A">A only</option><option value="AB">A + B</option>
+              <option value="ABC">A + B + C</option>
+            </select>
+          </label>
+          <button class="ghost" id="btn-twins">Compute</button>
+        </div>
+        <div id="tw-out"><div class="empty-state">Compute to see deltas.</div></div>
+      </div>
+      <div class="panel">
+        <h2>False-positive controls (RQ9)</h2>
+        <div id="ctrl-out"><div class="empty-state">—</div></div>
+      </div>
+    </div>
+    <div>
+      <div class="panel">
+        <h2>Annotation reliability</h2>
+        <div id="rel-out"><div class="empty-state">—</div></div>
+      </div>
+      <div class="panel">
+        <h2>Longitudinal drift (RQ8)</h2>
+        <div id="drift-out"><div class="empty-state">—</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+<script src="/app.js"></script>
+</body>
+</html>
