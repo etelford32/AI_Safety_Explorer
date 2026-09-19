@@ -1,6 +1,6 @@
 # Safety Explorer
 
-**v0.1** — a research instrument for one question:
+**v0.2** — a research instrument for one question:
 
 > When context becomes riskier while the underlying reasoning task stays similar,
 > how does model behaviour change?
@@ -66,14 +66,14 @@ explorer analyse twins
 | | |
 |---|---|
 | Design space | 5 independent ordinal dimensions (intent, operationality, specificity, autonomy, technical depth) |
-| Corpus | 8 families, 4 fully authored (24 prompts) + 10 false-positive controls = **34 runnable**; 4 families stubbed for v0.2 |
+| Corpus | 8 families, 4 fully authored: 24 ladder + 12 depth-arm prompts + 10 false-positive controls = **46 runnable**; 4 families stubbed for v0.3 |
 | Linter | twin matching, ladder deltas, hazard review, content deny-list, dimension independence |
 | Ingestion | 3 lanes — live API, manual chat capture, bulk import — with explicit provenance tiers |
 | Measurement | 17 automatic features · 9 ordinal human metrics · optional LLM judge (off by default) |
 | Annotation | blinded, randomised, with intra-rater reliability |
-| Analysis | twin-pair deltas, bootstrap CIs over families, Cliff's delta, Krippendorff's α, safety surface |
+| Analysis | twin-pair deltas, depth × risk interaction (difference-in-differences), bootstrap CIs over families, Cliff's delta, Krippendorff's α, safety surface |
 | UI | sliders → prompt → response → twin comparison → word-level diff → surface |
-| Tests | 46, all passing, no network required |
+| Tests | 54, all passing, no network required |
 
 ## How it stays honest
 
@@ -94,6 +94,12 @@ the experimental guarantee the whole design rests on.
 vocabulary overlap ≥ 0.5, requested output format byte-identical. A twin pair that
 drifts past those is a corpus bug that blocks a run, because otherwise "capability
 retention" measures prompt-writing drift as much as model behaviour.
+
+**Depth twins are held to a stronger check.** A depth twin *must* differ in vocabulary
+— that is the manipulation — so it is linted on **identical numeric parameters**
+instead: every figure in the question unchanged. Different wording is the manipulation;
+different numbers are a different question. This caught a real authoring slip, a
+"60-second window" against "a minute".
 
 **The surface shows its own sparsity.** Five dimensions over 34 prompts is sparse.
 Every cell reports its `n`, unsampled cells are drawn empty and never interpolated,
@@ -137,6 +143,42 @@ Eight families, each one underlying problem with six controlled variations:
 Family 4 varies **autonomy** rather than intent on purpose. With every family using
 the same focal dimension, an autonomy effect could never be separated from an intent
 effect.
+
+### The depth arm (RQ4)
+
+Each family also carries three **depth-arm** variants: C, D and E re-posed at
+introductory depth with every other dimension — including the focal one — pinned. That
+makes a 2 × 3 factorial, depth {1, 3} × focal level {C, D, E}.
+
+The question is the **interaction**, not the main effect. "Does a technical question
+get a technical answer" is uninteresting; RQ4 asks whether the *risk penalty grows with
+depth*. So the analysis reports a difference-in-differences, per level:
+
+```
+explorer analyse depth --source auto
+
+  focal dimension: intent   (3 families)
+    level    focal    n   median gap            95% CI      effect
+    C            0    9          0.0        [0.0, 0.0]  negligible
+    D            2    9        1.369    [1.369, 1.369]       large
+    E            4    9          0.0        [0.0, 0.0]  negligible
+
+    difference-in-differences (depth gap at level, minus at C):
+      D vs C     n=9   median=1.369   CI [0.525, 1.369]   large
+      E vs C     n=9   median=0.0     CI [0.0, 0.0]       negligible
+```
+
+Two design points that output makes concrete:
+
+- **The DiD is computed per level, not just for the top of the ladder.** Where
+  behaviour has a cliff, E can be saturated — both depth conditions refuse outright —
+  and the interaction shows up in the ambiguous middle instead. Contrasting only E
+  against C would report a null while a large effect sat at D.
+- **Depth is register, never credentials.** The manipulation is the vocabulary and
+  formalism of the question, never a claim about the requester ("I have a PhD"). That
+  is a social/credentialing variable, and mixing it in would mean any effect could be
+  deference to authority rather than a response to the level of the question. A test
+  rejects any depth-arm prompt containing an expertise claim.
 
 The ladder within a family:
 
@@ -195,7 +237,7 @@ explorer import PATH              bulk-import transcripts (Tier C)
 explorer unmatched                list imports that matched no prompt
 explorer features                 recompute automatic features from stored responses
 explorer annotate                 queue responses for blinded annotation
-explorer analyse {twins,surface,controls,reliability,judge,drift}
+explorer analyse {twins,surface,depth,controls,reliability,judge,drift}
 explorer serve                    the Explorer UI
 explorer export                   JSONL export (escalated responses withheld)
 ```
@@ -216,11 +258,11 @@ campaign that dies at two hours fifty loses nothing.
 
 ## Roadmap
 
-**v0.2** — author families 5–8 (58 prompts total); a depth arm, since v0.1 pins depth
-within families and cannot yet answer RQ4; LLM-judge validation against the human
-reference set; multi-model campaigns.
+**v0.3** — author families 5–8 (82 prompts total); a stated-expertise arm, kept
+separate from depth on purpose; a third depth level (research) to test monotonicity;
+LLM-judge validation against the human reference set; multi-model campaigns.
 
-**v0.3** — the first real longitudinal result: the same frozen benchmark re-run over
+**v0.4** — the first real longitudinal result: the same frozen benchmark re-run over
 months, with a local pinned-weight model as the control for infrastructure drift.
 
 ## Status and limits
@@ -228,9 +270,13 @@ months, with a local pinned-weight model as the control for infrastructure drift
 v0.1 delivers the full vertical slice end-to-end with a partial corpus, rather than a
 complete corpus with no way to run it. Known limits, stated up front:
 
-- **Underpowered for between-model comparison.** 24 family prompts over four families
-  characterises the *shape* of one model's surface. Ranking models needs v0.2.
-- **Depth is pinned at 3 within families**, so RQ4 is not yet answerable.
+- **Underpowered for between-model comparison.** 36 family prompts over four families
+  characterises the *shape* of one model's surface. Ranking models needs v0.3.
+- **The autonomy × depth interaction has one family**, so its confidence interval
+  cannot be estimated and it is reported as provisional. The intent × depth
+  interaction, with three families, is testable.
+- **Depth has two levels**, so the arm detects an interaction but cannot show whether
+  it is monotonic. A third level lands in v0.3.
 - **Human annotation is the bottleneck**, by design. The reference set is small and
   its reliability estimate is intra-rater until a second annotator exists.
 - **No result is claimed here.** The repository ships an instrument and a ground-truth

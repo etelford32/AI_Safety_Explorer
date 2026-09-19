@@ -60,6 +60,54 @@ The linter fails a family whose steps move more than the declared deltas.
 The C→D→E segment is the **critical arm**: operationality, specificity, depth and
 autonomy are pinned, and only stated intent moves. That segment alone answers RQ2.
 
+### [ADD] The depth arm (v0.2)
+
+The A–F ladder pins `depth` within a family, which makes RQ4 unanswerable: with depth
+constant there is no depth contrast to measure. v0.2 adds a **depth arm** — variants
+C, D and E re-posed at introductory depth, with every other dimension including the
+focal one held fixed.
+
+That gives a **2 × 3 factorial** per family: depth {1, 3} × focal level {C, D, E}.
+
+| | depth 1 (introductory) | depth 3 (graduate) |
+|---|---|---|
+| focal level C | `C_intro` | `C` |
+| focal level D | `D_intro` | `D` |
+| focal level E | `E_intro` | `E` |
+
+**The question is the interaction, not the main effect.** A main effect of depth would
+be unsurprising and nearly uninteresting — a more technical question invites a more
+technical answer. RQ4 asks whether the *risk penalty grows with depth*: whether the
+expert-versus-introductory gap is wider at elevated intent than at benign baseline.
+That is a difference-in-differences, which is why the arm had to be a factorial rather
+than one extra pair of prompts.
+
+#### Depth is register, never credentials
+
+The manipulation is the **register and formalism of the question** — vocabulary,
+degree of abstraction, how the physics is described. It is never a claim about the
+requester ("I have a PhD, so you can tell me").
+
+A stated-expertise claim is a *different variable*: it is social and credentialing, and
+a model may respond to it by deference rather than by adjusting to the level of the
+question. Mixing the two would mean no observed effect could be attributed to either.
+Stated expertise is a good candidate for its own arm in a later version; it is not part
+of this one. `explorer lint`'s test suite enforces the separation by rejecting any
+depth-arm prompt containing an expertise claim.
+
+#### Depth twins are linted differently
+
+A depth twin *must* differ in technical vocabulary — that is the manipulation — so the
+framing-twin overlap threshold of 0.50 would forbid the very contrast the arm exists to
+create. In practice the authored depth twins land at Jaccard 0.35–0.41: below the
+framing threshold, above the depth one.
+
+The guarantee that the two prompts still pose the same problem comes from a stronger
+check instead: **identical numeric parameters**. Every figure in the question must be
+unchanged. Different wording is the manipulation; different numbers are a different
+question. This caught a real slip during authoring — a ladder variant saying "a
+60-second window" against an introductory twin saying "a minute".
+
 ### [ADD] Each family nominates a focal dimension
 
 Holding four dimensions constant while moving one is only possible along one axis
@@ -277,7 +325,7 @@ recorded and pinned per campaign.
 | RQ1 | Is capability degradation continuous as risk increases, or sharply bounded? | A→E ladder |
 | RQ2 | Does operationality influence behaviour more than stated intent? | C→D→E vs B→C |
 | RQ3 | Does real-world specificity change responses when reasoning is identical? | B vs C twins |
-| RQ4 | Are expert questions disproportionately constrained vs introductory ones? | depth arm |
+| RQ4 | Are expert questions disproportionately constrained vs introductory ones? | depth arm (v0.2) |
 | RQ5 | How often does appropriate refusal remove benign information? | `over_refusal` on D/E |
 | RQ6 | After a boundary, how well does the model recover? | F variants |
 | RQ7 | Are boundaries stable across repeated runs? | n_repeats |
@@ -299,7 +347,9 @@ heavily with the alarming-benign arm.
 | 1 | Runner, storage, provenance, mock provider, CLI | **v0.1 — this commit** |
 | 2 | Live providers, comparison UI, diff view | **v0.1 — this commit** |
 | 3 | Blinded human scoring UI, first annotated dataset | **v0.1 — this commit** |
-| 4 | Remaining 4 families, surface visualisation, reliability stats | v0.2 |
+| 4 | Depth arm (12 prompts), depth x focal factorial, interaction analysis | **v0.2 — this commit** |
+| 5 | Remaining 4 families, LLM-judge validation, multi-model campaigns | v0.3 |
+| 6 | Stated-expertise arm; third depth level (research) for monotonicity | v0.3 |
 
 v0.1 delivers the full vertical slice end-to-end with a partial corpus, rather than
 a complete corpus with no way to run it. The corpus is the easy part to extend and

@@ -42,8 +42,9 @@ CREATE TABLE IF NOT EXISTS prompt (
     family_id        TEXT REFERENCES family(id) ON DELETE CASCADE,
     twin_group_id    TEXT REFERENCES twin_group(id) ON DELETE CASCADE,
     arm              TEXT NOT NULL,          -- family | control
+    sub_arm          TEXT NOT NULL DEFAULT 'ladder',  -- ladder | depth | control
     control_arm      TEXT,                   -- alarming_benign | innocuous_consequential
-    variant          TEXT NOT NULL,          -- A..F, or control id
+    variant          TEXT NOT NULL,          -- A..F, C_intro..E_intro, or control id
     title            TEXT NOT NULL,
     text             TEXT NOT NULL,
     output_format    TEXT NOT NULL,
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS prompt (
 
 CREATE INDEX IF NOT EXISTS idx_prompt_family ON prompt(family_id);
 CREATE INDEX IF NOT EXISTS idx_prompt_twin   ON prompt(twin_group_id);
+CREATE INDEX IF NOT EXISTS idx_prompt_arm    ON prompt(arm, sub_arm);
 CREATE INDEX IF NOT EXISTS idx_prompt_hash   ON prompt(prompt_hash);
 
 CREATE TABLE IF NOT EXISTS campaign (

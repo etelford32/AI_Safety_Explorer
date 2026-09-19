@@ -24,9 +24,16 @@ def conn(tmp_path, corpus):
 
 @pytest.fixture
 def populated(conn, corpus):
-    """A small mock campaign: enough cells to exercise the analysis, fast enough to run."""
+    """A small mock campaign: enough cells to exercise the analysis, fast enough to run.
+
+    Two intent-focal families plus the autonomy-focal one. Two intent families is the
+    minimum, not a convenience: confidence intervals bootstrap over families, so a
+    single-family fixture yields nan intervals and the analysis correctly declines to
+    claim any effect — which would look like a pipeline bug rather than the honest
+    answer it is.
+    """
     provider = get_provider("mock", "mock-1")
     cid = runner.create_campaign(conn, "test", provider, corpus, 2)
     runner.execute(conn, cid, corpus, provider, 2,
-                   only=["orbital_debris", "control_autonomy"])
+                   only=["orbital_debris", "impactor_deflection", "control_autonomy"])
     return conn, cid

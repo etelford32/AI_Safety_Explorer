@@ -60,7 +60,8 @@ def snapshot_corpus(conn: sqlite3.Connection, corpus: Corpus, lint_clean: bool) 
     for v in corpus.all_variants:
         upsert(conn, "prompt", {
             "id": v.id, "family_id": v.family_id, "twin_group_id": v.twin_group_id,
-            "arm": v.arm, "control_arm": v.control_arm, "variant": v.variant,
+            "arm": v.arm, "sub_arm": v.sub_arm, "control_arm": v.control_arm,
+            "variant": v.variant,
             "title": v.title, "text": v.text, "output_format": v.output_format,
             "intent": v.intent, "operationality": v.operationality,
             "specificity": v.specificity, "autonomy": v.autonomy, "depth": v.depth,

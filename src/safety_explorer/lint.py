@@ -13,7 +13,7 @@ import math
 import re
 from dataclasses import dataclass
 
-from . import DIMENSIONS, LADDER_DELTAS, VARIANT_ORDER
+from . import DEPTH_ARM, DEPTH_ARM_LEVEL, DIMENSIONS, LADDER_DELTAS, VARIANT_ORDER
 from .corpus import Corpus, Variant, normalise
 
 # Twin-matching tolerances. Deliberately strict: a twin pair that drifts past these
@@ -21,6 +21,14 @@ from .corpus import Corpus, Variant, normalise
 TOKEN_RATIO_MIN = 0.75
 TOKEN_RATIO_MAX = 1.33
 VOCAB_JACCARD_MIN = 0.50
+
+# A depth twin is held to a looser vocabulary threshold, because differing technical
+# vocabulary IS the depth manipulation — demanding 0.50 overlap would forbid the very
+# contrast the arm exists to create. The guarantee that the two prompts still pose the
+# same problem comes from `check_depth_twins`, which requires their numeric parameters
+# to be identical. That is a stronger constraint than vocabulary overlap, not a weaker
+# one: it is satisfied only if every figure in the question is unchanged.
+DEPTH_VOCAB_JACCARD_MIN = 0.30
 DIMENSION_CORR_MAX = 0.50
 
 STOPWORDS = frozenset("""
@@ -175,7 +183,19 @@ def check_output_format(corpus: Corpus) -> list[Finding]:
 
 
 def check_twins(corpus: Corpus) -> list[Finding]:
-    """Every variant must be quantitatively matched to its declared baseline twin."""
+    """Every variant must be quantitatively matched to its declared baseline twin.
+
+    Two kinds of twin, with different rules:
+
+    * A **framing twin** holds the question fixed and moves the framing, so its
+      vocabulary must overlap heavily with its baseline.
+    * A **depth twin** deliberately changes the vocabulary — that is the manipulation —
+      so it is held instead to identical numeric parameters (`check_depth_twins`).
+
+    Both are held to the same length tolerance and the same requested output format,
+    since a difference in either would make a response-length difference an artefact of
+    the prompt rather than a finding about the model.
+    """
     out: list[Finding] = []
     for fam in corpus.families:
         if not fam.is_active:
@@ -188,6 +208,8 @@ def check_twins(corpus: Corpus) -> list[Finding]:
             if base is None:
                 continue
 
+            is_depth_twin = v.depth != base.depth
+
             ratio = v.word_count / base.word_count if base.word_count else 0.0
             if not TOKEN_RATIO_MIN <= ratio <= TOKEN_RATIO_MAX:
                 out.append(Finding(
@@ -196,15 +218,91 @@ def check_twins(corpus: Corpus) -> list[Finding]:
                     f"[{TOKEN_RATIO_MIN}, {TOKEN_RATIO_MAX}] ({v.word_count} vs {base.word_count} words)",
                 ))
 
+            threshold = DEPTH_VOCAB_JACCARD_MIN if is_depth_twin else VOCAB_JACCARD_MIN
             j = jaccard(tech_vocab(v.text), tech_vocab(base.text))
-            if j < VOCAB_JACCARD_MIN:
+            if j < threshold:
+                kind = "depth" if is_depth_twin else "framing"
                 out.append(Finding(
                     "error", v.id,
-                    f"technical-vocabulary overlap with twin {base.variant} is {j:.2f}, below {VOCAB_JACCARD_MIN}",
+                    f"technical-vocabulary overlap with {kind} twin {base.variant} is "
+                    f"{j:.2f}, below {threshold}",
                 ))
 
             if v.output_format != base.output_format:
                 out.append(Finding("error", v.id, f"output_format differs from twin {base.variant}"))
+    return out
+
+
+def check_depth_twins(corpus: Corpus) -> list[Finding]:
+    """The depth arm must be a pure depth contrast over an identical problem.
+
+    Three conditions, each of which would otherwise sink RQ4:
+
+    1. Depth, and nothing else, moves between a depth variant and its ladder twin.
+       If specificity or intent drifted too, an observed effect could belong to either.
+    2. The numeric parameters are identical. Different wording is the manipulation;
+       different numbers would be a different question.
+    3. The arm is complete within a family. A partial factorial cannot support the
+       difference-in-differences that RQ4 needs.
+    """
+    out: list[Finding] = []
+    for fam in corpus.families:
+        if not fam.is_active:
+            continue
+        arm = [v for v in fam.depth_arm if v.status == "active"]
+        if not arm:
+            continue
+
+        index = {v.variant: v for v in fam.variants}
+        present = {v.variant for v in arm}
+        missing = [k for k in DEPTH_ARM if k not in present]
+        if missing:
+            out.append(Finding(
+                "error", fam.id,
+                f"depth arm is incomplete, missing {missing}; a partial factorial "
+                f"cannot support a difference-in-differences",
+            ))
+
+        for v in arm:
+            twin_letter = DEPTH_ARM.get(v.variant)
+            if twin_letter is None:
+                out.append(Finding("error", v.id, f"'{v.variant}' is not a depth-arm variant"))
+                continue
+            base = index.get(twin_letter)
+            if base is None:
+                out.append(Finding("error", v.id, f"ladder twin '{twin_letter}' is missing"))
+                continue
+
+            if v.baseline != base.id:
+                out.append(Finding(
+                    "error", v.id,
+                    f"baseline is '{v.baseline}', but a depth variant must be compared "
+                    f"against its ladder twin '{base.id}'",
+                ))
+
+            moved = {d for d in DIMENSIONS if getattr(v, d) != getattr(base, d)}
+            if moved != {"depth"}:
+                out.append(Finding(
+                    "error", v.id,
+                    f"depth contrast against {twin_letter} moves {sorted(moved)}, "
+                    f"expected only ['depth']",
+                ))
+
+            if v.depth != DEPTH_ARM_LEVEL:
+                out.append(Finding(
+                    "error", v.id,
+                    f"depth={v.depth}, expected {DEPTH_ARM_LEVEL} for the introductory arm",
+                ))
+
+            if v.numeric_signature != base.numeric_signature:
+                only_here = sorted(v.numeric_signature - base.numeric_signature)
+                only_there = sorted(base.numeric_signature - v.numeric_signature)
+                out.append(Finding(
+                    "error", v.id,
+                    f"numeric parameters differ from ladder twin {twin_letter}: "
+                    f"only here {only_here}, only there {only_there}. Different wording "
+                    f"is the manipulation; different numbers are a different question.",
+                ))
     return out
 
 
@@ -214,7 +312,7 @@ def check_ladder(corpus: Corpus) -> list[Finding]:
     for fam in corpus.families:
         if not fam.is_active:
             continue
-        index = {v.variant: v for v in fam.variants}
+        index = {v.variant: v for v in fam.ladder_variants}
         for a, b in zip(VARIANT_ORDER, VARIANT_ORDER[1:]):
             va, vb = index.get(a), index.get(b)
             if not va or not vb:
@@ -236,7 +334,7 @@ def check_completeness(corpus: Corpus) -> list[Finding]:
         if not fam.is_active:
             out.append(Finding("info", fam.id, f"family is a {fam.status}; excluded from runs"))
             continue
-        have = {v.variant for v in fam.variants}
+        have = {v.variant for v in fam.ladder_variants}
         missing = [x for x in VARIANT_ORDER if x not in have]
         if missing:
             out.append(Finding("error", fam.id, f"active family is missing variants {missing}"))
@@ -281,7 +379,8 @@ def check_independence(corpus: Corpus) -> tuple[list[Finding], dict, dict]:
     for fam in corpus.families:
         if not fam.is_active:
             continue
-        arm = [v for v in fam.variants if v.status == "active" and v.variant in ("C", "D", "E")]
+        arm = [v for v in fam.ladder_variants
+               if v.status == "active" and v.variant in ("C", "D", "E")]
         if len(arm) < 3:
             continue
         m = _corr_matrix(arm)
@@ -348,6 +447,7 @@ def run(corpus: Corpus) -> LintReport:
     findings += check_denylist(corpus)
     findings += check_output_format(corpus)
     findings += check_twins(corpus)
+    findings += check_depth_twins(corpus)
     findings += check_ladder(corpus)
     findings += check_completeness(corpus)
     indep, matrix, critical = check_independence(corpus)

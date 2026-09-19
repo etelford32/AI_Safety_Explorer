@@ -92,13 +92,67 @@ def test_pipeline_recovers_the_mock_ground_truth(populated, corpus):
     assert GROUND_TRUTH["intent_cliff"] == 3
 
 
-def test_depth_costs_nothing_in_the_mock(populated, corpus):
-    """The mock sets depth_slope to zero; the pipeline must not invent a depth effect."""
+def test_depth_sign_convention_holds_in_both_directions():
+    """Positive must always mean 'the expert phrasing fared worse', either direction."""
+    assert analysis.depth_penalty("capability_retention", 5, 3) == 2
+    assert analysis.depth_penalty("over_refusal", 0, 2) == 2
+    assert analysis.depth_penalty("capability_retention", 3, 5) == -2
+    assert analysis.depth_penalty("over_refusal", 2, 0) == -2
+
+
+def test_pipeline_recovers_the_mock_depth_interaction(populated, corpus):
+    """The mock has NO main effect of depth but a real depth x intent interaction.
+
+    Both halves matter. A pipeline that reports a main effect is finding something that
+    is not there; one that misses the interaction cannot answer RQ4.
+    """
     assert GROUND_TRUTH["depth_slope"] == 0.0
+    assert GROUND_TRUTH["depth_risk_interaction"] > 0
+
     conn, cid = populated
-    obs = analysis.observations(conn, cid, tiers="A", include_controls=False)
-    depths = {o["depth"] for o in obs}
-    assert depths == {3}, "v0.1 pins depth within families; a depth arm lands in v0.2"
+    d = analysis.depth_interaction(conn, corpus, campaign_id=cid, source="auto")
+
+    intent_block = d["by_focal_dimension"]["intent"]
+    levels = {lv["level"]: lv for lv in intent_block["levels"]}
+
+    # No depth gap at benign baseline — there is no main effect to find.
+    assert levels["C"]["median_gap"] == 0.0
+
+    # A real gap once intent is elevated.
+    assert levels["D"]["median_gap"] > 0, "failed to recover the mock's depth interaction"
+
+    did = intent_block["difference_in_differences"]
+    assert did["D"]["median"] > 0
+    assert "D" in did["reading"] and "H4 supported" in did["reading"]
+
+
+def test_depth_interaction_is_null_where_the_mock_has_none(populated, corpus):
+    """The autonomy family is a negative control.
+
+    Its intent is pinned at 0, and the mock keys its interaction to intent, so this
+    family must show no depth interaction. An analysis that reports one here is
+    manufacturing an effect.
+    """
+    conn, cid = populated
+    d = analysis.depth_interaction(conn, corpus, campaign_id=cid, source="auto")
+    autonomy = d["by_focal_dimension"]["autonomy"]
+    for lv in autonomy["levels"]:
+        assert lv["median_gap"] == 0.0, f"invented a depth effect at {lv['level']}"
+    assert "H4 not supported" in autonomy["difference_in_differences"]["reading"]
+
+
+def test_saturated_level_does_not_hide_an_interaction(populated, corpus):
+    """At variant E both depth conditions refuse outright, so E vs C shows nothing.
+
+    The mock is built this way deliberately. Reporting the DiD only for the top of the
+    ladder would return a null while a large interaction sat at D. This asserts the
+    per-level reporting catches it.
+    """
+    conn, cid = populated
+    d = analysis.depth_interaction(conn, corpus, campaign_id=cid, source="auto")
+    did = d["by_focal_dimension"]["intent"]["difference_in_differences"]
+    assert did["E"]["median"] == 0.0, "expected saturation at E"
+    assert did["D"]["median"] > 0, "the interaction must still be visible at D"
 
 
 def test_skewed_metric_is_flagged_degenerate_not_unreliable(conn, corpus):

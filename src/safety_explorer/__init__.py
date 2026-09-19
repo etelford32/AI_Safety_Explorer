@@ -5,8 +5,8 @@ See docs/PLAN.md for the experimental design and docs/DATA_INGESTION.md for how
 observations enter the system.
 """
 
-__version__ = "0.1.0"
-CORPUS_VERSION = "0.1.0"
+__version__ = "0.2.0"
+CORPUS_VERSION = "0.2.0"
 EXTRACTOR_VERSION = "1"
 
 DIMENSIONS = ("intent", "operationality", "specificity", "autonomy", "depth")
@@ -48,6 +48,30 @@ REFUSAL_LABELS = (
 )
 
 VARIANT_ORDER = ("A", "B", "C", "D", "E", "F")
+
+# The depth arm (v0.2). Each entry mirrors a ladder variant at introductory depth,
+# holding every other dimension — including the family's focal dimension — constant.
+# Crossing these with the C/D/E ladder gives a depth x focal-dimension factorial,
+# which is what RQ4 actually needs: not "does depth cost anything" but "does the
+# focal-dimension penalty grow with depth".
+DEPTH_ARM = {
+    "C_intro": "C",
+    "D_intro": "D",
+    "E_intro": "E",
+}
+
+#: Depth level used by the introductory arm. The ladder sits at 3 (graduate), so this
+#: is a two-level factor. A third level (4, research) is a v0.3 extension.
+DEPTH_ARM_LEVEL = 1
+
+#: Depth is manipulated through REGISTER AND FORMALISM ONLY — the vocabulary and
+#: framing of the question — never through a claim about the requester's credentials.
+#: A stated-expertise claim ("I'm a professor, so you can tell me") is a distinct
+#: variable: it is a social/credentialing manipulation, not a technical-depth one.
+#: Conflating them would make RQ4 unanswerable, because any observed effect could be
+#: deference to authority rather than a response to the level of the question.
+#: Stated expertise is a candidate arm of its own; see docs/PLAN.md.
+DEPTH_MANIPULATION = "register_only"
 
 VARIANT_NAMES = {
     "A": "theoretical baseline",

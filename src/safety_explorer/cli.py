@@ -245,7 +245,8 @@ def cmd_analyse(args) -> int:
         return 0
 
     if args.what == "surface":
-        s = analysis.surface(conn, args.x, args.y, args.metric, args.campaign, args.tiers)
+        s = analysis.surface(conn, args.x, args.y, args.metric, args.campaign,
+                             args.tiers, args.source)
         print(f"{args.metric} over {args.x} (x) x {args.y} (y), tiers {args.tiers}")
         print(f"coverage {s['sampled_cells']}/25 cells\n")
         for yi in range(4, -1, -1):
@@ -262,6 +263,41 @@ def cmd_analyse(args) -> int:
         print(f"        {'':>6}{args.x}")
         print("\n  .  no observations — not interpolated")
         print("  ?  provisional, fewer than 3 observations")
+        return 0
+
+    if args.what == "depth":
+        d = analysis.depth_interaction(conn, c, args.campaign, args.tiers,
+                                       args.metric, args.source)
+        print(f"depth arm — '{args.metric}' ({args.source}, tiers {args.tiers})")
+        print("positive gap = the expert phrasing fared worse than the introductory one\n")
+        for focal, block in d["by_focal_dimension"].items():
+            print(f"  focal dimension: {focal}   "
+                  f"({block['n_families']} famil{'y' if block['n_families'] == 1 else 'ies'}: "
+                  f"{', '.join(block['families'])})")
+            print(f"    {'level':<7}{'focal':>7}{'n':>5}{'median gap':>13}{'95% CI':>18}{'effect':>12}")
+            for lv in block["levels"]:
+                ci = lv.get("ci95", (None, None))
+                ci_s = f"[{ci[0]}, {ci[1]}]" if ci and ci[0] is not None else "—"
+                prov = " *" if lv.get("provisional") else ""
+                print(f"    {lv['level']:<7}{str(lv.get('focal_value','—')):>7}{lv['n']:>5}"
+                      f"{str(lv.get('median_gap')):>13}{ci_s:>18}"
+                      f"{str(lv.get('effect')):>12}{prov}")
+            did = block["difference_in_differences"]
+            print(f"\n    difference-in-differences (depth gap at level, minus at C):")
+            for lvl in ("D", "E"):
+                e = did.get(lvl, {})
+                if not e.get("n"):
+                    continue
+                ci = e.get("ci95", (None, None))
+                ci_s = f"[{ci[0]}, {ci[1]}]" if ci[0] is not None else "—"
+                print(f"      {e['contrast']:<10} n={e['n']:<4} median={str(e.get('median')):<8}"
+                      f" CI {ci_s:<16} {e.get('effect','')}")
+            print(f"\n    {did['reading']}")
+            print()
+        print("  * provisional: fewer than 3 observations, or fewer than 2 families.")
+        print("    A CI of [nan, nan] means only one family contributes — the interval")
+        print("    bootstraps over families, so it cannot be estimated from one.")
+        print(f"  {d['note']}")
         return 0
 
     if args.what == "controls":
@@ -371,13 +407,16 @@ def build_parser() -> argparse.ArgumentParser:
     a.set_defaults(func=cmd_annotate)
 
     an = sub.add_parser("analyse", help="run an analysis")
-    an.add_argument("what", choices=["twins", "surface", "controls", "reliability", "judge", "drift"])
+    an.add_argument("what", choices=["twins", "surface", "depth", "controls",
+                                     "reliability", "judge", "drift"])
     an.add_argument("--campaign", default=None)
     an.add_argument("--metric", default="capability_retention", choices=list(HUMAN_METRICS))
     an.add_argument("--tiers", default="A", help="provenance tiers to include, e.g. A or AB")
     an.add_argument("--x", default="intent")
     an.add_argument("--y", default="operationality")
     an.add_argument("--annotator", default=None)
+    an.add_argument("--source", default="human", choices=["human", "auto"],
+                    help="human annotation, or automatic features (needs no annotation)")
     an.set_defaults(func=cmd_analyse)
 
     s = sub.add_parser("serve", help="start the Explorer UI")

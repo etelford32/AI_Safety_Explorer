@@ -422,6 +422,7 @@ function buildSelects() {
   const mets = META.metrics.map((m) => `<option value="${m}">${m}</option>`).join('');
   $('#sf-metric').innerHTML = mets;
   $('#tw-metric').innerHTML = mets;
+  $('#dp-metric').innerHTML = mets;
 }
 
 $('#btn-surface').addEventListener('click', async () => {
@@ -484,6 +485,56 @@ function renderSurface(s) {
 /* ------------------------------------------------------------ results */
 
 $('#btn-twins').addEventListener('click', loadTwins);
+$('#btn-depth').addEventListener('click', loadDepth);
+
+async function loadDepth() {
+  const d = await api('depth', {
+    metric: $('#dp-metric').value, source: $('#dp-source').value, tiers: 'A',
+  });
+  const blocks = Object.entries(d.by_focal_dimension || {});
+  if (!blocks.length) {
+    $('#dp-out').innerHTML = '<div class="empty-state">No depth-arm runs yet.</div>';
+    return;
+  }
+  $('#dp-out').innerHTML = blocks.map(([focal, b]) => {
+    const rows = b.levels.map((lv) => {
+      const ci = lv.ci95 || [null, null];
+      const ciS = ci[0] !== null && !Number.isNaN(ci[0]) ? `[${fmt(ci[0])}, ${fmt(ci[1])}]` : '—';
+      const cls = lv.median_gap > 0 ? 'bad' : '';
+      return `<tr><td>${esc(lv.level)}</td><td class="num">${lv.focal_value ?? '—'}</td>
+        <td class="num">${lv.n}</td><td class="num ${cls}">${fmt(lv.median_gap)}</td>
+        <td class="num">${ciS}</td><td>${esc(lv.effect || '')}</td>
+        <td>${lv.provisional ? '<span class="warn">prov.</span>' : ''}</td></tr>`;
+    }).join('');
+
+    const did = b.difference_in_differences || {};
+    const didRows = ['D', 'E'].filter((k) => did[k] && did[k].n).map((k) => {
+      const e = did[k];
+      const ci = e.ci95 || [null, null];
+      const ciS = ci[0] !== null && !Number.isNaN(ci[0]) ? `[${fmt(ci[0])}, ${fmt(ci[1])}]` : '—';
+      return `<tr><td>${esc(e.contrast)}</td><td class="num">${e.n}</td>
+        <td class="num">${fmt(e.median)}</td><td class="num">${ciS}</td>
+        <td>${esc(e.effect || '')}</td></tr>`;
+    }).join('');
+
+    const supported = (did.reading || '').includes('H4 supported');
+    return `<div style="margin-bottom:16px">
+      <div style="font-size:11px;margin-bottom:6px">
+        focal dimension <span class="tag focal">${esc(focal)}</span>
+        <span class="note">${b.n_families} famil${b.n_families === 1 ? 'y' : 'ies'}: ${esc(b.families.join(', '))}</span>
+      </div>
+      <table><tr><th>level</th><th class="num">focal</th><th class="num">n</th>
+        <th class="num">median gap</th><th class="num">95% CI</th><th>effect</th><th></th></tr>${rows}</table>
+      <div style="font-size:11px;margin:10px 0 4px">difference-in-differences vs level C</div>
+      <table><tr><th>contrast</th><th class="num">n</th><th class="num">median</th>
+        <th class="num">95% CI</th><th>effect</th></tr>${didRows}</table>
+      <p class="note ${supported ? 'bad' : ''}" style="margin-top:8px">${esc(did.reading || '')}</p>
+    </div>`;
+  }).join('') + `<p class="note">${esc(d.note || '')}<br><br>
+    A positive gap means the expert phrasing fared worse. A level where both depth
+    conditions are fully refused cannot show an interaction — read the per-level gaps
+    before reading a null.</p>`;
+}
 
 async function loadTwins() {
   const res = await api('twins', { metric: $('#tw-metric').value, tiers: $('#tw-tiers').value });
@@ -514,6 +565,7 @@ async function loadTwins() {
 }
 
 async function loadResults() {
+  loadDepth();
   const [ctrl, rel, drift] = await Promise.all([
     api('controls', { tiers: 'A' }), api('reliability'), api('drift'),
   ]);

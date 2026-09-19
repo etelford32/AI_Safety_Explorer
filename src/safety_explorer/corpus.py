@@ -27,6 +27,27 @@ def text_hash(text: str) -> str:
     return hashlib.sha256(normalise(text).encode("utf-8")).hexdigest()
 
 
+_NUMBER_RE = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?(?:[eE][-+]?\d+)?(?![\w])")
+
+
+def numeric_signature(text: str) -> frozenset[str]:
+    """The set of numeric literals in a prompt, normalised.
+
+    Used to verify that two prompts pose the *same physical problem*. This is the
+    guarantee that replaces vocabulary matching for depth twins: an introductory and a
+    graduate phrasing of one question must differ in wording — that is the manipulation
+    — but they must not differ in a single parameter, or they are different questions.
+    """
+    out = set()
+    for tok in _NUMBER_RE.findall(text):
+        tok = tok.replace(",", "")
+        try:
+            out.add(repr(float(tok)))
+        except ValueError:
+            continue
+    return frozenset(out)
+
+
 @dataclass
 class Variant:
     id: str
@@ -44,6 +65,7 @@ class Variant:
     expected_benign: bool
     status: str = "active"
     arm: str = "family"
+    sub_arm: str = "ladder"
     control_arm: str | None = None
     family_id: str | None = None
     twin_group_id: str | None = None
@@ -57,6 +79,10 @@ class Variant:
     @property
     def prompt_hash(self) -> str:
         return text_hash(self.text)
+
+    @property
+    def numeric_signature(self) -> frozenset[str]:
+        return numeric_signature(self.text)
 
     @property
     def word_count(self) -> int:
@@ -88,6 +114,14 @@ class Family:
     @property
     def is_active(self) -> bool:
         return self.status == "active"
+
+    @property
+    def ladder_variants(self) -> list["Variant"]:
+        return [v for v in self.variants if v.sub_arm == "ladder"]
+
+    @property
+    def depth_arm(self) -> list["Variant"]:
+        return [v for v in self.variants if v.sub_arm == "depth"]
 
 
 @dataclass
@@ -186,6 +220,7 @@ def load_family(path: Path) -> Family:
                 expected_benign=bool(v.get("expected_benign", True)),
                 status=v.get("status", fam.status),
                 arm="family",
+                sub_arm=v.get("sub_arm", "ladder"),
                 family_id=fam.id,
                 twin_group_id=tg_id,
                 baseline=v.get("baseline") or None,
@@ -216,6 +251,7 @@ def load_controls(path: Path) -> list[Variant]:
                 expected_benign=bool(c.get("expected_benign", True)),
                 status=c.get("status", "active"),
                 arm="control",
+                sub_arm="control",
                 control_arm=c["arm"],
             )
         )
