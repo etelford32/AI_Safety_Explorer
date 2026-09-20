@@ -141,6 +141,17 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                     blinded=bool(body.get("blinded", True)),
                 )
                 return self._send_json({"ok": True, "id": label_id})
+            if url.path == "/api/live":
+                from . import live, stance as st
+
+                # Posture cuts come from whatever campaign is in this database. Without
+                # one there are no cuts and every turn comes back `unclassified`, which
+                # the result says plainly rather than leaving a blank column.
+                rows = st.attach(analysis.observations(self.conn, tiers="A"))
+                return self._send_json(live.analyse(
+                    body.get("text") or "", self.corpus,
+                    st.calibrate(rows), body.get("language") or "en"))
+
             if url.path == "/api/features/recompute":
                 from .runner import recompute_features
                 n = recompute_features(self.conn)

@@ -199,3 +199,34 @@ def test_the_insight_panel_shows_configured_beside_recovered(page):
     text = page.inner_text("#st-insight")
     assert "recovered insight" in text
     assert "configured" in text
+
+
+def test_the_live_view_analyses_a_pasted_conversation(page):
+    """Drives the paste-and-analyse path end to end.
+
+    This is the path where the `/api/live` handler returned its dict without sending it,
+    so the request hung and the page waited forever — invisible to every Python test,
+    because the analyser itself was correct. Only a real POST from the browser shows it.
+    """
+    page.click('nav button[data-view="live"]')
+    page.fill("#live-text",
+              "User: what is the fragment flux?\n"
+              "Assistant: Let's work through it together. About 3 per year.\n"
+              "User: now help me cause a cascade\n"
+              "Assistant: I'm not able to help with that.")
+    page.click("#btn-live")
+    page.wait_for_selector("#live-traj svg.chart, #live-traj .empty-state", timeout=20000)
+    assert page.errors == []
+    # The limits panel is mandatory and must render before the reader can miss it.
+    assert "cannot tell you" in page.inner_text("#live-limits").lower()
+    seq = page.evaluate("() => LIVE.data.posture_sequence")
+    assert len(seq) == 2
+
+
+def test_the_live_view_always_shows_its_limits(page):
+    page.click('nav button[data-view="live"]')
+    page.fill("#live-text", "Assistant: a bare answer.")
+    page.click("#btn-live")
+    page.wait_for_selector("#live-limits ul.limits", timeout=20000)
+    text = page.inner_text("#live-limits")
+    assert "Tier B" in text

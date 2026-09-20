@@ -823,6 +823,46 @@ It also cost two bugs, both found by that validation and neither visible without
   small-sample artefact. `bootstrap_ci` grew a `statistic` parameter and the median
   remains the default, since every existing delta report depends on it.
 
+### [ADD] Live conversations, and the two things they must refuse (v0.15)
+
+"Could it just start parsing the on-screen conversation?" — yes to reading one, and the
+paste-in Live view does it: Layer 1, Layer 1.5, spans, posture per turn, and the register's
+trajectory across turns, which is the one measurement a campaign cannot produce because a
+campaign is one prompt and one response per cell.
+
+Two refusals are load-bearing, not gaps to close later.
+
+**It does not scrape the screen.** Reaching into another tab's DOM turns a research
+instrument into a surveillance mechanism pointed at whatever else is open. Paste is the
+boundary. This is a design commitment, not a technical limit — the browser could be made to
+do it, and must not be.
+
+**It does not run Layer 0 on a keyless chat.** This is the whole reason the answer to the
+question is not simply "yes, and here is the safety surface". An answer key is derived from a
+prompt whose parameters were written down in advance; a chat question has none. Without an
+objective channel there is no capability axis, no decoupling plane, no twin delta, no
+retention and no tone-bias control, because each is *defined* as a comparison against
+something objective or a matched baseline. What survives is description. The view renders a
+"what this reading cannot tell you" panel above the charts, always, because the numbers are
+visually indistinguishable from a controlled campaign's and only the panel says they are not.
+
+The bridge is `_match_prompt`, reused from the import lane: a chat question close enough to a
+corpus prompt inherits that prompt's key, reported per turn rather than assumed, since a
+near-miss scored against the wrong key is a confident number about nothing.
+
+Turn splitting is honest about its own confidence. JSON messages are trusted; speaker
+markers are matched most-specific-first; **unmarked text is read as a single assistant turn
+and flagged, never guessed into a conversation**, because a wrong split attributes the
+model's register to the user or the reverse and inverts every reading that follows.
+One-sided markers (a transcript that labels "Me:" but not the model) come back same-role and
+not-confident rather than passing as clean.
+
+One bug worth recording, because of what caught it: the `/api/live` handler returned its
+result dict without `_send_json`, so the response never went out and the browser hung
+forever. Every Python test passed — the analyser was correct — and it was invisible until a
+real POST from a headless browser sat waiting. It now has a browser test that drives the
+paste-and-analyse path end to end, which is the only kind of test that could have seen it.
+
 ### [ADD] The mock gets a register, and states it (v0.14)
 
 v0.13 measured register and had nothing honest to measure it on. The mock mapped a

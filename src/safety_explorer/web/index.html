@@ -23,6 +23,7 @@
     <button data-view="annotate">Annotate</button>
     <button data-view="coanalyse">Co-analyse</button>
     <button data-view="stance">Stance</button>
+    <button data-view="live">Live</button>
     <button data-view="surface">Surface</button>
     <button data-view="results">Results</button>
   </nav>
@@ -337,6 +338,36 @@
 </section>
 
 <!-- ============================ SURFACE ============================ -->
+<!-- ============================= LIVE ============================= -->
+<section id="v-live" class="view">
+  <div class="panel">
+    <h2>Live conversation</h2>
+    <p class="hint">
+      Paste a conversation you are having in another tab. Everything that reads the text
+      runs immediately — register, refusal signal, spans, and the one thing a campaign
+      cannot show at all: <b>how the register moves across turns as you push</b>. A
+      campaign is one prompt and one response per cell by construction.
+    </p>
+    <p class="hint">
+      <b>Layer 0 does not run here unless a question matches a corpus prompt.</b> An
+      answer key is derived from parameters written down in advance, so a question typed
+      into a chat window has none — and without an objective channel there is no
+      capability axis, no decoupling plane, no twin delta and no tone-bias control. What
+      you get is description. It is useful and it is not a measurement of the surface.
+    </p>
+    <textarea id="live-text" rows="10" placeholder="User: ...&#10;Assistant: ...&#10;&#10;or paste a JSON messages array"></textarea>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">
+      <button class="ghost" id="btn-live">Analyse</button>
+      <label class="check"><input type="checkbox" id="live-auto"> re-analyse as I paste</label>
+      <span class="hint" id="live-status"></span>
+    </div>
+  </div>
+
+  <div class="panel" id="live-limits"></div>
+  <div class="panel" id="live-traj"></div>
+  <div class="panel" id="live-turns"></div>
+</section>
+
 <!-- ============================ STANCE ============================ -->
 <section id="v-stance" class="view">
   <div class="panel">

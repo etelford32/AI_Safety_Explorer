@@ -56,6 +56,14 @@ async function boot() {
   buildCorpusList();
   buildSelects();
   $('#btn-stance').addEventListener('click', loadStance);
+  $('#btn-live').addEventListener('click', runLive);
+  $('#live-text').addEventListener('input', () => {
+    if (!$('#live-auto').checked) return;
+    // Debounced: a paste fires one input event but typing fires many, and re-reading
+    // the whole conversation on every keystroke would be pointless work.
+    clearTimeout(LIVE.timer);
+    LIVE.timer = setTimeout(runLive, 600);
+  });
   await loadAnnProgress();
 }
 
@@ -1717,16 +1725,42 @@ function renderDecoupling(d) {
     }));
   }
 
+  /* **Overplotting, not sparsity.** Layer 0 accuracy takes a handful of discrete
+     values and warmth is quantised by the level ladder, so dozens of runs land on
+     the same coordinate exactly. Drawn one-mark-per-run, 68 points above warmth 1.0
+     rendered as about four visible dots and the chart read as empty where the data
+     was densest.
+
+     Jitter is the usual fix and is wrong here: position IS the measurement, and a
+     jittered point that drifted across the warm cut or the capability cut would be
+     drawn in a quadrant it is not in. So one mark per distinct coordinate, with the
+     area carrying the count. No position moves, and density becomes visible. */
+  const stacks = new Map();
   for (const r of runs) {
+    const key = `${r.capability}|${r.warmth}`;
+    if (!stacks.has(key)) stacks.set(key, []);
+    stacks.get(key).push(r);
+  }
+  const heaviest = Math.max(...[...stacks.values()].map((v) => v.length));
+  for (const group of stacks.values()) {
+    const r = group[0];
     const cx = sx(r.capability), cy = sy(r.warmth);
+    // Area proportional to count, so a stack of nine reads as three times one rather
+    // than nine times — the eye compares areas, not radii.
+    const rad = 5 * Math.sqrt(group.length);
     const g = svgEl('g', { class: 'dot-hit' });
-    // A 12px transparent hit circle, so the target is ~24px across rather than
-    // the 7px mark. A dot you have to land on dead-centre is not hoverable.
-    g.appendChild(svgEl('circle', { cx, cy, r: 12, class: 'hit' }));
-    g.appendChild(svgEl('circle', { cx, cy, r: 6, class: `dot ${r.cell}` }));
-    bindTip(g, `<b>${esc(r.family_id || '')} ${esc(r.variant || '')}</b><br>`
+    // Hit target at least ~24px across; a mark you must land on dead-centre is not
+    // hoverable, and a big stack should not be harder to hit than a small one.
+    g.appendChild(svgEl('circle', { cx, cy, r: Math.max(12, rad), class: 'hit' }));
+    g.appendChild(svgEl('circle', { cx, cy, r: rad, class: `dot ${r.cell}` }));
+    const many = group.length > 1;
+    bindTip(g, (many
+      ? `<b>${group.length} runs at this point</b><br>`
+        + `${esc([...new Set(group.map((x) => x.variant))].sort().join(', '))}<br>`
+      : `<b>${esc(r.family_id || '')} ${esc(r.variant || '')}</b><br>`)
       + `capability ${fmt(r.capability)} &middot; warmth ${fmt(r.warmth)}<br>`
-      + `<span class="tip-cell">${r.cell.replace(/_/g, ' ')}</span>`);
+      + `<span class="tip-cell">${r.cell.replace(/_/g, ' ')}`
+      + `${many ? ' — opens the first' : ''}</span>`);
     g.addEventListener('click', () => { if (r.run_id) openConversation(r.run_id); });
     svg.appendChild(g);
   }
@@ -1760,7 +1794,11 @@ function renderDecoupling(d) {
     `<table class="tbl"><thead><tr><th>cell</th><th class="num">n</th>`
     + `<th class="num">share</th><th>what it is</th></tr></thead><tbody>${rows}</tbody></table>`
     + `<p class="hint">Warm cut ${dec.warm_cut} (population median, or the smallest value that `
-    + `separates). Capable cut ${dec.capable_cut}. Click a dot to open that conversation.</p>`);
+    + `separates). Capable cut ${dec.capable_cut}. Click a dot to open that conversation. `
+    + `<b>Mark area is the number of runs at that exact point</b>, up to ${heaviest} — `
+    + `capability and warmth are both quantised, so runs stack, and one mark per run drew `
+    + `the densest regions as the emptiest. Nothing is jittered: position is the `
+    + `measurement, and a nudged point would sit in a quadrant it is not in.</p>`);
 }
 
 /* --- posture transitions -------------------------------------------------
@@ -2150,4 +2188,184 @@ function renderStanceInsight(ins) {
     + 'observations are counted and excluded rather than averaged in as perfect insight.</p>'
     + '<p class="hint">A self-report is made after the fact and may be rationalised, so '
     + 'this speaks to whether it <em>knows</em>, not to whether it meant to.</p>');
+}
+
+/* ======================================================================
+   Live conversation.
+
+   The limits are rendered FIRST and always, above the charts. A descriptive
+   reading presented without them is the failure this instrument exists to
+   avoid: the numbers look exactly like the ones from a controlled campaign,
+   and nothing on the page would say they are not.
+   ====================================================================== */
+
+const LIVE = { data: null, timer: null };
+
+async function runLive() {
+  const text = $('#live-text').value;
+  const status = $('#live-status');
+  if (!text.trim()) {
+    status.textContent = 'paste a conversation first';
+    return;
+  }
+  status.textContent = 'reading…';
+  let d;
+  try {
+    d = await post('live', { text });
+  } catch (err) {
+    status.textContent = `failed: ${esc(String(err))}`;
+    return;
+  }
+  if (!d || d.error) {
+    status.textContent = `failed: ${esc((d && d.error) || 'unexpected response')}`;
+    return;
+  }
+  LIVE.data = d;
+  status.textContent = `${d.n_turns} turn(s), ${d.n_scored} of ${d.n_assistant} `
+    + `assistant turn(s) scored — ${d.split.convention || 'no speaker markers'}`;
+  renderLiveLimits(d);
+  renderLiveTrajectory(d);
+  renderLiveTurns(d);
+}
+
+function renderLiveLimits(d) {
+  const box = $('#live-limits');
+  box.innerHTML = '<h2>What this reading cannot tell you</h2>';
+  box.insertAdjacentHTML('beforeend',
+    '<ul class="limits">' + d.limits.map((l) => `<li>${esc(l)}</li>`).join('') + '</ul>');
+  if (!d.split.confident) {
+    const warn = document.createElement('div');
+    warn.className = 'banner-bad';
+    warn.textContent = 'Turn split is not confident — check the turns below before '
+      + 'reading anything else. A wrong split attributes the model\'s register to you.';
+    box.appendChild(warn);
+  }
+}
+
+/* Register across turns. The x-axis is the turn index, so a point and a turn in the
+   list below are the same object. Faceted, one channel per plot: six series in one
+   frame would need six mutually distinguishable hues, and nothing here encodes a
+   series by colour. */
+function renderLiveTrajectory(d) {
+  const box = $('#live-traj');
+  box.innerHTML = '<h2>Where the register went as the conversation was pushed</h2>';
+  const channels = ['warmth', 'moralizing', 'distancing', 'refusal_rate'];
+  const any = channels.some((c) => (d.trajectory[c] || []).length > 1);
+  if (!any) {
+    box.insertAdjacentHTML('beforeend',
+      '<div class="empty-state">A trajectory needs at least two scored assistant turns.</div>');
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'facets';
+  for (const ch of channels) {
+    const pts = d.trajectory[ch] || [];
+    if (pts.length < 2) continue;
+    const peak = Math.max(...pts.map((p) => p.value));
+    if (peak === 0) {
+      const card = document.createElement('div');
+      card.className = 'facet-null';
+      card.innerHTML = `<div class="facet-null-k">${ch.replace(/_/g, ' ')}</div>`
+        + '<div class="facet-null-v">no markers, any turn</div>';
+      wrap.appendChild(card);
+      continue;
+    }
+    const W = 300, H = 140, m = { t: 16, r: 12, b: 28, l: 36 };
+    const pw = W - m.l - m.r, ph = H - m.t - m.b;
+    const sx = (i) => m.l + (i / (pts.length - 1)) * pw;
+    const sy = (v) => m.t + ph - (v / peak) * ph;
+    const svg = svgEl('svg', {
+      viewBox: `0 0 ${W} ${H}`, class: 'chart facet', role: 'img',
+      'aria-label': `${ch} across turns`,
+    });
+    svg.appendChild(svgEl('line', {
+      x1: m.l, y1: m.t + ph, x2: m.l + pw, y2: m.t + ph, class: 'axis',
+    }));
+    const turn = (d.turning_points || {})[ch];
+    if (turn) {
+      const at = pts.findIndex((p) => p.turn === turn.span_index);
+      if (at > 0) {
+        svg.appendChild(svgEl('line', {
+          x1: sx(at), y1: m.t, x2: sx(at), y2: m.t + ph, class: 'cut',
+        }));
+        svg.appendChild(svgText(sx(at) + 4, m.t + 9, `turn ${turn.span_index}`,
+          { class: 'tick' }));
+      }
+    }
+    svg.appendChild(svgEl('polyline', {
+      points: pts.map((p, i) => `${sx(i)},${sy(p.value)}`).join(' '), class: 'facet-line',
+    }));
+    pts.forEach((p, i) => {
+      const g = svgEl('g', { class: 'dot-hit' });
+      g.appendChild(svgEl('circle', { cx: sx(i), cy: sy(p.value), r: 11, class: 'hit' }));
+      g.appendChild(svgEl('circle', { cx: sx(i), cy: sy(p.value), r: 4, class: 'facet-dot' }));
+      bindTip(g, `<b>turn ${p.turn}</b><br>${ch.replace(/_/g, ' ')} ${fmt(p.value, 3)}`);
+      g.addEventListener('click', () => {
+        const el = $(`#live-turns [data-turn="${p.turn}"]`);
+        if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      });
+      svg.appendChild(g);
+    });
+    svg.appendChild(svgText(m.l, 10, ch.replace(/_/g, ' '), { class: 'facet-title' }));
+    svg.appendChild(svgText(m.l - 5, m.t + 4, peak < 1 ? peak.toFixed(2) : peak.toFixed(1),
+      { 'text-anchor': 'end', class: 'tick' }));
+    svg.appendChild(svgText(m.l - 5, m.t + ph, '0', { 'text-anchor': 'end', class: 'tick' }));
+    svg.appendChild(svgText(m.l, H - 8, `turn ${pts[0].turn}`, { class: 'tick' }));
+    svg.appendChild(svgText(m.l + pw, H - 8, `turn ${pts[pts.length - 1].turn}`,
+      { 'text-anchor': 'end', class: 'tick' }));
+    wrap.appendChild(svg);
+  }
+  box.appendChild(wrap);
+
+  const shifts = d.posture_shifts || [];
+  box.insertAdjacentHTML('beforeend',
+    '<p class="hint">Each facet has its own y-scale; nothing is summed across them. '
+    + 'A <b>turn</b> marks where a channel changes level most sharply, and is shown only '
+    + 'where the two sides actually differ. Click a point to jump to that turn.</p>'
+    + (d.has_cuts
+      ? (shifts.length
+        ? `<p class="hint">Posture moved ${shifts.length} time(s): `
+          + shifts.map((s) => `<b>${s.from} &rarr; ${s.to}</b> at turn ${s.at}`).join(', ')
+          + '. Cut points come from the campaign in this database.</p>'
+        : '<p class="hint">Posture held across every turn.</p>')
+      : '<p class="hint">No posture: there is no campaign in this database to compare '
+        + 'against, and posture is a statement about where a response sits in a '
+        + 'population.</p>'));
+}
+
+function renderLiveTurns(d) {
+  const box = $('#live-turns');
+  box.innerHTML = '<h2>Turn by turn</h2>';
+  const rows = d.turns.map((t) => {
+    if (t.role === 'user') {
+      const cm = t.corpus_match;
+      const badge = !cm ? ''
+        : `<span class="${cm.layer0 ? 'good' : 'ink-dim'}">`
+          + `${cm.layer0 ? `Layer 0 available — matches ${esc(cm.prompt_id)}`
+            : `no answer key (best corpus match ${fmt(cm.score, 2)})`}</span>`;
+      return `<div class="live-turn user" data-turn="${t.index}">`
+        + `<div class="live-role">turn ${t.index} &middot; you</div>`
+        + `<div class="live-body">${esc(t.text.slice(0, 400))}</div>`
+        + `<div class="note">${badge}</div></div>`;
+    }
+    const lv = t.levels || {};
+    const chips = Object.entries(lv)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `<span class="chip">${k} ${v}</span>`).join('');
+    const aware = t.awareness && t.awareness.spontaneous
+      ? '<span class="chip flag">remarks on being observed</span>' : '';
+    const refusal = (t.stance && t.stance.refusal_rate)
+      ? `<span class="chip flag">refusal ${fmt(t.stance.refusal_rate, 2)}</span>` : '';
+    return `<div class="live-turn assistant" data-turn="${t.index}">`
+      + `<div class="live-role">turn ${t.index} &middot; model`
+      + `${t.posture && t.posture !== 'unclassified'
+        ? ` &middot; <b>${t.posture}</b>` : ''}</div>`
+      + `<div class="live-body">${esc(t.text.slice(0, 600))}</div>`
+      + `<div class="chips">${chips}${refusal}${aware}`
+      + `<span class="chip">${t.n_words} words</span>`
+      + `<span class="chip">${(t.spans || []).length} spans</span></div></div>`;
+  }).join('');
+  box.insertAdjacentHTML('beforeend', rows
+    || '<div class="empty-state">No turns.</div>');
 }
