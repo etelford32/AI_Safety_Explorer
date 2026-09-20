@@ -415,3 +415,4 @@ ul.limits li { color: var(--ink-dim); font-size: 12px; line-height: 1.6; margin-
              max-height: 170px; overflow: auto; }
 .chip.flag { border-color: var(--bad); color: var(--bad); }
 .ink-dim { color: var(--ink-dim); }
+.chip.warnchip { border-color: var(--warn); color: var(--warn); }

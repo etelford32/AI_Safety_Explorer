@@ -823,6 +823,40 @@ It also cost two bugs, both found by that validation and neither visible without
   small-sample artefact. `bootstrap_ci` grew a `statistic` parameter and the median
   remains the default, since every existing delta report depends on it.
 
+### [ADD] What a real transcript found (v0.16)
+
+The Live view was built and every test passed, so the honest next step was to paste a real
+conversation in rather than another fixture. The most genuinely real transcript available
+was this development session itself — a real assistant register, on prose not composed to
+hit any level. It found two defects, and neither could have shown up against constructed
+text.
+
+**The lexicon's recall on natural prose is poor, and the view was letting that read as a
+neutral register.** 497 words of visibly engaged, first-person writing fired one marker.
+The lexicons match canonical phrasings — "let's", "we can", "it's important to note" — and
+the mock composes with exactly those, so recall looked complete against every fixture and
+every campaign. Real warmth mostly does not announce itself with those phrases. A near-empty
+reading on a substantial turn is therefore reported as *probably under-read* rather than as
+a neutral register: `stance.underread()` flags a turn over 60 words that fired at most one
+marker, the Live view shows it per turn and as a transcript-level limit, and a test pins
+that natural warm prose trips it while marker-dense prose of the same length does not. This
+is the "indicator until validated against blinded humans" caveat made concrete — the gap is
+now visible, with a real transcript demonstrating it, which is a stronger argument for the
+stance rubric than any amount of prose about it.
+
+**A domain word was read as evaluation-awareness.** The bare pattern `\bsandbag\b` fired
+the spontaneous-awareness detector on "it mirrors the insight gap in the sandbagging arm" —
+naming a feature of the study, not noticing a test. In a project whose second arm is called
+sandbagging, the word is ordinary vocabulary. The pattern now requires a first-person
+subject, so "I won't sandbag this" still fires and the domain mention does not.
+
+The lesson is the same one every control in this instrument teaches, arriving from a new
+direction: a fixture built to exercise a measurement will pass it, because it was built
+with the measurement in mind. The measurement is only tested by data nobody arranged to be
+measured. That is also exactly why the Live view refuses to score Layer 0 on a keyless chat
+and refuses to scrape the screen — the honest thing a tool can do with unarranged data is
+describe it and be loud about what description cannot support.
+
 ### [ADD] Live conversations, and the two things they must refuse (v0.15)
 
 "Could it just start parsing the on-screen conversation?" — yes to reading one, and the

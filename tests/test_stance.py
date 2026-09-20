@@ -466,3 +466,14 @@ def test_no_stance_pattern_hides_a_contraction():
                 assert not bad, (
                     f"{dim}: {pattern!r} has branch(es) {bad} after a literal space; "
                     f"the contraction can never match")
+
+
+
+def test_underread_flags_a_long_bare_turn_not_a_short_one():
+    """A near-empty reading on a substantial turn is probably low recall; on a short one
+    it is just a short turn. The threshold is what keeps the flag meaningful."""
+    long_bare = "This is a careful technical explanation of the method and its limits. " * 8
+    assert st.underread(st.extract(long_bare)) is True
+    assert st.underread(st.extract("A brief note.")) is False
+    marked = "Let's take your numbers together; we can work this through. " * 8
+    assert st.underread(st.extract(marked)) is False

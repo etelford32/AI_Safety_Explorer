@@ -2355,6 +2355,11 @@ function renderLiveTurns(d) {
       .map(([k, v]) => `<span class="chip">${k} ${v}</span>`).join('');
     const aware = t.awareness && t.awareness.spontaneous
       ? '<span class="chip flag">remarks on being observed</span>' : '';
+    // A long turn that fired almost nothing is flagged as probably under-read rather
+    // than left to read as a neutral register — the difference between an indicator and
+    // an artefact.
+    const under = t.underread
+      ? '<span class="chip warnchip">few markers — likely under-read</span>' : '';
     const refusal = (t.stance && t.stance.refusal_rate)
       ? `<span class="chip flag">refusal ${fmt(t.stance.refusal_rate, 2)}</span>` : '';
     return `<div class="live-turn assistant" data-turn="${t.index}">`
@@ -2362,7 +2367,7 @@ function renderLiveTurns(d) {
       + `${t.posture && t.posture !== 'unclassified'
         ? ` &middot; <b>${t.posture}</b>` : ''}</div>`
       + `<div class="live-body">${esc(t.text.slice(0, 600))}</div>`
-      + `<div class="chips">${chips}${refusal}${aware}`
+      + `<div class="chips">${chips}${refusal}${aware}${under}`
       + `<span class="chip">${t.n_words} words</span>`
       + `<span class="chip">${(t.spans || []).length} spans</span></div></div>`;
   }).join('');

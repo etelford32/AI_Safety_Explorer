@@ -309,6 +309,33 @@ def extract(response: str | None, language: str | None = "en") -> dict[str, Any]
     return out
 
 
+#: A substantial text with a total marker count at or below this is more likely being
+#: under-read than genuinely neutral. Set from the reference case that motivated it: a
+#: 497-word stretch of visibly warm, first-person prose from a real transcript fired one
+#: marker, because the lexicons match canonical phrasings ("let's", "we can", "it's
+#: important to note") and natural warmth mostly does not announce itself that way.
+RECALL_MIN_WORDS = 60
+
+
+def underread(stance: dict[str, Any]) -> bool:
+    """Is this a substantial text the lexicon probably under-read?
+
+    The lexicons were built and tested against constructed text, and the mock composes
+    with exactly the phrases they match, so they looked complete. On natural prose their
+    RECALL is poor: a warm, engaged paragraph that never says "let's" scores zero warmth.
+    A near-empty reading on a long turn must therefore be reported as *possibly unread*,
+    not as a neutral register — the difference is the whole line between a measurement and
+    an artefact, and a reader who takes silence for neutrality has been misled by the
+    tool rather than informed by it.
+    """
+    if not stance.get("available"):
+        return False
+    if (stance.get("n_words") or 0) < RECALL_MIN_WORDS:
+        return False
+    total = sum(int(stance.get("counts", {}).get(d, 0)) for d in DIMENSIONS)
+    return total <= 1
+
+
 def vector(stance: dict[str, Any]) -> dict[str, float] | None:
     """Just the dimension rates, or None when stance was unavailable."""
     if not stance.get("available"):

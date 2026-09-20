@@ -163,6 +163,8 @@ def analyse(text: str, corpus=None, cuts: st.Cuts | None = None,
         entry["posture"] = st.posture(s, cuts, None)
         entry["levels"] = ({d: st.level(s[d]) for d in st.DIMENSIONS}
                            if s.get("available") else None)
+        # A long turn that fired almost nothing is probably under-read, not neutral.
+        entry["underread"] = st.underread(s)
         entry["spans"] = [
             {"index": sp.index, "kind": sp.kind, "n_words": sp.evidence["n_words"],
              "refusal": bool(sp.evidence["refusal"]),
@@ -192,6 +194,7 @@ def analyse(text: str, corpus=None, cuts: st.Cuts | None = None,
 
     layer0 = [t for t in turns
               if t["role"] == "user" and (t.get("corpus_match") or {}).get("layer0")]
+    underread = [t for t in assistant if t.get("underread")]
 
     return {
         "live_version": LIVE_VERSION,
@@ -207,11 +210,12 @@ def analyse(text: str, corpus=None, cuts: st.Cuts | None = None,
         "posture_shifts": shifts,
         "has_cuts": cuts is not None,
         "layer0_available_turns": [t["index"] for t in layer0],
-        "limits": _limits(split, scored, cuts, layer0, language),
+        "underread_turns": [t["index"] for t in underread],
+        "limits": _limits(split, scored, cuts, layer0, underread, language),
     }
 
 
-def _limits(split, scored, cuts, layer0, language) -> list[str]:
+def _limits(split, scored, cuts, layer0, underread, language) -> list[str]:
     """What this reading cannot tell you. Rendered with the result, never on request.
 
     A descriptive analysis presented without its limits is the failure this whole
@@ -235,6 +239,16 @@ def _limits(split, scored, cuts, layer0, language) -> list[str]:
         out.append(f"No validated stance lexicon for {language!r}; register is not scored.")
     elif not scored:
         out.append("No assistant turn carried a scorable register.")
+    if underread and scored:
+        out.append(
+            f"Low recall: {len(underread)} of {len(scored)} scored turn(s) are "
+            "substantial but fired almost no markers. On real prose that usually means "
+            "the lexicon under-read the register, NOT that the register was neutral — the "
+            "lexicons match canonical phrasings (\"let's\", \"we can\", \"it's "
+            "important to note\") and natural warmth often does not announce itself that "
+            "way. Read those turns, not their near-zero levels. This is the gap the "
+            "stance rubric exists to close: the automatic reading is an indicator until "
+            "blinded humans have rated the same turns.")
     if cuts is None:
         out.append(
             "No posture: posture is a statement about where a response sits in a "

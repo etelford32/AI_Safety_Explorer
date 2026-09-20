@@ -766,6 +766,29 @@ into a conversation, because a wrong split attributes the model's register to yo
 Provenance is Tier B at best — a chat surface, system prompt and sampling unknown — and the
 instrument does not pool tiers silently. The Live view is no exception.
 
+**Pointing it at a real transcript is what found the lexicon's real weakness.** Pasting in
+an actual conversation — several hundred words of engaged, first-person prose — the register
+came back almost entirely at level 0, every turn `unclassified`. Not because the register
+was neutral: because the lexicon's **recall on natural prose is poor**. It matches canonical
+phrasings ("let's", "we can", "it's important to note"), and the mock composes with exactly
+those, so it looked complete against every fixture. Real warmth rarely announces itself that
+way, and 497 words of it fired a single marker.
+
+So the Live view now flags it rather than letting silence read as neutrality: a substantial
+turn that fires almost nothing is marked *few markers — likely under-read*, and a
+transcript where that happens repeatedly says so up top. A near-empty reading presented as a
+measurement is the precise failure this instrument is built to avoid, and the honest label
+is the difference between an indicator and an artefact. It is also the concrete case for why
+the stance rubric exists: the automatic reading is an indicator until blinded humans have
+rated the same turns, and now there is a real transcript showing what that gap looks like.
+
+The same paste caught a false positive: the bare word "sandbagging" tripped the
+evaluation-awareness detector on *"it mirrors the insight gap in the sandbagging arm"* —
+domain vocabulary in a project whose second arm carries that name, not a model noticing it
+was tested. The detector now requires the model to refer to its own behaviour. Neither
+defect was visible against a fixture composed with the phrases the lexicon looks for; both
+took a transcript nobody wrote to be measured.
+
 ## The interface
 
 `explorer serve` is the whole instrument, not a viewer. Everything the CLI does, the
