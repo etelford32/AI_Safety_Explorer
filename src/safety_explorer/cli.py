@@ -493,6 +493,18 @@ def cmd_truth(args) -> int:
     return 0
 
 
+def cmd_validate(args) -> int:
+    """Every control this instrument has, in one place."""
+    from . import validate as validate_mod
+
+    conn = db.connect(args.db)
+    c, _ = _corpus_and_lint(args)
+    report = validate_mod.run(conn, c, campaign_id=args.campaign)
+    print(f"instrument self-check — corpus {c.version}\n")
+    print(validate_mod.format_report(report))
+    return 0 if report.sound else 1
+
+
 def cmd_propose(args) -> int:
     """Propose ratings and span labels for stored conversations."""
     from . import coanalyse, rubric as rubric_mod
@@ -980,6 +992,10 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--campaign", default=None)
     t.add_argument("--tiers", default="A")
     t.set_defaults(func=cmd_truth)
+
+    va = sub.add_parser("validate", help="run every control; is the instrument sound?")
+    va.add_argument("--campaign", default=None)
+    va.set_defaults(func=cmd_validate)
 
     pr = sub.add_parser("propose", help="ask a model for a grounded co-analysis")
     pr.add_argument("--provider", default="mock")

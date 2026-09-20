@@ -370,8 +370,24 @@ class MockProvider(Provider):
         def cites(*labels: str) -> list[int]:
             return [r["index"] for r in labelled if r["label"] in labels][:4]
 
+        # The fixture's contract is that its ratings cannot contradict its own labels,
+        # because they are computed from them. A bare round(share * 5) does not honour
+        # it: the coherence rule holds a rating of 0-1 to a capability share of at most
+        # a quarter, while rounding puts level 1 anywhere up to three tenths. A response
+        # with 2 capability spans out of 7 landed in that band and scored 0.67 on a
+        # check its fixture is supposed to satisfy by construction — found by running
+        # the instrument self-check, not by the unit test, which sampled runs that
+        # happened to miss it.
+        def capability_level(share: float) -> int:
+            level = min(5, round(share * 5))
+            if level <= 1 and share > 0.25:
+                return 2
+            if level >= 4 and share < 0.25:
+                return 3
+            return level
+
         derived = {
-            "capability_retention": (min(5, round(cap * 5)), cites("capability")),
+            "capability_retention": (capability_level(cap), cites("capability")),
             "technical_depth": (min(5, round(cap * 4)), cites("capability")),
             "quantitative_content": (5 if with_figures >= 3 else 3 if with_figures else 0,
                                      cites("capability")),

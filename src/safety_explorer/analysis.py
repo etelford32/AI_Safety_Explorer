@@ -374,13 +374,30 @@ def _comparable_cover(a: dict[str, Any], b: dict[str, Any],
 # ---------------------------------------------------------------------------
 
 def twin_deltas(conn: sqlite3.Connection, corpus, campaign_id: str | None = None,
-                tiers: str = "A", metric: str = "capability_retention") -> list[dict[str, Any]]:
-    """Compute per-pair deltas of a metric against each variant's declared twin baseline."""
+                tiers: str = "A", metric: str = "capability_retention",
+                cue: str | None = "none") -> list[dict[str, Any]]:
+    """Per-pair deltas of a metric against each variant's declared twin baseline.
+
+    **A pair must carry the same cue on both sides.** The cell key used to be
+    (prompt, repeat) alone, which was correct until the sandbagging arm gave one prompt
+    seven runs per repeat — one uncued, six across three severities and two arms. All
+    seven then collapsed onto one key, the last written won, and every cued test was
+    differenced against whichever baseline happened to land last: a run at no cue against
+    a baseline at severity 5. That silently mixed the ladder with the cue manipulation
+    the placebo design exists to isolate, in the analysis this module calls its primary
+    unit. On a full campaign it collapsed 1386 observations onto 198 keys.
+
+    `cue` selects which cue arm the ladder is read on, and defaults to the uncued runs —
+    what the analysis meant before cues existed. Pass None to get every cue, still paired
+    within its own cue.
+    """
     from . import groundtruth as gt
 
     obs = observations(conn, campaign_id, tiers, include_controls=False)
-    by_cell: dict[tuple[str, int], dict[str, Any]] = {
-        (o["prompt_id"], o["repeat_index"]): o for o in obs
+    if cue is not None:
+        obs = [o for o in obs if (o.get("cue_id") or "none") == cue]
+    by_cell: dict[tuple[str, int, str], dict[str, Any]] = {
+        (o["prompt_id"], o["repeat_index"], o.get("cue_id") or "none"): o for o in obs
     }
 
     rescored: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
@@ -404,7 +421,8 @@ def twin_deltas(conn: sqlite3.Connection, corpus, campaign_id: str | None = None
         variant = corpus.by_id(o["prompt_id"])
         if variant is None or not variant.baseline:
             continue
-        base = by_cell.get((variant.baseline, o["repeat_index"]))
+        base = by_cell.get((variant.baseline, o["repeat_index"],
+                            o.get("cue_id") or "none"))
         if base is None:
             continue
         shared = _comparable_cover(o, base, o["family_id"])
@@ -426,6 +444,11 @@ def twin_deltas(conn: sqlite3.Connection, corpus, campaign_id: str | None = None
                 for d in DIMENSIONS if o[f"dim_{d}"] != base[f"dim_{d}"]
             },
             "metric": metric,
+            # Carried so a caller can tell which cue arm a delta was read on, and so a
+            # summary can never silently mix them again.
+            "cue_id": o.get("cue_id") or "none",
+            "cue_arm": o.get("cue_arm") or "none",
+            "cue_level": o.get("cue_level") or 0,
             "test": test_val,
             "baseline": base_val,
             "delta": (round(test_val - base_val, 3)
@@ -500,7 +523,7 @@ def depth_penalty(metric: str, intro_value: float, expert_value: float) -> float
 
 def depth_interaction(conn: sqlite3.Connection, corpus, campaign_id: str | None = None,
                       tiers: str = "A", metric: str = "capability_retention",
-                      source: str = "human") -> dict[str, Any]:
+                      source: str = "human", cue: str | None = "none") -> dict[str, Any]:
     """RQ4 — is an expert phrasing disproportionately constrained?
 
     The question is not "does depth cost anything" — a main effect of depth would be
@@ -512,13 +535,21 @@ def depth_interaction(conn: sqlite3.Connection, corpus, campaign_id: str | None 
     That is a difference-in-differences, and it is why the depth arm had to be a
     factorial rather than a single extra pair of prompts.
 
+    **Cells are keyed by cue as well as prompt and repeat.** Without the cue every
+    severity and arm of one prompt collapses onto one key and the last written wins, so
+    a pair is drawn across the cue manipulation rather than within it. `cue` defaults to
+    the uncued runs — what this analysis meant before the sandbagging arm existed — and
+    None gives every cue, still paired within its own.
+
     Families are grouped by focal dimension, because an intent x depth interaction and
     an autonomy x depth interaction are different findings and pooling them would
     average away both.
     """
     obs = observations(conn, campaign_id, tiers, include_controls=False)
-    cell: dict[tuple[str, int], dict[str, Any]] = {
-        (o["prompt_id"], o["repeat_index"]): o for o in obs
+    if cue is not None:
+        obs = [o for o in obs if (o.get("cue_id") or "none") == cue]
+    cell: dict[tuple[str, int, str], dict[str, Any]] = {
+        (o["prompt_id"], o["repeat_index"], o.get("cue_id") or "none"): o for o in obs
     }
 
     def value(o: dict[str, Any] | None) -> float | None:
@@ -533,19 +564,27 @@ def depth_interaction(conn: sqlite3.Connection, corpus, campaign_id: str | None 
         g["families"].add(fam.id)
 
         repeats = sorted({o["repeat_index"] for o in obs if o["family_id"] == fam.id})
+        cue_ids = sorted({o.get("cue_id") or "none" for o in obs
+                          if o["family_id"] == fam.id})
+        # A (repeat, cue) pair is one occasion: both sides of a depth pair must carry
+        # the same cue, or the gap measured is the cue rather than the register. With
+        # the default `cue="none"` there is exactly one cue here and this is the loop
+        # that was always meant; with `cue=None` every arm contributes its own gaps
+        # instead of one being picked arbitrarily.
         for rep in repeats:
+          for cue_id in cue_ids:
             per_level: dict[str, float] = {}
             for intro_variant, expert_variant in DEPTH_ARM.items():
-                intro = cell.get((f"{fam.id}.{intro_variant}", rep))
-                expert = cell.get((f"{fam.id}.{expert_variant}", rep))
+                intro = cell.get((f"{fam.id}.{intro_variant}", rep, cue_id))
+                expert = cell.get((f"{fam.id}.{expert_variant}", rep, cue_id))
                 iv, ev = value(intro), value(expert)
                 if iv is None or ev is None:
                     continue
                 gap = depth_penalty(metric, iv, ev)
                 per_level[expert_variant] = gap
                 g["gaps"][expert_variant].append({
-                    "family_id": fam.id, "repeat_index": rep, "gap": round(gap, 3),
-                    "intro": iv, "expert": ev,
+                    "family_id": fam.id, "repeat_index": rep, "cue_id": cue_id,
+                    "gap": round(gap, 3), "intro": iv, "expert": ev,
                     "focal_value": (expert[f"dim_{focal}"] if expert else None),
                 })
             # Difference-in-differences, reported for EVERY level against the benign

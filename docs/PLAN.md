@@ -823,6 +823,74 @@ It also cost two bugs, both found by that validation and neither visible without
   small-sample artefact. `bootstrap_ci` grew a `statistic` parameter and the median
   remains the default, since every existing delta report depends on it.
 
+### [ADD] One command that asks whether the instrument is sound (v0.12)
+
+Every arm in this document shipped with a falsification test, and the record of those
+tests is good: the null control found a matcher counting numbers rather than answers, the
+language calibration found four parser bugs that each faked a cross-lingual effect, the
+coherence sensitivity check found targets no relation constrained, item analysis found
+four decorations in the answer key, and the anchor harness found two bugs in itself. But
+they lived in five modules behind as many CLI flags, which in practice means they are run
+*after* something already looks wrong. `explorer validate` runs all of them and returns a
+single verdict.
+
+The two kinds of check it holds are deliberately kept apart in the output, because they
+answer different questions:
+
+- **Controls** ask whether a measurement can be trusted — a floor, a null rate, a
+  sensitivity. They are statements about the instrument and hold regardless of what any
+  model does.
+- **Recovery** checks run the analysis against the mock and ask whether it finds effects
+  that are *documented to exist*. `providers/mock.py` declares its response function as
+  constants — `intent_cliff: 3`, `depth_risk_interaction: 0.08`, `cue_penalty_treatment:
+  0.12`, `selfreport_honesty: 0.30` — and each check asserts against the constant rather
+  than a number recorded from an earlier run, so the test cannot drift into agreeing with
+  whatever the pipeline currently produces.
+
+Three rules about the verdict are part of the design and not presentation:
+
+1. **A `warn` is not a pass.** A check that could not run for want of data is reported
+   separately and counted separately, and `sound` requires zero failures rather than
+   "mostly green". Sixteen passes and one warn must not read as seventeen passes.
+2. **A check that raises is a failure, not a crash.** Every check runs inside a guard
+   that converts an exception into a `FAIL` carrying the exception text. A self-check
+   that dies on a broken instrument is failing in the one case it exists for.
+3. **Failure is the exit code.** `explorer validate` returns non-zero on any failure, so
+   it belongs in front of a campaign rather than in a browser tab.
+
+#### What it found on its first real campaign
+
+Pointed at 1,526 mock cells — all eight families, the ladder, depth and language arms,
+cue levels [0, 1, 3, 5], both probe kinds, two repeats — it found a defect that eleven
+unit-test files had missed.
+
+**Twin pairing was blind to the observation cue.** `twin_deltas` and `depth_interaction`
+built their cells keyed on `(prompt_id, repeat_index)`. That was a complete key until the
+sandbagging arm introduced a third factor. With cues and probes crossed in, **1,386
+observations collapsed onto 198 keys** — seven responses per key — and each cell silently
+kept whichever one was written last, so every cued response was differenced against an
+arbitrary baseline. The visible symptom was the worst kind: the mock's own documented
+depth×intent interaction read as *absent*, 0.0 at every level. A false negative on an
+arm's headline finding, produced by an overwrite that logged nothing.
+
+The fix adds `cue_id` to the cell key in both functions, with a `cue` parameter defaulting
+to `"none"` so existing callers keep measuring the uncued surface. `sandbagging`'s own
+baseline lookup is deliberately cue-blind — differencing a cued response against its
+uncued twin is the measurement — and was verified correct rather than changed to match.
+
+The structural lesson is about the fixtures, not the key: no unit test had ever built data
+with two arms crossed. Each arm was tested against a fixture containing only itself, which
+is exactly the shape of test that cannot see a key that is incomplete only in combination.
+
+**And one claim in the README was false.** The mock proposer was described as coherent by
+construction. It was not, in a narrow band: `round(share * 5)` maps a capability share of
+0.286 to level 1, while coherence rule 1 requires level ≤ 1 to mean share ≤ 0.25. The band
+(0.25, 0.30) was live, and the unit test asserting the claim had drawn shares of 0.25 and
+0.30 — on either side of it. The mock now routes share through `capability_level()`, which
+respects the rule at the boundary, and the test sweeps the share space exhaustively
+instead of sampling it. A fixture that is "correct by construction" is a claim like any
+other and needs a test that could falsify it.
+
 ### Layer 3 — LLM evaluator (optional, never authoritative)
 
 An LLM judge is itself an experimental subject with its own safety preferences. It

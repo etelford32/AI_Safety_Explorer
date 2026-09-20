@@ -466,6 +466,69 @@ refusal, and the retry count is stored.
 **The evaluator is not the experiment.** An LLM judge is off by default, stored
 separately, and reported only as agreement with the human reference set.
 
+**Every control, in one command.** All of the above ships with its own falsification
+test, and each of those tests found a real defect at some point — but they were scattered
+across five modules and as many CLI flags, which means in practice they get run when
+something already looks wrong. `explorer validate` asks the question that belongs *before*
+a campaign: is the instrument sound today?
+
+```
+explorer validate
+
+  check                                                           layer      verdict detail
+
+  corpus lints clean                                              corpus     ok      0 error(s), 14 warning(s)
+  rating scale is fully anchored                                  rubric     ok      every level anchored
+  extractor reads its own output in every language                layer 0a   ok      worst measurement floor 0.000 across 4 languages
+  identities hold on a correct answer and catch a 10x error       layer 0d   ok      0.00 false incoherence; 46/46 tenfold errors caught
+  a confidently wrong answer scores zero                          layer 0b   ok      a response with every figure wrong scores 0.000
+  the matcher finds answers, not numbers                          layer 0a   ok      cross-family accuracy 0.006
+  no answer-key target discriminates negatively                   layer 0e   ok      46 of 46 targets carry information
+  the intent cliff is recovered                                   recovery   ok      median retention D 1.00, E 0.00 (cliff at intent >= 3)
+  the depth x intent interaction is recovered                     recovery   ok      depth gap at benign C = 0.0, at elevated D = 1.13
+  no depth effect is invented where none exists                   recovery   ok      gaps [0.0, 0.0, 0.0] where intent is pinned at 0
+  no cross-lingual effect is invented                             recovery   ok      worst baseline gap 0.000 across 3 language(s)
+  the placebo-subtracted effect matches the mock's own constants  recovery   ok      severity 5: treatment 0.503 (mock says 0.48), placebo 0.122 (says 0.12)
+  no sandbagging is invented below the detection threshold        recovery   ok      below severity 2 the specific effect is 0.003
+  the insight gap is recovered                                    recovery   ok      it admits to 24% of the drop it took; the mock is built to admit 30%
+  proposals do not contradict their own span labels               layer 2.5  ok      24 proposal(s), worst self-coherence 1.00
+  human labels were made before seeing a proposal                 layer 2.5  ok      100% of human span labels were made blind
+  raters use every level of the scale                             rubric     warn    8 metric(s) to look at
+
+  16 passed, 1 could not run, 0 failed
+```
+
+Two kinds of check live there and they are **not interchangeable**. A *control* asks
+whether a measurement can be trusted — a floor, a null rate, a sensitivity — and holds
+regardless of what any model does. A *recovery* check runs the analysis against the mock,
+whose response function is a written-down constant in `providers/mock.py`, and asks
+whether the pipeline finds effects that are documented to exist. A pipeline that cannot
+recover a known effect will not recover an unknown one.
+
+A `warn` is **not** a pass. It means a check could not run, usually for want of data, and
+the summary says so on its own line rather than letting sixteen greens imply seventeen.
+A check that raises is reported as a failure with its exception, never allowed to take
+the run down — a self-check that crashes on a broken instrument is the one case it exists
+for.
+
+It earned its keep on the first campaign it was pointed at, 1,526 cells of mock. **Twin
+pairing was blind to the observation cue.** `twin_deltas` and `depth_interaction` keyed
+each cell on `(prompt_id, repeat_index)`, which was correct until the sandbagging arm
+added a third factor: with cue levels [0, 1, 3, 5] and two probe kinds, 1,386
+observations collapsed onto **198 keys**, and every cued response was differenced against
+whichever baseline happened to be written last. It made the mock's own documented
+depth×intent interaction read as *absent* — 0.0 at every level — which is a false
+negative on the headline finding of an entire arm, produced by a silent overwrite. No
+unit test had ever built a fixture with two arms crossed, so nothing caught it; the
+self-check caught it the first time it ran both arms together.
+
+The second find was a claim in this file. The mock proposer was said to be coherent by
+construction, and it very nearly was: `round(share * 5)` put a capability share of 0.286
+at level 1, while the coherence rule requires level ≤ 1 to mean share ≤ 0.25. The band
+(0.25, 0.30) was live and the unit test had simply never sampled a run inside it. The
+mock now maps share to level through a function that respects the rule at the boundary,
+and an exhaustive sweep over the share space tests it rather than a handful of draws.
+
 ## The interface
 
 `explorer serve` is the whole instrument, not a viewer. Everything the CLI does, the
@@ -652,6 +715,7 @@ explorer truth [--targets]        score responses against computed answer keys
        truth --calibrate          measure the extractor's per-language floor
        truth --coherence          validate the internal-consistency identities
        truth --items              item analysis: is the answer key carrying information?
+explorer validate                 run every control; is the instrument sound today?
 explorer annotate                 queue responses for blinded annotation
 explorer propose [--rubric]       propose ratings + span labels for stored conversations
 explorer analyse {twins,surface,depth,language,sandbagging,controls,reliability,

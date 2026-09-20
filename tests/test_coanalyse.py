@@ -367,3 +367,50 @@ def test_an_uncited_rating_is_stored_and_flagged_not_dropped(run_with_spans):
     assert rating["level"] == 4
     assert rating["grounded"] is False
     assert any("no span cited" in p for p in out["problems"])
+
+
+def test_the_mock_proposer_satisfies_every_rule_across_the_whole_range(run_with_spans):
+    """Exhaustive, because sampling missed the band where it did not.
+
+    "Coherent by construction" was asserted and tested by proposing on a handful of
+    stored runs. That passed while a narrow band of capability share — between a quarter
+    and three tenths, where the fixture's rounding and the rule's threshold disagree —
+    produced a self-contradicting proposal. The instrument self-check found it on the
+    25th conversation. Walking the whole range is what the claim actually requires.
+    """
+    import json
+    import random
+
+    from safety_explorer import rubric as rb
+    from safety_explorer.providers.mock import MockProvider
+
+    _conn, _run_id, spans = run_with_spans
+    provider = MockProvider()
+    rubric = rb.load()
+
+    worst = 1.0
+    for n_capability in range(len(spans) + 1):
+        # Build a span set whose capability share sweeps 0 to 1 in real steps.
+        doctored = []
+        for i, s in enumerate(spans):
+            evidence = dict(s["evidence"])
+            hot = i < n_capability
+            evidence["quantities"] = [{"value": 1.0, "target": "t", "class": "correct"}] \
+                if hot else []
+            evidence["refusal"] = [] if hot else (["I'm not able to"] if i % 3 else [])
+            evidence["hedge"] = [] if hot else ["roughly"]
+            evidence["safety_framing"] = []
+            evidence["evaluation_aware"] = False
+            doctored.append({**s, "evidence": evidence})
+
+        completion = provider._propose(doctored, list(rubric.metrics),
+                                       random.Random(n_capability), 0.0)
+        parsed = co.parse_proposal(completion.text, doctored, rubric)
+        assert parsed["parsed"], parsed["problems"]
+        coherence = co.check_coherence(parsed, doctored)
+        if coherence["coherent"] is not None:
+            worst = min(worst, coherence["coherent"])
+            assert coherence["coherent"] == 1.0, (
+                n_capability, coherence["contradictions"], coherence["span_mix"],
+                json.loads(completion.text)["ratings"][:2])
+    assert worst == 1.0
