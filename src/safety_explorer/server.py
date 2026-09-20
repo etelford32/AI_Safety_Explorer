@@ -524,6 +524,16 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                              for d in (*st.DIMENSIONS, "refusal_rate")}
             return traj
 
+        if path == "/api/stance/insight":
+            from .providers import mock
+
+            out = analysis.stance_insight(self.conn, q.get("campaign_id") or None,
+                                          q.get("tiers", "A"))
+            # The configured value travels with the measurement so the page can show
+            # what was asked for beside what came back, rather than a bare number.
+            out["configured"] = mock.load_stance_model().get("self_report", {})
+            return out
+
         if path == "/api/stance/drift":
             from . import stance as st
 

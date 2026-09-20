@@ -340,17 +340,129 @@ def test_independent_axes_are_not_flagged():
     assert out["collinear"] is False
 
 
-def test_the_mock_has_no_stance_model_and_the_plane_says_so():
-    """What the fixture actually simulates, pinned.
+def test_the_capability_templates_carry_no_register_of_their_own():
+    """Register must come from the stance model, not from a template's phrasing.
 
-    The mock maps a capability scalar to one of four fixed strings. Stance is not
-    modelled at all: it is whatever those strings happen to contain, which is two
-    phrases — 'happy to' in `_PARTIAL` and 'glad to' in `_REFUSAL`. So warmth on mock
-    data is a deterministic function of the band, and the plane must refuse to present
-    its quadrants as a disagreement between instruments.
+    This replaces a test that documented the opposite. The mock used to map a capability
+    scalar to one of four fixed strings, and two of those strings happened to contain a
+    warmth marker — 'happy to' in `_PARTIAL`, 'glad to' in `_REFUSAL` — which made warmth
+    a deterministic function of the accuracy band and the decoupling plane one variable
+    plotted against itself. The templates are neutral now and the register is composed,
+    so a phrase drifting back into one would silently recouple the two axes.
+
+    `hedging` is exempt: it is driven by the capability band on purpose (the hedged band
+    appends `_HEDGE`) and is not one of the composed dimensions.
     """
     from safety_explorer.providers import mock
 
-    assert st.extract(mock._BODY)["warmth"] == 0.0
-    assert st.extract(mock._PARTIAL)["warmth"] > 0
-    assert st.extract(mock._REFUSAL)["warmth"] > 0
+    composed = set(mock.COMPOSED)
+    for name in ("_BODY", "_PARTIAL", "_REFUSAL"):
+        measured = st.extract(getattr(mock, name))
+        for dim in composed:
+            assert measured[dim] == 0.0, (
+                f"{name} carries {dim} of its own: register would not be controlled "
+                f"by corpus/mock_stance.toml")
+
+
+def test_flat_stance_is_actually_flat():
+    """A control fixture that leaks once in fifty is worse than none.
+
+    `FLAT_STANCE` pins every dimension to 0, but level jitter is applied AFTER the
+    design level, so without pinning the noise too a dimension set to 0 still drew from
+    `gauss(0, sd)` and crossed the half-level threshold occasionally — putting one stray
+    phrase into about one response in fifty. Rare enough to be mistaken for something
+    else, which is the worst frequency for a defect to have.
+    """
+    from safety_explorer.providers.mock import FLAT_STANCE, MockProvider
+
+    p = MockProvider("mock-1", stance_overrides=FLAT_STANCE)
+    for i in range(60):
+        c = p.complete([{"role": "user", "content": f"q{i}"}],
+                       vector={"intent": i % 5, "operationality": i % 4,
+                               "specificity": i % 3, "autonomy": i % 2, "depth": i % 2},
+                       family_id="orbital_debris", answer_key_cover=None)
+        measured = st.extract(c.text)
+        for dim in ("warmth", "moralizing", "distancing", "deference"):
+            assert measured[dim] == 0.0, f"register leaked at i={i}: {dim}"
+
+
+def test_composed_register_cannot_move_a_layer_0_score():
+    """The invariant the whole design rests on.
+
+    Register is composed AROUND the capability core, and the decorations carry no
+    digits, so the answer key cannot see them. If this breaks, turning a stance
+    parameter would move an accuracy number and the two layers would stop being
+    independent — which is exactly what makes the decoupling plane worth drawing.
+    """
+    import random
+
+    from safety_explorer import groundtruth as gt
+    from safety_explorer.providers import mock
+
+    targets = gt.targets_for("orbital_debris", None)
+    prov = mock.MockProvider("mock-1")
+    core = (mock._BODY + "\n\n## Worked values\n\n"
+            + prov._worked_estimate("orbital_debris", 0.95, "en", 1.0, None,
+                                    random.Random(3)) + "\n")
+    bare = gt.score(core, targets, "en")
+    assert bare["accuracy"] == 1.0, "the fixture core must score full marks to test this"
+
+    for lvl in range(6):
+        levels = {d: float(lvl) for d in mock.COMPOSED}
+        text, _ = mock.compose_stance(core, levels, random.Random(11), False)
+        scored = gt.score(text, targets, "en")
+        assert scored["accuracy"] == bare["accuracy"], (
+            f"register at level {lvl} moved the answer-key score")
+        assert scored["graded_accuracy"] == bare["graded_accuracy"]
+
+
+def test_decoration_phrases_carry_one_marker_each_and_no_digits():
+    """Three properties the composer's arithmetic depends on.
+
+    A phrase with two markers makes a requested level arrive as a higher one. A phrase
+    matching a second dimension means turning up warmth silently moves moralising. And a
+    digit anywhere in a decoration enters Layer 0's candidate matching, where it can be
+    graded in place of the real answer.
+    """
+    import re
+
+    from safety_explorer.providers import mock
+    from safety_explorer.metrics import REFUSAL_PATTERNS, _count
+
+    for dim, bank in mock.STANCE_PHRASES.items():
+        for phrase in bank:
+            assert not re.search(r"\d", phrase), f"{dim}: digit in {phrase!r}"
+            assert _count(REFUSAL_PATTERNS, phrase) == 0, (
+                f"{dim}: {phrase!r} trips the refusal lexicon, which would make "
+                f"refusal_rate a function of the stance setting")
+            measured = st.extract(phrase)
+            own = measured["counts"][dim]
+            assert own == 1, f"{dim}: {phrase!r} carries {own} markers, expected 1"
+            for other in mock.COMPOSED:
+                if other != dim:
+                    assert measured["counts"][other] == 0, (
+                        f"{dim}: {phrase!r} also matches {other}")
+
+
+def test_no_stance_pattern_hides_a_contraction():
+    """`\\bi (?:...|'?m ...)` requires a literal space after "i", so the contraction
+    branch can never fire.
+
+    This shape has now shipped twice. It made `refusal_signal` dead for every refusal in
+    the fixture the first time, because "I'm not able to help" — the commonest way a
+    model opens a refusal — scored zero while "I am not able to help" scored one. It
+    reappeared in the moralising lexicon as `\\bi (?:would|'?d) (?:urge|...)`, where
+    "I'd urge" scored nothing. It is invisible by inspection and trivial to test for.
+    """
+    import re
+
+    for dim, patterns in st._LEXICONS.items():
+        for pattern in patterns:
+            # A space followed by an alternation whose branches start with an apostrophe
+            # is the tell: the space has already been consumed, so "I'd" cannot match.
+            for alt in re.finditer(r" \(\?:([^)]*)\)", pattern):
+                branches = alt.group(1).split("|")
+                bad = [b for b in branches if b.startswith("'")]
+                assert not bad, (
+                    f"{dim}: {pattern!r} has branch(es) {bad} after a literal space; "
+                    f"the contraction can never match")

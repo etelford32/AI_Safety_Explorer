@@ -390,3 +390,11 @@ table.matrix th.rowh { white-space: nowrap; }
    to the surface heatmap and carries an inline-block box with a border. */
 table.tbl { width: 100%; margin: 6px 0; }
 table.tbl td.num, table.tbl th.num { text-align: right; font-family: var(--mono); }
+
+/* Stated-vs-measured slopes. Shape carries the identity — hollow is what the
+   model wrote, filled is what it says it wrote — so the pair reads without
+   relying on colour. */
+.chart .slope { stroke: var(--ink-faint); stroke-width: 2; }
+.chart .slope.flag { stroke: var(--bad); }
+.key-hollow { color: var(--accent); }
+.key-solid { color: var(--accent); }

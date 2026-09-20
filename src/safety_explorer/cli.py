@@ -493,6 +493,85 @@ def cmd_truth(args) -> int:
     return 0
 
 
+def _parse_sets(pairs: list[str] | None) -> dict[str, dict[str, Any]]:
+    """`--set warmth.base=3` into {"warmth": {"base": 3.0}}."""
+    out: dict[str, dict[str, Any]] = {}
+    for raw in pairs or []:
+        if "=" not in raw or "." not in raw.split("=", 1)[0]:
+            raise SystemExit(f"--set expects section.key=value, got {raw!r}")
+        path, value = raw.split("=", 1)
+        section, key = path.split(".", 1)
+        try:
+            parsed: Any = float(value)
+        except ValueError:
+            parsed = value
+        out.setdefault(section, {})[key] = parsed
+    return out
+
+
+def cmd_stance_model(args) -> int:
+    """Show what the mock's register will do before a campaign is spent on it."""
+    from .providers import mock
+    from . import stance as st
+
+    model = mock.load_stance_model(args.file)
+    for section, block in _parse_sets(args.set).items():
+        model.setdefault(section, {}).update(block)
+
+    path = args.file or mock.STANCE_MODEL_PATH
+    print(f"mock stance model — {path}")
+    if args.set:
+        print(f"  with overrides: {', '.join(args.set)}")
+    insight = float(model.get("self_report", {}).get("insight", 1.0))
+    coupling = float(model.get("coupling", {}).get("to_capability", 0.0))
+    print(f"\n  self_report.insight     {insight}   "
+          f"(1.0 = states its register exactly; 0.0 = always claims the flattering answer)")
+    print(f"  coupling.to_capability  {coupling}   "
+          f"(0.0 = register independent of what the answer delivered; 1.0 = a function of it)")
+
+    # What the register will be, per risk level, with no noise so the design shows through.
+    quiet = {k: dict(v) for k, v in model.items()}
+    quiet.setdefault("noise", {})["sd"] = 0.0
+    dims = mock.COMPOSED
+    print(f"\n  designed register, by how loaded the framing is "
+          f"(0-5 on corpus/stance.toml)\n")
+    print(f"  {'risk':<10}" + "".join(f"{d[:10]:>12}" for d in dims) + f"{'composable':>13}")
+    core_words = len(mock._BODY.split())
+    for label, risk, refusing in [("0 benign", 0, False), ("1", 1, False), ("2", 2, False),
+                                  ("3", 3, False), ("4 loaded", 4, False),
+                                  ("refusal", 4, True)]:
+        vec = {"intent": risk, "operationality": 0, "specificity": 0, "autonomy": 0}
+        levels = mock.stance_levels(quiet, vec, 0.0 if refusing else 0.9, refusing, None)
+        rates = {d: (0.0 if levels[d] < 0.5 else st.rate_for_level(round(levels[d])))
+                 for d in dims}
+        _, feasible = mock._phrase_budget(core_words, rates)
+        cells = "".join(f"{levels[d]:>12.1f}" for d in dims)
+        print(f"  {label:<10}{cells}{('yes' if feasible else 'NO'):>13}")
+    print("\n  'composable' is whether text can carry that much register at once. Where it")
+    print("  says NO the composer clamps and the response comes back BELOW the level asked")
+    print("  for — which the mock records as its truth, because what it wrote is what it")
+    print("  wrote. A row saying NO is the ladder asking for more markers than prose holds.")
+
+    print(f"\n  what it would SAY about itself, at insight {insight}\n")
+    print(f"  {'dimension':<14}{'wrote':>8}{'states':>8}{'gap':>7}   reading")
+    for d in ("warmth", "moralizing", "distancing"):
+        for true in (1, 4):
+            said = (5.0 - (5.0 - true) * insight if d == "warmth" else true * insight)
+            said = int(max(0, min(5, round(said))))
+            gap = said - true
+            if gap == 0:
+                reading = "states it accurately"
+            elif d == "warmth":
+                reading = "claims more warmth than it wrote"
+            else:
+                reading = "admits less than it wrote"
+            print(f"  {d:<14}{true:>8}{said:>8}{gap:>+7}   {reading}")
+    print("\n  Insight is only identifiable where the honest answer and the flattering one")
+    print("  differ. A response that really was warm, or really carried no moralising,")
+    print("  cannot show whether the model would have owned up to the opposite.")
+    return 0
+
+
 def cmd_validate(args) -> int:
     """Every control this instrument has, in one place."""
     from . import validate as validate_mod
@@ -888,6 +967,27 @@ def cmd_analyse(args) -> int:
         if dec.get("skipped"):
             print(f"    {dec['skipped']}")
 
+        ins = analysis.stance_insight(conn, args.campaign, args.tiers)
+        print(f"\n  stated vs measured — does it know how it is talking? "
+              f"({ins['n_used']} probe(s) used of {ins['n_probes']})")
+        if ins["recovered_insight"] is None:
+            print(f"    {ins['note']}")
+        else:
+            print(f"    {'dimension':<14}{'states':>9}{'wrote':>8}{'gap':>8}{'insight':>10}"
+                  f"{'ident.':>8}")
+            for d, b in ins["by_dimension"].items():
+                if not b["n"]:
+                    continue
+                gap = f"{b['mean_gap']:+.2f}"
+                got = "—" if b["insight"] is None else f"{b['insight']:.2f}"
+                print(f"    {d:<14}{b['mean_stated']:>9.2f}{b['mean_measured']:>8.2f}"
+                      f"{gap:>8}{got:>10}{b['n_identifiable']:>8}")
+            print(f"    recovered insight {ins['recovered_insight']} over "
+                  f"{ins['n_used']} response(s); {ins['n_unidentifiable']} "
+                  f"dimension-observation(s) carried no information,")
+            print("    because where the honest answer and the flattering one coincide "
+                  "there is nothing to admit.")
+
         tb = rep["tone_bias"]
         print(f"\n  tone bias — is the human rating tracking register or content? "
               f"(n={tb['n']})")
@@ -1017,7 +1117,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="default is both; running treatment alone cannot separate an "
                         "evaluation effect from a framing effect")
     r.add_argument("--probes", nargs="*", default=None,
-                   choices=["detect_parallel", "selfreport_followup"],
+                   choices=["detect_parallel", "selfreport_followup",
+                            "stance_followup"],
                    help="awareness probes to attach to each run")
     r.add_argument("--surface", default="api")
     r.add_argument("--notes", default="")
@@ -1071,6 +1172,13 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--campaign", default=None)
     t.add_argument("--tiers", default="A")
     t.set_defaults(func=cmd_truth)
+
+    sm = sub.add_parser("stance-model",
+                        help="what the mock's register will do, before a campaign")
+    sm.add_argument("--file", default=None, help="a stance model TOML to read instead")
+    sm.add_argument("--set", action="append", metavar="SECTION.KEY=VALUE",
+                    help="override one parameter, e.g. --set coupling.to_capability=1")
+    sm.set_defaults(func=cmd_stance_model)
 
     va = sub.add_parser("validate", help="run every control; is the instrument sound?")
     va.add_argument("--campaign", default=None)

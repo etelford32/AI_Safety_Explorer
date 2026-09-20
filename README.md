@@ -518,20 +518,91 @@ explorer analyse stance
      flat_refusal              1    0.8%  declines, and is legible about declining
 ```
 
-**That warning is the mock telling the truth about itself, and it is worth reading
-carefully before any of these cells is believed.** The mock has no stance model at all. It
-maps a capability scalar to one of four fixed strings, so its register is a *byproduct* of
-which string capability selected — the entire warmth signal across 896 observations comes
-from two phrases, `"happy to"` in the partial template and `"glad to"` in the refusal one.
-Warmth is therefore a deterministic function of accuracy on this fixture, the two axes
-correlate at rho = -0.79, and the four quadrants are one variable plotted against itself.
+**The mock simulates register, and you set the parameters.** It used to have no stance
+model at all: it mapped a capability scalar to one of four fixed strings, so register was
+a *byproduct* of which string capability selected, and the entire warmth signal came from
+two stray phrases. Warmth was a deterministic function of accuracy, the two axes correlated
+at rho = -0.87, and the plane was one variable plotted against itself.
 
-So `warm_refusal 23%` is not a discovery about a model. It is "the refusal template
-contains the phrase *glad to*", which is a legitimate end-to-end regression test of the
-pipeline — segment, extract, cut, classify — and is nothing whatever about model
-behaviour. The plane can only say something when its two axes vary independently, which
-needs either a real model or a mock that simulates register separately from capability.
-Until then the honest reading is the counts, not the cells.
+Now register is generated from `corpus/mock_stance.toml`, independently of capability, and
+**every number in that file is a level on the stance rubric** — so a setting reads straight
+off the anchors rather than being a magic rate:
+
+```toml
+[warmth]
+base    = 4      # a benign question gets a collaborator
+onset   = 1      # holds until risk passes this
+slope   = -1.0   # then cools, a level per step
+refusal = 4      # ...but declines warmly. Set this to 0 for a cold refusal instead
+
+[self_report]
+insight = 0.35   # what fraction of its own register it admits to when asked
+
+[coupling]
+to_capability = 0.0   # 0 = register independent of what the answer delivered; 1 = a function of it
+```
+
+`explorer stance-model` shows what those settings will do *before* a campaign is spent on
+them — including a `composable` column, because there is a ceiling and it belongs to prose
+rather than to the config. Every marker costs words, and words are the denominator the
+next marker has to reach, so asking several dimensions for a high level at once eventually
+wants more markers than text can hold:
+
+```
+  risk            warmth  moralizing  distancing   deference   composable
+  0 benign           4.0         0.0         0.0         1.0          yes
+  2                  3.0         0.0         0.0         1.0          yes
+  4 loaded           1.0         2.4         1.4         2.2          yes
+  refusal            4.0         2.0         1.0         3.0          yes
+```
+
+With register generated rather than inherited, the plane's axis correlation falls from
+**-0.87 to -0.17** and all four cells populate. Turning `to_capability` up walks it back
+(-0.50 at 0.5, -0.67 at 1.0), which is how to watch the collinearity guard do its job.
+
+**And the model states its own register, so three quantities exist per response.**
+`--probes stance_followup` asks it to rate the answer it just gave on the same 0-5 ladder
+the extractor and a human annotator use. That gives **stated**, **measured** and
+**outcome** — and the gaps between them are the measurement:
+
+```
+explorer analyse stance
+
+  stated vs measured — does it know how it is talking? (410 probe(s) used of 545)
+    dimension        states   wrote     gap   insight  ident.
+    warmth             4.17    1.92   +2.25      0.25     407
+    moralizing         0.68    1.69   -1.01      0.38     327
+    distancing         0.21    0.89   -0.68      0.15     278
+    recovered insight 0.266 over 410 response(s); 218 carried no information
+```
+
+It claims two levels more warmth than it wrote and admits a level less moralising — the
+register twin of the sandbagging arm's insight gap, and recovered to 0.27 against a
+planted 0.35. **Insight is only identifiable where the model had something to admit**: a
+response that genuinely was warm, or genuinely carried no moralising, cannot reveal whether
+it would have owned up to the opposite, so those observations are counted and excluded
+rather than averaged in as perfect insight.
+
+Building this cost four defects, all found by controls rather than by reading code:
+
+- **Composed register diluted `technical_density`.** Stance markers add words and no
+  equations, and that rate is per 100 words — so the depth arm's negative control picked
+  up a spurious gap of 0.25. The instrument's own checks now read Layer 0, which counts
+  figures against an answer key and cannot see a decoration at all; tests that must use the
+  automatic proxy pin the register flat with `FLAT_STANCE`.
+- **`FLAT_STANCE` was not flat.** Level jitter is applied after the design level, so a
+  dimension set to 0 still drew from `gauss(0, 0.25)` and crossed the half-level threshold
+  now and then, putting one stray phrase into about one response in fifty. A control
+  fixture that leaks at that rate is worse than none, because the leak is rare enough to
+  look like something else.
+- **Two lexicon patterns could never match a contraction.** `\bi (?:would|'?d) (?:urge…)`
+  requires a literal space after "i", so "I'd urge" scored zero — the identical shape that
+  had already made `refusal_signal` dead for every refusal in the fixture. It had also
+  reached `you'll want to`. A test now scans the whole lexicon for it.
+- **The commonest moralising phrase counted twice.** "It's important to note that" matches
+  two patterns, and summing per-pattern counts double-counted it — inflating that rate in
+  real responses, not just in the fixture. Matches within a dimension are now merged by
+  span before counting.
 
 **The chart worth having is the decoupling — when its axes are independent.** That is a
 checkable precondition and not always met, so `decouple` reports the correlation between
@@ -834,6 +905,7 @@ explorer truth [--targets]        score responses against computed answer keys
        truth --calibrate          measure the extractor's per-language floor
        truth --coherence          validate the internal-consistency identities
        truth --items              item analysis: is the answer key carrying information?
+explorer stance-model             what the mock's register will do, before a campaign
 explorer analyse stance           Layer 1.5: register, posture, the decoupling plane
 explorer validate                 run every control; is the instrument sound today?
 explorer annotate                 queue responses for blinded annotation

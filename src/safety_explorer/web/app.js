@@ -1640,6 +1640,11 @@ async function loadStance() {
   renderPostures(d);
   renderStanceControls(d);
   renderStanceVariants(d);
+  try {
+    renderStanceInsight(await api('stance/insight', { tiers: $('#st-tiers').value }));
+  } catch (err) {
+    $('#st-insight').innerHTML = `<div class="empty-state">insight unavailable: ${esc(String(err))}</div>`;
+  }
 }
 
 /* --- the decoupling plane ------------------------------------------------
@@ -2052,4 +2057,97 @@ async function loadTrajectory(runId) {
     + 'actually differ, because a function that always named one would invent a turning '
     + 'point in every flat trajectory. Hollow dots are spans too short for a rate to be '
     + 'stable.</p>');
+}
+
+/* --- stated vs measured vs outcome --------------------------------------
+   Three quantities exist per response once the stance probe has run, and all
+   three sit on the same 0-5 ladder so they can be differenced directly: what
+   the model SAYS its register was, what the lexicon finds in the text it
+   actually wrote, and what the answer delivered (Layer 0, which owes nothing
+   to either of the others).
+
+   The bar is a slope, not a magnitude: what matters is the direction and size
+   of the gap between stated and measured, so both ends are drawn and the
+   distance between them is the reading. */
+function renderStanceInsight(ins) {
+  // Exposed so a browser test can assert the drawing against the data it was given,
+  // rather than against a number hard-coded in the test.
+  window.__insight = ins;
+  const box = $('#st-insight');
+  box.innerHTML = '<h2>Stated vs measured — does it know how it is talking?</h2>';
+
+  if (!ins || ins.recovered_insight === null || ins.recovered_insight === undefined) {
+    box.insertAdjacentHTML('beforeend',
+      `<div class="empty-state">${esc((ins && ins.note) || 'no stance self-reports stored')}</div>`
+      + '<p class="hint">Run a campaign with <code>--probes stance_followup</code>. The probe '
+      + 'asks the model to rate the register of the answer it just gave, on the same ladder '
+      + 'the extractor and a human annotator use.</p>');
+    return;
+  }
+
+  const dims = Object.entries(ins.by_dimension).filter(([, b]) => b.n);
+  const W = 560, rowH = 34, m = { t: 26, l: 108, r: 76 };
+  const H = m.t + dims.length * rowH + 16;
+  const pw = W - m.l - m.r;
+  const sx = (lvl) => m.l + (lvl / 5) * pw;
+
+  const svg = svgEl('svg', {
+    viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img',
+    'aria-label': 'Stated register against measured register, per dimension',
+  });
+  for (let lvl = 0; lvl <= 5; lvl++) {
+    svg.appendChild(svgEl('line', {
+      x1: sx(lvl), y1: m.t - 8, x2: sx(lvl), y2: H - 18, class: 'axis',
+    }));
+    svg.appendChild(svgText(sx(lvl), m.t - 12, String(lvl),
+      { 'text-anchor': 'middle', class: 'tick' }));
+  }
+
+  dims.forEach(([dim, b], i) => {
+    const y = m.t + i * rowH + 10;
+    const wrote = sx(b.mean_measured), states = sx(b.mean_stated);
+    svg.appendChild(svgText(m.l - 10, y + 4, dim,
+      { 'text-anchor': 'end', class: 'facet-title' }));
+    svg.appendChild(svgEl('line', {
+      x1: wrote, y1: y, x2: states, y2: y,
+      class: Math.abs(b.mean_gap) > 0.5 ? 'slope flag' : 'slope',
+    }));
+    // Hollow = what it wrote, filled = what it says. Shape carries the identity,
+    // so the pair is readable without relying on colour.
+    const g = svgEl('g', { class: 'dot-hit' });
+    g.appendChild(svgEl('circle', { cx: wrote, cy: y, r: 12, class: 'hit' }));
+    g.appendChild(svgEl('circle', { cx: wrote, cy: y, r: 5, class: 'facet-dot unstable' }));
+    g.appendChild(svgEl('circle', { cx: states, cy: y, r: 5, class: 'facet-dot' }));
+    bindTip(g, `<b>${esc(dim)}</b><br>wrote ${fmt(b.mean_measured)} &middot; `
+      + `states ${fmt(b.mean_stated)}<br>gap ${b.mean_gap >= 0 ? '+' : ''}${fmt(b.mean_gap)}`
+      + `<br>insight ${b.insight === null ? '—' : fmt(b.insight)} over ${b.n_identifiable} identifiable`);
+    svg.appendChild(g);
+    const gap = `${b.mean_gap >= 0 ? '+' : ''}${fmt(b.mean_gap)}`;
+    svg.appendChild(svgText(W - 8, y + 4, gap, { 'text-anchor': 'end', class: 'tick' }));
+  });
+  box.appendChild(svg);
+
+  const planted = (ins.configured || {}).insight;
+  box.insertAdjacentHTML('beforeend',
+    '<p class="hint"><span class="key-hollow">○</span> what it wrote &nbsp; '
+    + '<span class="key-solid">●</span> what it says it wrote. The line between them is '
+    + 'the gap.</p>'
+    + `<div class="stat-row">`
+    + `<div class="stat"><div class="stat-v">${fmt(ins.recovered_insight)}</div>`
+    + `<div class="stat-k">recovered insight</div></div>`
+    + (planted === undefined ? ''
+      : `<div class="stat"><div class="stat-v">${planted}</div>`
+        + `<div class="stat-k">configured in corpus/mock_stance.toml</div></div>`)
+    + `<div class="stat"><div class="stat-v">${ins.n_used}</div>`
+    + `<div class="stat-k">responses used</div></div>`
+    + `<div class="stat"><div class="stat-v">${ins.n_unidentifiable}</div>`
+    + `<div class="stat-k">carried no information</div></div></div>`
+    + '<p class="hint">Insight 1.0 means the stated register matched the measured one; 0.0 '
+    + 'means it claimed the flattering answer whatever it wrote — more warmth, less '
+    + 'moralising. <b>It is only identifiable where the honest answer and the flattering '
+    + 'one differ</b>: a response that really was warm, or really carried no moralising, '
+    + 'cannot show whether the model would have owned up to the opposite, so those '
+    + 'observations are counted and excluded rather than averaged in as perfect insight.</p>'
+    + '<p class="hint">A self-report is made after the fact and may be rationalised, so '
+    + 'this speaks to whether it <em>knows</em>, not to whether it meant to.</p>');
 }

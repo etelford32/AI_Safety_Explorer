@@ -823,6 +823,105 @@ It also cost two bugs, both found by that validation and neither visible without
   small-sample artefact. `bootstrap_ci` grew a `statistic` parameter and the median
   remains the default, since every existing delta report depends on it.
 
+### [ADD] The mock gets a register, and states it (v0.14)
+
+v0.13 measured register and had nothing honest to measure it on. The mock mapped a
+capability scalar to one of four fixed strings, so its register was a byproduct of which
+string capability picked — warmth a deterministic function of accuracy, the decoupling
+plane's two axes correlated at rho = -0.87, and four quadrants drawn over one variable.
+
+Three things had to be true for the plane to mean anything, and they set the design:
+
+1. **Register generated independently of capability**, or the axes are one axis.
+2. **Parameters the user sets**, in units they can read, with the consequences visible
+   before a campaign is spent on them.
+3. **The model states its own register**, so there is something to compare the measurement
+   against besides itself.
+
+#### The parameters are levels, not rates
+
+`corpus/mock_stance.toml` holds every number as a level on the stance rubric, so a setting
+reads straight off `corpus/stance.toml`'s anchors: `moralizing.base = 0` is "no framing
+beyond the answer itself". Each dimension is a hinge on risk — the largest non-depth design
+coordinate, because an expert question is not a risky one and `depth_slope = 0.0` says so —
+with a `refusal` level that replaces it when the response declines. That last one is how
+the warm refusal is dialled.
+
+Two parameters exist to make the instrument's own limits visible rather than to model
+anything:
+
+* **`coupling.to_capability`** blends between register-from-framing and register-from-
+  capability. At 0 the plane has two real axes (rho = -0.17 measured); at 1 it reproduces
+  the old degeneracy (-0.67). Turning it up is how to watch the collinearity guard work.
+* **`self_report.insight`** is the fraction of its own register the mock admits to, the
+  stance twin of `selfreport_honesty`. Set it to 1.0 and the analysis must find no gap;
+  lower it and the analysis must recover the number set.
+
+#### There is a ceiling, and it belongs to prose
+
+Every marker costs words, and words are the denominator the next marker has to reach, so
+asking several dimensions for a high level at once eventually wants more markers than text
+can hold. Past that point the composer clamps and the response comes back below the levels
+configured — **which the mock then records as its truth, because what it wrote is what it
+wrote**. Recording the intention instead would book composition error as a model finding,
+and the self-report would be measuring the composer rather than insight.
+
+`explorer stance-model` prints a `composable` column so the ceiling is visible in advance.
+The shipped defaults sit under it; the first draft did not, and asked for a refusal
+register no text could carry.
+
+#### Stated, measured, outcome
+
+`--probes stance_followup` asks the model to rate the register of the answer it just gave,
+on the same 0-5 ladder the extractor and a human annotator use — so the three quantities
+are directly differenceable. The probe reads the answer out of the conversation rather than
+out of provider state, which matters: a runner that produced every response before issuing
+any probe would otherwise have every self-report describe the last response in the
+campaign, a total failure that looks like a model with no insight at all.
+
+Recovery is good — planted 1.0 / 0.7 / 0.35 / 0.0 come back as 1.0 / 0.70 / 0.30 / 0.0 —
+and the analysis refuses to average in the observations that carry no information. Where
+the honest answer and the flattering one coincide, a response cannot reveal whether the
+model would have owned up to the opposite; including those rows would drag every estimate
+toward perfect insight in exact proportion to how well-behaved the corpus was.
+
+#### What the controls found
+
+Four defects, none of them visible by reading the code:
+
+* **Composed register dilutes `technical_density`.** Stance markers add words and no
+  equations, and that feature is a rate per 100 words, so the depth negative control
+  acquired a spurious gap of up to 0.25. Two responses follow. The instrument's own checks
+  moved to Layer 0, which counts figures against an answer key and cannot see a decoration
+  — the right channel for a control about capability, and arguably always was. Tests that
+  need the automatic proxy pin the register flat with `FLAT_STANCE`, which controls the
+  confound rather than pretending it is absent.
+* **`FLAT_STANCE` was not flat.** Jitter is applied after the design level, so a dimension
+  pinned to 0 still drew `gauss(0, 0.25)` and crossed the half-level threshold
+  occasionally, leaking one phrase into about one response in fifty. A control fixture that
+  leaks at that rate is worse than no fixture: rare enough to be mistaken for something
+  else, which is the worst frequency a defect can have.
+* **Two lexicon patterns could never match a contraction.** `\bi (?:would|'?d) (?:urge…)`
+  consumes the space before the alternation, so "I'd urge" scored zero. This is the third
+  appearance of that exact shape — it made `refusal_signal` dead for every refusal in the
+  fixture once already — and it had also reached `you'll want to`. A test now scans every
+  pattern in the lexicon for it, because it is invisible by inspection and trivial to
+  check.
+* **The commonest moralising phrase counted twice.** "It's important to note that" matches
+  two patterns, and summing per-pattern counts inflated it — in real responses, not only in
+  the fixture, and it silently broke the composer's arithmetic, which assumes one marker
+  per phrase. Matches within a dimension are now merged by span. `STANCE_VERSION` is 2;
+  version 1 rates are not comparable.
+
+#### What did NOT change, and why it matters
+
+Layer 0 is untouched by any of this, and that is asserted rather than assumed: a test
+composes register at every level from 0 to 5 over a fixed capability core and requires the
+answer-key score to be identical each time. The decorations carry no digits, so the key
+cannot see them. That invariant is what keeps the decoupling plane's two axes independent
+in principle as well as in practice — without it, turning a stance parameter would move an
+accuracy number and the whole chart would be circular.
+
 ### [ADD] Layer 1.5 — stance, posture, and what "emotion" would have cost (v0.13)
 
 The request was an emotion chart and an agent-role alignment chart. One of those can be

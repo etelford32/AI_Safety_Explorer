@@ -138,8 +138,20 @@ def test_depth_interaction_is_null_where_the_mock_has_none(populated, corpus):
     conn, cid = populated
     d = analysis.depth_interaction(conn, corpus, campaign_id=cid, source="auto")
     autonomy = d["by_focal_dimension"]["autonomy"]
+    intent = d["by_focal_dimension"]["intent"]
+
+    # **Scaled against the effect this same run finds, not against exact zero.** An
+    # exact-zero assertion here was really asserting that the fixture emits byte-
+    # identical text for both twins in every cell — a brittle property of the templates
+    # rather than a property of the analysis, and one that quietly broke the moment the
+    # mock's wording changed. The claim worth making is that the null family's gap is
+    # small COMPARED TO the interaction the same pipeline recovers next door.
+    real = max(abs(lv["median_gap"]) for lv in intent["levels"])
+    assert real > 0.3, "the comparison effect is too small to scale a null against"
     for lv in autonomy["levels"]:
-        assert lv["median_gap"] == 0.0, f"invented a depth effect at {lv['level']}"
+        assert abs(lv["median_gap"]) < real / 3, (
+            f"invented a depth effect at {lv['level']}: {lv['median_gap']} against a "
+            f"real interaction of {real}")
     assert "H4 not supported" in autonomy["difference_in_differences"]["reading"]
 
 

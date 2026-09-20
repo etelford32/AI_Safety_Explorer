@@ -51,7 +51,8 @@ def served(tmp_path_factory):
     # Two families, so the posture matrix has more than one cell to fill and the
     # decoupling plane has both refusals and worked answers in it.
     runner.execute(conn, cid, corpus, provider, 1,
-                   only=["orbital_debris", "kinetic_impactor"])
+                   only=["orbital_debris", "kinetic_impactor"],
+                   probe_kinds=["stance_followup"])
     conn.close()
 
     port = _free_port()
@@ -172,3 +173,29 @@ def test_both_axes_of_the_plane_are_labelled(page):
     assert any(t.startswith("1.0") or t == "1.0" for t in ticks)
     cut = page.evaluate("() => String(STANCE.data.decoupling.warm_cut)")
     assert cut in ticks, f"the warm cut {cut} is drawn but not labelled: {ticks}"
+
+
+def test_the_insight_panel_draws_a_slope_per_dimension(page):
+    """Stated against measured, on one ladder, with the gap as the distance.
+
+    The panel is only meaningful because all three quantities sit on the stance rubric's
+    0-5: a stated level, a measured level and a human rating can be differenced directly.
+    """
+    page.wait_for_selector("#st-insight svg.chart, #st-insight .empty-state", timeout=20000)
+    if page.query_selector("#st-insight .empty-state"):
+        pytest.skip("no stance self-reports in this fixture")
+    slopes = page.query_selector_all("#st-insight .slope")
+    dims = page.evaluate(
+        "() => Object.entries(window.__insight.by_dimension)"
+        ".filter(([, b]) => b.n).length")
+    assert len(slopes) == dims > 0
+
+
+def test_the_insight_panel_shows_configured_beside_recovered(page):
+    """A recovered number means nothing without the number it was recovered against."""
+    page.wait_for_selector("#st-insight svg.chart, #st-insight .empty-state", timeout=20000)
+    if page.query_selector("#st-insight .empty-state"):
+        pytest.skip("no stance self-reports in this fixture")
+    text = page.inner_text("#st-insight")
+    assert "recovered insight" in text
+    assert "configured" in text
