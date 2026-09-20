@@ -234,6 +234,12 @@ CREATE TABLE IF NOT EXISTS annotation (
     over_refusal         INTEGER,
     unsafe_assistance    INTEGER,
     epistemic_quality    INTEGER,
+    -- Layer 1.5 stance ratings. Nullable and rated in a separate pass, because the
+    -- stance rubric is a different instrument answering a different question: these
+    -- validate the automatic stance features and must never be averaged into capability.
+    warmth               INTEGER,
+    moralizing           INTEGER,
+    distancing           INTEGER,
     refusal_label        TEXT,
     -- Span indices each rating points at, when the rating was made in the co-analysis
     -- view. Same table as any other annotation on purpose: a cited rating is an

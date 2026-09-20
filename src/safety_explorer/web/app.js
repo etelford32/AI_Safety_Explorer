@@ -36,6 +36,7 @@ $$('nav button').forEach((b) => b.addEventListener('click', () => {
   if (b.dataset.view === 'compare') loadCompareOptions();
   if (b.dataset.view === 'collect') loadData();
   if (b.dataset.view === 'coanalyse') loadConversations();
+  if (b.dataset.view === 'stance' && !STANCE.data) loadStance();
 }));
 
 /* ------------------------------------------------------------- startup */
@@ -54,6 +55,7 @@ async function boot() {
   buildSliders();
   buildCorpusList();
   buildSelects();
+  $('#btn-stance').addEventListener('click', loadStance);
   await loadAnnProgress();
 }
 
@@ -1303,6 +1305,7 @@ function renderConversation() {
   // kills every keyboard shortcut on the page.
   const all = $$('#co-body .span').map((el) => Number(el.dataset.span));
   focusSpan(CO.focus ?? firstUnlabelled() ?? (all.length ? all[0] : null), false);
+  if (CO.runId) loadTrajectory(CO.runId);
 }
 
 async function submitSpanLabel(button) {
@@ -1546,4 +1549,499 @@ async function runProposal() {
   renderRating();
   loadCoanalysis();
   loadConversations();
+}
+
+/* ======================================================================
+   Layer 1.5 — stance charts.
+
+   Inline SVG, no library, same as everything else here. Three deliberate
+   choices about colour, because the palette this UI already uses fails a
+   categorical-colour check badly: --warn and --good collapse to a ΔE of 3.9
+   under deuteranopia, and --bad against --warn is 11.2 even with full colour
+   vision. So none of these charts encodes a series by hue.
+
+     * the decoupling plane encodes its four cells by POSITION, not colour —
+       the quadrant IS the x/y split, so colouring it would re-encode what the
+       axes already say;
+     * stance-by-variant is SMALL MULTIPLES, one facet per dimension, one
+       series each, so no facet ever needs to tell two hues apart;
+     * the posture matrix encodes count on a validated single-hue ORDINAL ramp.
+
+   Status colour appears only where it carries reserved meaning, and always
+   with a text label beside it rather than alone.
+   ====================================================================== */
+
+const STANCE = { data: null, ramp: ['#184f95', '#256abf', '#3987e5', '#6da7ec', '#9ec5f4'] };
+
+const svgEl = (name, attrs = {}, kids = []) => {
+  const n = document.createElementNS('http://www.w3.org/2000/svg', name);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v !== null && v !== undefined) n.setAttribute(k, v);
+  }
+  for (const kid of [].concat(kids)) if (kid) n.appendChild(kid);
+  return n;
+};
+
+const svgText = (x, y, str, attrs = {}) => {
+  const t = svgEl('text', { x, y, ...attrs });
+  t.textContent = str;
+  return t;
+};
+
+/* One tooltip element, moved around. Cheaper than one per mark and it cannot
+   leave orphans behind when a chart re-renders. */
+function chartTip() {
+  let tip = $('#chart-tip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'chart-tip';
+    tip.className = 'chart-tip';
+    document.body.appendChild(tip);
+  }
+  return tip;
+}
+
+function bindTip(node, html) {
+  node.addEventListener('mouseenter', (e) => {
+    const tip = chartTip();
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+    tip.style.left = `${e.clientX + 14}px`;
+    tip.style.top = `${e.clientY + 14}px`;
+  });
+  node.addEventListener('mousemove', (e) => {
+    const tip = chartTip();
+    tip.style.left = `${e.clientX + 14}px`;
+    tip.style.top = `${e.clientY + 14}px`;
+  });
+  node.addEventListener('mouseleave', () => { chartTip().style.display = 'none'; });
+}
+
+async function loadStance() {
+  const status = $('#st-status');
+  status.textContent = 'computing…';
+  let d;
+  try {
+    d = await api('stance', { tiers: $('#st-tiers').value });
+  } catch (err) {
+    status.textContent = `failed: ${err}`;
+    return;
+  }
+  // `api()` resolves with the parsed body whatever the status code, so a 404 or a
+  // server-side error arrives here as an ordinary object and sails past the catch.
+  // Checking the payload is the only thing that actually guards the renderers.
+  if (!d || d.error || !d.decoupling) {
+    status.textContent = `failed: ${esc((d && d.error) || 'unexpected response')}`;
+    return;
+  }
+  STANCE.data = d;
+  status.textContent = `stance v${d.stance_version} — ${d.n_scored} of ${d.n_observations} scored`;
+  renderDecoupling(d);
+  renderPostures(d);
+  renderStanceControls(d);
+  renderStanceVariants(d);
+}
+
+/* --- the decoupling plane ------------------------------------------------
+   x = Layer 0 objective capability, y = warmth. Both axes are measured and
+   neither is derived from the other, which is the whole reason the plane is
+   worth drawing: a dot in the warm-refusal cell is two instruments
+   disagreeing, not one instrument disagreeing with itself. */
+function renderDecoupling(d) {
+  const box = $('#st-decouple');
+  box.innerHTML = '<h2>Capability &times; warmth</h2>';
+  const dec = d.decoupling;
+  if (!dec || !dec.n) {
+    box.innerHTML += `<div class="empty-state">${esc(dec && dec.skipped || 'no scored runs')}</div>`;
+    return;
+  }
+
+  if (dec.degenerate) {
+    const warn = document.createElement('div');
+    warn.className = 'banner-bad';
+    warn.textContent = `Degenerate split: ${dec.degenerate_note}. The cells below are one column, not a plane.`;
+    box.appendChild(warn);
+  }
+
+  const W = 620, H = 380, m = { t: 18, r: 18, b: 44, l: 56 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const runs = Object.entries(dec.cells).flatMap(([cell, blk]) =>
+    (blk.runs || []).map((r) => ({ ...r, cell })));
+  const maxWarm = Math.max(dec.warm_cut * 2, ...runs.map((r) => r.warmth), 0.001);
+
+  const sx = (v) => m.l + v * pw;
+  const sy = (v) => m.t + ph - Math.min(1, v / maxWarm) * ph;
+
+  const svg = svgEl('svg', {
+    viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img',
+    'aria-label': 'Objective capability against warmth, one dot per run',
+  });
+
+  // The problem cell gets a reserved status tint AND a written label — never
+  // colour alone. Everything else stays on the surface.
+  const cutX = sx(dec.capable_cut), cutY = sy(dec.warm_cut);
+  svg.appendChild(svgEl('rect', {
+    x: m.l, y: m.t, width: cutX - m.l, height: cutY - m.t, class: 'quad-flag',
+  }));
+
+  // Recessive axes and the two cut lines.
+  svg.appendChild(svgEl('line', { x1: m.l, y1: m.t + ph, x2: m.l + pw, y2: m.t + ph, class: 'axis' }));
+  svg.appendChild(svgEl('line', { x1: m.l, y1: m.t, x2: m.l, y2: m.t + ph, class: 'axis' }));
+  svg.appendChild(svgEl('line', { x1: cutX, y1: m.t, x2: cutX, y2: m.t + ph, class: 'cut' }));
+  svg.appendChild(svgEl('line', { x1: m.l, y1: cutY, x2: m.l + pw, y2: cutY, class: 'cut' }));
+
+  const CELL_POS = {
+    warm_refusal: [m.l + 8, m.t + 16, 'start'],
+    engaged: [m.l + pw - 8, m.t + 16, 'end'],
+    flat_refusal: [m.l + 8, m.t + ph - 8, 'start'],
+    correct_but_distant: [m.l + pw - 8, m.t + ph - 8, 'end'],
+  };
+  for (const [cell, [x, y, anchor]] of Object.entries(CELL_POS)) {
+    const blk = dec.cells[cell];
+    if (!blk) continue;
+    svg.appendChild(svgText(x, y, `${cell.replace(/_/g, ' ')} — ${blk.n}`, {
+      'text-anchor': anchor, class: cell === 'warm_refusal' ? 'quad-label flag' : 'quad-label',
+    }));
+  }
+
+  for (const r of runs) {
+    const cx = sx(r.capability), cy = sy(r.warmth);
+    const g = svgEl('g', { class: 'dot-hit' });
+    // A 12px transparent hit circle, so the target is ~24px across rather than
+    // the 7px mark. A dot you have to land on dead-centre is not hoverable.
+    g.appendChild(svgEl('circle', { cx, cy, r: 12, class: 'hit' }));
+    g.appendChild(svgEl('circle', { cx, cy, r: 6, class: `dot ${r.cell}` }));
+    bindTip(g, `<b>${esc(r.family_id || '')} ${esc(r.variant || '')}</b><br>`
+      + `capability ${fmt(r.capability)} &middot; warmth ${fmt(r.warmth)}<br>`
+      + `<span class="tip-cell">${r.cell.replace(/_/g, ' ')}</span>`);
+    g.addEventListener('click', () => { if (r.run_id) openConversation(r.run_id); });
+    svg.appendChild(g);
+  }
+
+  svg.appendChild(svgText(m.l + pw / 2, H - 8, 'objective capability (Layer 0, graded)',
+    { 'text-anchor': 'middle', class: 'axis-label' }));
+  svg.appendChild(svgText(-(m.t + ph / 2), 13, 'warmth markers per 100 words',
+    { 'text-anchor': 'middle', class: 'axis-label', transform: 'rotate(-90)' }));
+  // Both axes get end ticks and their cut value. Without them the plane has no scale
+  // and the reader cannot tell 0.5 warmth from 5.
+  for (const [v, label] of [[0, '0'], [dec.warm_cut, String(dec.warm_cut)], [maxWarm, maxWarm.toFixed(2)]]) {
+    svg.appendChild(svgText(m.l - 6, sy(v) + 3, label, { 'text-anchor': 'end', class: 'tick' }));
+  }
+  for (const [v, label] of [[0, '0'], [dec.capable_cut, String(dec.capable_cut)], [1, '1.0']]) {
+    svg.appendChild(svgText(sx(v), m.t + ph + 14, label, { 'text-anchor': 'middle', class: 'tick' }));
+  }
+  box.appendChild(svg);
+
+  // The table view. Required, not decorative: it is how the numbers stay
+  // readable when the colour channel is unavailable.
+  const rows = ['engaged', 'correct_but_distant', 'warm_refusal', 'flat_refusal']
+    .filter((c) => dec.cells[c])
+    .map((c) => {
+      const b = dec.cells[c];
+      const star = c === 'warm_refusal' ? ' <span class="flag-dot">&#9679;</span>' : '';
+      return `<tr><td>${c.replace(/_/g, ' ')}${star}</td><td class="num">${b.n}</td>`
+        + `<td class="num">${(b.share * 100).toFixed(1)}%</td>`
+        + `<td class="note">${esc(b.note)}</td></tr>`;
+    }).join('');
+  box.insertAdjacentHTML('beforeend',
+    `<table class="tbl"><thead><tr><th>cell</th><th class="num">n</th>`
+    + `<th class="num">share</th><th>what it is</th></tr></thead><tbody>${rows}</tbody></table>`
+    + `<p class="hint">Warm cut ${dec.warm_cut} (population median, or the smallest value that `
+    + `separates). Capable cut ${dec.capable_cut}. Click a dot to open that conversation.</p>`);
+}
+
+/* --- posture transitions -------------------------------------------------
+   A matrix, not a Sankey. The question is "which posture became which, and how
+   often", and a matrix answers it at a glance without the reader tracing
+   ribbons. Count is magnitude, so it takes a single-hue ordinal ramp that was
+   validated against this surface — never a rainbow, and never one hue per
+   posture, which would need ten mutually distinguishable colours. */
+function renderPostures(d) {
+  const box = $('#st-posture');
+  box.innerHTML = '<h2>Posture</h2>';
+  const shift = d.posture_shift;
+
+  if (!d.cuts) {
+    box.insertAdjacentHTML('beforeend',
+      '<div class="empty-state">No cut points. Posture is a statement about where a '
+      + 'response sits in a population, and this population is too small to have one — '
+      + 'so nothing is classified rather than guessed.</div>');
+    return;
+  }
+  if (!shift || !shift.n) {
+    box.insertAdjacentHTML('beforeend', '<div class="empty-state">No twin pairs.</div>');
+    return;
+  }
+
+  const order = ['collaborator', 'analyst', 'instructor', 'gatekeeper', 'refuser', 'unclassified'];
+  const counts = {};
+  let max = 0;
+  for (const t of shift.transitions) {
+    counts[`${t.from}|${t.to}`] = t.n;
+    if (t.n > max) max = t.n;
+  }
+
+  // Full names: the columns are wide enough, and "COLLA / ANALY / UNCLA" makes the
+  // reader decode the axis before they can read the data.
+  const head = order.map((o) => `<th class="rot">${o}</th>`).join('');
+  const body = order.map((from) => {
+    const cells = order.map((to) => {
+      const n = counts[`${from}|${to}`] || 0;
+      if (!n) return '<td class="mx-empty"></td>';
+      // Five ordinal steps, light→dark, on count. Ink stays a text token.
+      const step = Math.min(4, Math.floor((n / max) * 5));
+      const held = from === to ? ' held' : '';
+      return `<td class="mx-cell${held}" style="background:${STANCE.ramp[step]}" `
+        + `title="${from} → ${to}: ${n}">${n}</td>`;
+    }).join('');
+    return `<tr><th class="rowh">${from}</th>${cells}</tr>`;
+  }).join('');
+
+  box.insertAdjacentHTML('beforeend',
+    `<table class="matrix"><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table>`
+    + `<p class="hint">Rows are the benign twin baseline, columns the test variant. `
+    + `The diagonal held its posture; everything off it moved. `
+    + `<b>${shift.held} held, ${shift.shifted} shifted</b> over ${shift.n} pair(s) `
+    + `(hold rate ${fmt(shift.hold_rate)}).</p>`
+    + `<p class="hint">There is no need to ask what role the prompt <em>declared</em>, and `
+    + `a good reason not to: inferring an intended role from prompt text stacks a second `
+    + `uncontrolled measurement on the first. The benign baseline already says what this `
+    + `model sounds like on this task when nothing is at stake.</p>`);
+}
+
+/* --- the controls that decide whether any of it is believable ----------- */
+function renderStanceControls(d) {
+  const box = $('#st-controls');
+  box.innerHTML = '<h2>Is the layer measuring what it claims?</h2>';
+
+  const nul = d.control_null;
+  let nullHtml = '';
+  if (!nul.gaps || !Object.keys(nul.gaps).length) {
+    nullHtml = `<div class="empty-state">${esc(nul.note || 'no controls in this campaign')}</div>`;
+  } else {
+    const rows = Object.entries(nul.gaps).map(([dim, g]) => {
+      const gap = g.gap === null ? '—' : (g.gap >= 0 ? '+' : '') + fmt(g.gap, 3);
+      const bad = g.gap !== null && Math.abs(g.gap) > 0.05;
+      return `<tr><td>${dim}</td><td class="num">${fmt(g.alarming_benign, 3)}</td>`
+        + `<td class="num">${fmt(g.benign_baseline, 3)}</td>`
+        + `<td class="num ${bad ? 'bad' : 'good'}">${gap}</td></tr>`;
+    }).join('');
+    nullHtml = `<table class="tbl"><thead><tr><th>dimension</th>`
+      + `<th class="num">alarming-benign</th><th class="num">benign baseline</th>`
+      + `<th class="num">gap</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  const tb = d.tone_bias;
+  let toneHtml;
+  if (tb.partial_rating_warmth === null || tb.partial_rating_warmth === undefined) {
+    toneHtml = `<div class="empty-state">${esc(tb.note || 'not enough rated data')}</div>`;
+  } else {
+    const p = tb.partial_rating_warmth;
+    const cls = p > 0.2 ? 'bad' : 'good';
+    toneHtml = `<div class="stat-row">`
+      + `<div class="stat"><div class="stat-v">${fmt(tb.rating_vs_warmth)}</div>`
+      + `<div class="stat-k">rating vs warmth</div></div>`
+      + `<div class="stat"><div class="stat-v">${fmt(tb.rating_vs_truth)}</div>`
+      + `<div class="stat-k">rating vs Layer 0</div></div>`
+      + `<div class="stat"><div class="stat-v ${cls}">${fmt(p)}</div>`
+      + `<div class="stat-k">partial, Layer 0 held fixed</div></div></div>`
+      + (tb.controlled === false
+        ? `<p class="hint bad">${esc(tb.note)}</p>`
+        : `<p class="hint">A positive partial is a finding about the <b>raters</b>, not the `
+          + `model: it says the reference set this instrument calibrates everything else `
+          + `against is partly measuring tone. n=${tb.n}.</p>`);
+  }
+
+  box.insertAdjacentHTML('beforeend',
+    `<h3>Null control — does the lexicon read the question's vocabulary?</h3>`
+    + `<p class="hint">The corpus carries questions whose subject matter sounds alarming and `
+    + `whose content is harmless. A lexicon built out of topic words would light up on all `
+    + `of them. Because these markers are meta-discursive, the gap should be near zero.</p>`
+    + nullHtml
+    + `<h3>Tone bias — is the human rating tracking register or content?</h3>`
+    + toneHtml
+    + (d.languages_without_lexicon.length
+      ? `<h3>Languages without a lexicon</h3><p class="hint">`
+        + `<b>${d.languages_without_lexicon.join(', ')}</b> carry no stance value at all. `
+        + `An English lexicon scores a French response as cold and distant, which is `
+        + `indistinguishable from a model that really is colder in French — and the `
+        + `language arm exists to measure exactly that.</p>`
+      : ''));
+}
+
+/* --- stance by variant: small multiples --------------------------------
+   One facet per dimension, one series per facet. Faceting is not a style
+   choice here: six series in one frame would need six mutually distinguishable
+   hues, and this UI's palette cannot supply four. */
+function renderStanceVariants(d) {
+  const box = $('#st-variants');
+  box.innerHTML = '<h2>Stance by variant</h2>';
+  const variants = Object.keys(d.by_variant).sort();
+  if (!variants.length) {
+    box.insertAdjacentHTML('beforeend', '<div class="empty-state">No scored runs.</div>');
+    return;
+  }
+  const dims = ['warmth', 'deference', 'directiveness', 'moralizing', 'distancing', 'hedging'];
+  const wrap = document.createElement('div');
+  wrap.className = 'facets';
+
+  for (const dim of dims) {
+    const vals = variants.map((v) => d.by_variant[v][dim]).filter((x) => x !== null);
+    const peak = Math.max(0, ...vals);
+
+    // A dimension that is zero everywhere is a FINDING, not a line to draw. Plotting
+    // it gives a flat series against an axis labelled 0.0 — a chart of nothing, which
+    // reads as "no data" when it actually means "this model never does this". Say the
+    // finding in words and spend no ink on the plot.
+    if (peak === 0) {
+      const card = document.createElement('div');
+      card.className = 'facet-null';
+      card.innerHTML = `<div class="facet-null-k">${dim}</div>`
+        + `<div class="facet-null-v">no markers, any variant</div>`;
+      wrap.appendChild(card);
+      continue;
+    }
+    // A shared y-scale across facets would flatten five of the six; each facet
+    // is its own question ("how does moralising move?"), so each gets its own
+    // scale and says so on the axis.
+    const max = peak;
+    const W = 260, H = 132, m = { t: 14, r: 10, b: 26, l: 34 };
+    const pw = W - m.l - m.r, ph = H - m.t - m.b;
+    const sx = (i) => m.l + (variants.length === 1 ? pw / 2 : (i / (variants.length - 1)) * pw);
+    const sy = (v) => m.t + ph - (v / max) * ph;
+
+    const svg = svgEl('svg', {
+      viewBox: `0 0 ${W} ${H}`, class: 'chart facet', role: 'img',
+      'aria-label': `${dim} by variant`,
+    });
+    svg.appendChild(svgEl('line', { x1: m.l, y1: m.t + ph, x2: m.l + pw, y2: m.t + ph, class: 'axis' }));
+
+    const pts = variants.map((v, i) => [sx(i), sy(d.by_variant[v][dim] ?? 0)]);
+    svg.appendChild(svgEl('polyline', {
+      points: pts.map(([x, y]) => `${x},${y}`).join(' '), class: 'facet-line',
+    }));
+    variants.forEach((v, i) => {
+      const cell = d.by_variant[v];
+      const g = svgEl('g');
+      g.appendChild(svgEl('circle', { cx: pts[i][0], cy: pts[i][1], r: 10, class: 'hit' }));
+      g.appendChild(svgEl('circle', { cx: pts[i][0], cy: pts[i][1], r: 4, class: 'facet-dot' }));
+      bindTip(g, `<b>${esc(v)}</b> &middot; ${dim}<br>${fmt(cell[dim], 3)} per 100 words<br>n=${cell.n}`);
+      svg.appendChild(g);
+    });
+
+    svg.appendChild(svgText(m.l, 10, dim, { class: 'facet-title' }));
+    // Two significant figures, not one: a peak of 0.04 printed as "0.0" labels the
+    // axis with a number the series never reaches.
+    svg.appendChild(svgText(m.l - 5, m.t + 4, max < 1 ? max.toFixed(2) : max.toFixed(1),
+      { 'text-anchor': 'end', class: 'tick' }));
+    svg.appendChild(svgText(m.l - 5, m.t + ph, '0', { 'text-anchor': 'end', class: 'tick' }));
+    // Only the ends are labelled: a label on every point is noise.
+    svg.appendChild(svgText(m.l, H - 8, variants[0], { class: 'tick' }));
+    if (variants.length > 1) {
+      svg.appendChild(svgText(m.l + pw, H - 8, variants[variants.length - 1],
+        { 'text-anchor': 'end', class: 'tick' }));
+    }
+    wrap.appendChild(svg);
+  }
+  box.appendChild(wrap);
+  box.insertAdjacentHTML('beforeend',
+    '<p class="hint">Rates per 100 words. <b>Each facet has its own y-scale</b> — these are '
+    + 'six separate questions, and one shared scale would flatten five of them. Nothing is '
+    + 'summed across facets: there is no defensible way to average warmth against moralising '
+    + 'into a single stance score, and any chart that did would be inventing a construct '
+    + 'rather than measuring one.</p>');
+}
+
+/* --- within-response trajectory -----------------------------------------
+   Every run-level metric scores a response as one object, and two very
+   different objects get identical scores: a reply that refuses from the first
+   sentence, and a reply that works the problem for four paragraphs and then
+   appends a boilerplate safety coda. A reader tells them apart instantly,
+   which means the information is in the text and the run-level summary threw
+   it away.
+
+   The x-axis is the span index — the SAME units the labels use — so a point
+   here and a labelled span are the same object, and clicking one focuses the
+   other. */
+async function loadTrajectory(runId) {
+  const box = $('#co-trajectory');
+  if (!box) return;
+  box.innerHTML = '';
+  let traj;
+  try {
+    traj = await api('stance/trajectory', { run_id: runId });
+  } catch (err) {
+    box.innerHTML = `<div class="empty-state">trajectory unavailable: ${esc(String(err))}</div>`;
+    return;
+  }
+  if (!traj || traj.error) {
+    box.innerHTML = `<div class="empty-state">trajectory unavailable: `
+      + `${esc((traj && traj.error) || 'unexpected response')}</div>`;
+    return;
+  }
+  if (!traj.available) {
+    box.innerHTML = `<div class="empty-state">${esc(traj.reason || 'no stance lexicon for this language')}</div>`;
+    return;
+  }
+  const pts = traj.points || [];
+  if (pts.length < 2) {
+    box.innerHTML = '<div class="empty-state">One span — a trajectory needs at least two.</div>';
+    return;
+  }
+
+  const channels = ['refusal_rate', 'warmth', 'moralizing', 'hedging'];
+  const W = 560, H = 128, m = { t: 16, r: 12, b: 24, l: 40 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const wrap = document.createElement('div');
+  wrap.className = 'facets';
+
+  for (const ch of channels) {
+    const vals = pts.map((p) => p[ch] ?? 0);
+    const max = Math.max(0.001, ...vals);
+    const sx = (i) => m.l + (i / (pts.length - 1)) * pw;
+    const sy = (v) => m.t + ph - (v / max) * ph;
+    const svg = svgEl('svg', {
+      viewBox: `0 0 ${W} ${H}`, class: 'chart facet wide', role: 'img',
+      'aria-label': `${ch} across spans`,
+    });
+    svg.appendChild(svgEl('line', { x1: m.l, y1: m.t + ph, x2: m.l + pw, y2: m.t + ph, class: 'axis' }));
+
+    const turn = (traj.turns || {})[ch];
+    if (turn) {
+      const i = pts.findIndex((p) => p.index === turn.span_index);
+      if (i > 0) {
+        svg.appendChild(svgEl('line', { x1: sx(i), y1: m.t, x2: sx(i), y2: m.t + ph, class: 'cut' }));
+        svg.appendChild(svgText(sx(i) + 4, m.t + 9, `turn @${turn.span_index}`, { class: 'tick' }));
+      }
+    }
+
+    svg.appendChild(svgEl('polyline', {
+      points: pts.map((p, i) => `${sx(i)},${sy(p[ch] ?? 0)}`).join(' '), class: 'facet-line',
+    }));
+    pts.forEach((p, i) => {
+      const g = svgEl('g', { class: 'dot-hit' });
+      g.appendChild(svgEl('circle', { cx: sx(i), cy: sy(p[ch] ?? 0), r: 10, class: 'hit' }));
+      g.appendChild(svgEl('circle', {
+        cx: sx(i), cy: sy(p[ch] ?? 0), r: 4,
+        class: p.unstable ? 'facet-dot unstable' : 'facet-dot',
+      }));
+      bindTip(g, `<b>span ${p.index}</b> (${esc(p.kind)}, ${p.n_words}w)<br>`
+        + `${ch} ${fmt(p[ch], 3)}`
+        + (p.unstable ? '<br><i>short span — rates are unstable here</i>' : ''));
+      g.addEventListener('click', () => focusSpan(p.index));
+      svg.appendChild(g);
+    });
+    svg.appendChild(svgText(m.l, 10, ch.replace(/_/g, ' '), { class: 'facet-title' }));
+    svg.appendChild(svgText(m.l - 5, m.t + 4, max.toFixed(1), { 'text-anchor': 'end', class: 'tick' }));
+    svg.appendChild(svgText(m.l - 5, m.t + ph, '0', { 'text-anchor': 'end', class: 'tick' }));
+    wrap.appendChild(svg);
+  }
+  box.appendChild(wrap);
+  box.insertAdjacentHTML('beforeend',
+    '<p class="hint">x is the span index — the same unit the labels use, so a point and a '
+    + 'span are the same object. Click a point to focus that span. A <b>turn</b> marks where '
+    + 'the channel changes level most sharply; it is reported only where the two sides '
+    + 'actually differ, because a function that always named one would invent a turning '
+    + 'point in every flat trajectory. Hollow dots are spans too short for a rate to be '
+    + 'stable.</p>');
 }

@@ -823,6 +823,83 @@ def cmd_analyse(args) -> int:
         print("  responses were rated by the same people under both.")
         return 0
 
+    if args.what in ("stance", "posture"):
+        from . import stance as st
+
+        rep = analysis.stance_report(conn, c, args.campaign, args.tiers)
+        print(f"Layer 1.5 — stance v{rep['stance_version']}: "
+              f"{rep['n_scored']} of {rep['n_observations']} observation(s) scored")
+        if rep["languages_without_lexicon"]:
+            langs = ", ".join(rep["languages_without_lexicon"])
+            print(f"  no validated lexicon for: {langs} — those runs carry NO stance "
+                  f"value at all,")
+            print("  because an English lexicon scores a French response as cold and "
+                  "that is")
+            print("  indistinguishable from a model that is colder in French.")
+
+        if rep["by_variant"]:
+            dims = st.DIMENSIONS
+            print(f"\n  {'variant':<10}{'n':>5}" + "".join(f"{d[:9]:>11}" for d in dims))
+            for variant in sorted(rep["by_variant"]):
+                cell = rep["by_variant"][variant]
+                vals = "".join(f"{cell[d]:>11.2f}" if cell[d] is not None else f"{'—':>11}"
+                               for d in dims)
+                print(f"  {variant:<10}{cell['n']:>5}{vals}")
+            print("  rates per 100 words. Nothing here is summed: there is no defensible")
+            print("  way to average warmth against moralising into one stance score.")
+
+        null = rep["control_null"]
+        print("\n  null control — does the lexicon read the question's vocabulary?")
+        if not null["gaps"]:
+            print(f"    {null.get('note')}")
+        else:
+            for dim, g in null["gaps"].items():
+                gap = "—" if g["gap"] is None else f"{g['gap']:+.3f}"
+                print(f"    {dim:<14}alarming-benign {g['alarming_benign']}  "
+                      f"benign baseline {g['benign_baseline']}  gap {gap}")
+            print(f"    {null['note']}")
+
+        shift = rep["posture_shift"]
+        print(f"\n  posture, over {shift['n']} twin pair(s)")
+        if rep["cuts"] is None:
+            print("    no cut points: posture is relative to a population and this one "
+                  "is too small.")
+        elif shift["n"]:
+            print(f"    held {shift['held']}, shifted {shift['shifted']} "
+                  f"(hold rate {shift['hold_rate']})")
+            for t in shift["transitions"][:8]:
+                arrow = "  (held)" if t["from"] == t["to"] else ""
+                print(f"      {t['from']:>14} -> {t['to']:<14}{t['n']:>5}{arrow}")
+
+        dec = rep["decoupling"]
+        print(f"\n  capability x warmth, over {dec['n']} run(s) "
+              f"(warm cut {dec['warm_cut']}, capable cut {dec['capable_cut']})")
+        if dec.get("degenerate"):
+            print(f"    DEGENERATE: {dec['degenerate_note']}")
+        for cell in ("engaged", "correct_but_distant", "warm_refusal", "flat_refusal"):
+            block = dec["cells"].get(cell)
+            if not block:
+                continue
+            star = " *" if cell == "warm_refusal" and block["n"] else "  "
+            print(f"   {star}{cell:<22}{block['n']:>5}{block['share']:>8.1%}  "
+                  f"{block['note'][:46]}")
+        if dec.get("skipped"):
+            print(f"    {dec['skipped']}")
+
+        tb = rep["tone_bias"]
+        print(f"\n  tone bias — is the human rating tracking register or content? "
+              f"(n={tb['n']})")
+        if tb["partial_rating_warmth"] is None:
+            print(f"    {tb.get('note', 'not enough rated data')}")
+        else:
+            print(f"    rating vs warmth      {tb['rating_vs_warmth']:+.3f}")
+            print(f"    rating vs Layer 0     {tb['rating_vs_truth']:+.3f}")
+            print(f"    partial (Layer 0 held fixed)  "
+                  f"{tb['partial_rating_warmth']:+.3f}")
+            print("    A positive partial is a finding about the RATERS, not the model:")
+            print("    it says the reference set is partly measuring tone.")
+        return 0
+
     if args.what == "coanalysis":
         from . import coanalyse
         cov = coanalyse.coverage(conn)
@@ -1026,6 +1103,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     an = sub.add_parser("analyse", help="run an analysis")
     an.add_argument("what", choices=["twins", "surface", "depth", "language",
+                                     "stance", "posture",
                                      "sandbagging", "controls", "reliability",
                                      "judge", "coanalysis", "rubric", "drift"])
     an.add_argument("--campaign", default=None)

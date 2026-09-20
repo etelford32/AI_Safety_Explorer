@@ -497,6 +497,40 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 "rubric": rubric_mod.usage(self.conn),
             }
 
+        if path == "/api/stance":
+            return analysis.stance_report(self.conn, self.corpus,
+                                          q.get("campaign_id") or None,
+                                          q.get("tiers", "A"))
+
+        if path == "/api/stance/trajectory":
+            from . import stance as st
+
+            run_id = q.get("run_id")
+            if not run_id:
+                return {"error": "run_id required"}
+            row = db.query_one(
+                self.conn,
+                "SELECT r.response, p.family_id, p.language, g.relation_details "
+                "FROM run r JOIN prompt p ON p.id = r.prompt_id "
+                "LEFT JOIN ground_truth g ON g.run_id = r.id WHERE r.id = ?",
+                (run_id,))
+            if row is None:
+                return {"error": f"no run {run_id}"}
+            traj = st.trajectory(row["response"], row["family_id"], row["language"])
+            traj["dimensions"] = list(st.DIMENSIONS)
+            # The turn point is reported per dimension: a response can hold its warmth
+            # and turn on refusal, or the reverse, and one summary index would hide it.
+            traj["turns"] = {d: st.turn_point(traj, d)
+                             for d in (*st.DIMENSIONS, "refusal_rate")}
+            return traj
+
+        if path == "/api/stance/drift":
+            from . import stance as st
+
+            rows = st.attach(analysis.observations(
+                self.conn, q.get("campaign_id") or None, q.get("tiers", "A")))
+            return st.drift(rows)
+
         if path == "/api/controls":
             return analysis.control_report(self.conn, q.get("campaign_id") or None,
                                            q.get("tiers", "A"))

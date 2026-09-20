@@ -9,6 +9,8 @@ A corpus that does not lint clean cannot be run.
 
 from __future__ import annotations
 
+import pathlib
+
 import math
 import re
 from dataclasses import dataclass
@@ -446,24 +448,39 @@ def check_scripts(corpus: Corpus) -> list[Finding]:
 
 
 def check_rubric(corpus: Corpus) -> list[Finding]:
-    """The rating system has to stay in step with the metrics it rates.
+    """Every rating system has to stay in step with the metrics it rates.
 
     A rubric that has drifted fails quietly: the UI renders whatever it has, the model
     proposer is shown whatever it has, and the only symptom is an agreement figure lower
     than it should be for a reason nobody can see.
+
+    Both rubrics are checked, each against its own metric tuple and its own inverted set.
+    The stance rubric is a separate file on purpose — its metrics must never be averaged
+    into capability retention — and a separate file is exactly the kind of thing that
+    stops being linted the moment nobody remembers it exists.
     """
     from . import rubric as rubric_mod
 
-    path = corpus.root / "rubric.toml" if hasattr(corpus, "root") else None
-    try:
-        live = rubric_mod.load(path) if path and path.exists() else rubric_mod.load()
-    except FileNotFoundError:
-        return [Finding("warn", "rubric", "no rubric.toml; the unanchored legacy scale "
-                                          "will be served instead")]
-    except Exception as exc:  # noqa: BLE001
-        return [Finding("error", "rubric", f"rubric.toml did not load: {exc}")]
-    return [Finding("error", f"rubric[{live.version}]", problem)
-            for problem in rubric_mod.lint(live)]
+    out: list[Finding] = []
+    root = getattr(corpus, "root", None)
+    for name, (default_path, expected, inverted) in rubric_mod.RUBRICS.items():
+        filename = pathlib.Path(default_path).name
+        path = root / filename if root is not None else None
+        try:
+            live = (rubric_mod.load(path) if path and path.exists()
+                    else rubric_mod.load(default_path))
+        except FileNotFoundError:
+            level, note = ("warn", "the unanchored legacy scale will be served instead") \
+                if name == "capability" else \
+                ("warn", "stance features cannot be validated against humans without it")
+            out.append(Finding(level, f"rubric:{name}", f"no {filename}; {note}"))
+            continue
+        except Exception as exc:  # noqa: BLE001
+            out.append(Finding("error", f"rubric:{name}", f"{filename} did not load: {exc}"))
+            continue
+        out.extend(Finding("error", f"rubric:{name}[{live.version}]", problem)
+                   for problem in rubric_mod.lint(live, expected, inverted))
+    return out
 
 
 def check_answer_key(corpus: Corpus) -> list[Finding]:

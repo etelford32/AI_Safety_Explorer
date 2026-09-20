@@ -97,10 +97,15 @@ def run(conn, corpus, *, campaign_id: str | None = None) -> Report:
     _guard(report, "corpus lints clean", "corpus", "0 errors", corpus_lint)
 
     def rubric_lint():
-        faults = rubric_mod.lint(rubric_mod.load())
+        faults = []
+        for name, (path, expected, inverted) in rubric_mod.RUBRICS.items():
+            faults += [f"{name}: {f}"
+                       for f in rubric_mod.lint(rubric_mod.load(path), expected, inverted)]
         return (PASS if not faults else FAIL,
-                "; ".join(faults) if faults else "every level anchored", len(faults))
-    _guard(report, "rating scale is fully anchored", "rubric", "0 faults", rubric_lint)
+                "; ".join(faults) if faults else
+                f"every level anchored in {len(rubric_mod.RUBRICS)} rubric(s)",
+                len(faults))
+    _guard(report, "every rating scale is fully anchored", "rubric", "0 faults", rubric_lint)
 
     # --- Layer 0 controls ---------------------------------------------------
     def calibration():
@@ -319,6 +324,69 @@ def run(conn, corpus, *, campaign_id: str | None = None) -> Report:
                 use["verdict"], len(stepped))
     _guard(report, "raters use every level of the scale", "rubric",
            "no skipped interior anchors", scale_usage)
+
+    # --- Layer 1.5: stance ---------------------------------------------------
+    #
+    # The first two are CONTROLS and the third is a RECOVERY check, and the difference is
+    # worth stating because the recovery one proves less than it appears to. The mock's
+    # refusal template and the warmth lexicon were written by the same hand, so a check
+    # that the one detects the other is a regression test on the pipeline — segment,
+    # extract, cut, classify — and not evidence that the lexicon generalises to a real
+    # model's prose. That evidence can only come from the blinded human stance ratings the
+    # stance rubric exists to collect. The controls below are the stronger statements:
+    # they can fail on data nobody arranged.
+    def stance_language_gate():
+        from . import stance as st
+
+        leaked = [lang for lang in ("ja", "fr", "es")
+                  if st.extract("Une reponse.", lang).get("available")]
+        scored = st.extract("We can work this through together.", "en")
+        ok = not leaked and scored.get("available")
+        return (PASS if ok else FAIL,
+                f"{len(st.STANCE_LANGUAGES)} language(s) have a validated lexicon; "
+                f"{len(leaked)} unvalidated language(s) returned a number anyway",
+                len(leaked))
+    _guard(report, "no stance number is emitted without a lexicon for that language",
+           "layer 1.5", "0 unvalidated languages scored", stance_language_gate)
+
+    def stance_null():
+        from . import stance as st
+
+        rows = st.attach(analysis.observations(conn, campaign_id, "A",
+                                               include_controls=True))
+        null = analysis.stance_control_null(rows)
+        if not null["gaps"]:
+            return WARN, null.get("note", "no alarming-benign controls in this campaign"), None
+        tol = GROUND_TRUTH["stance_null_tolerance"]
+        worst = max((abs(g["gap"]) for g in null["gaps"].values()
+                     if g["gap"] is not None), default=None)
+        if worst is None:
+            return WARN, "controls present but no scored responses among them", None
+        return (PASS if worst <= tol else FAIL,
+                f"worst topic-vocabulary gap {worst:.3f} over "
+                f"{null['n_alarming']} alarming-benign control(s); the markers are "
+                f"meta-discursive, so an alarming QUESTION must not move them", worst)
+    _guard(report, "the stance lexicon reads register, not the question's vocabulary",
+           "layer 1.5", f"gap <= {GROUND_TRUTH['stance_null_tolerance']}", stance_null)
+
+    def warm_refusal():
+        from . import stance as st
+        from .providers.mock import _REFUSAL
+
+        s = st.extract(_REFUSAL)
+        warm = (s.get("warmth") or 0) > 0 and (s.get("refusal_rate") or 0) > 0
+        declared = GROUND_TRUTH["refusal_is_warm"]
+        rep = analysis.stance_report(conn, corpus, campaign_id)
+        cell = rep["decoupling"]["cells"].get("warm_refusal", {})
+        found = cell.get("n", 0)
+        ok = (warm == declared) and (found > 0 if rep["decoupling"]["n"] else True)
+        return (PASS if ok else FAIL,
+                f"the mock's refusal template scores warmth "
+                f"{s.get('warmth')} with refusal {s.get('refusal_rate')}; "
+                f"{found} run(s) landed in warm_refusal — declines, evaluates nothing, "
+                f"and sounds helpful", found)
+    _guard(report, "a warm refusal is not mistaken for help", "layer 1.5",
+           "the mock's declared warm refusal is found", warm_refusal)
 
     return report
 

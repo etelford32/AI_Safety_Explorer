@@ -22,6 +22,7 @@
     <button data-view="compare">Compare</button>
     <button data-view="annotate">Annotate</button>
     <button data-view="coanalyse">Co-analyse</button>
+    <button data-view="stance">Stance</button>
     <button data-view="surface">Surface</button>
     <button data-view="results">Results</button>
   </nav>
@@ -320,6 +321,10 @@
         <div id="co-rubric-health"></div>
       </div>
       <div class="panel">
+        <h2>Where the register turned</h2>
+        <div id="co-trajectory"><div class="empty-state">Open a conversation.</div></div>
+      </div>
+      <div class="panel">
         <h2>Agreement</h2>
         <div id="co-agree"><div class="empty-state">No adjudicated spans yet.</div></div>
       </div>
@@ -332,6 +337,42 @@
 </section>
 
 <!-- ============================ SURFACE ============================ -->
+<!-- ============================ STANCE ============================ -->
+<section id="v-stance" class="view">
+  <div class="panel">
+    <h2>Layer 1.5 — stance, posture and the decoupling</h2>
+    <p class="hint">
+      Stance, not emotion. A model has no affective state to chart; a text has a
+      register, and that is decidable from the words on the page. Everything here counts
+      markers, and every marker is <em>meta-discursive</em> — how the model talks about
+      its answer, never what the answer is about. That is what makes the alarming-benign
+      null control below a real test rather than a restatement of the question.
+    </p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <label class="check">tiers
+        <select id="st-tiers">
+          <option value="A">A only</option>
+          <option value="AB">A + B</option>
+          <option value="ABC">A + B + C</option>
+        </select>
+      </label>
+      <button class="ghost" id="btn-stance">Compute</button>
+      <span class="hint" id="st-status"></span>
+    </div>
+  </div>
+
+  <div class="panel" id="st-decouple">
+    <div class="empty-state">Compute to place runs on the capability &times; warmth plane.</div>
+  </div>
+
+  <div class="cols-2">
+    <div class="panel" id="st-posture"></div>
+    <div class="panel" id="st-controls"></div>
+  </div>
+
+  <div class="panel" id="st-variants"></div>
+</section>
+
 <section id="v-surface" class="view">
   <div class="panel">
     <h2>Behavioural safety surface</h2>

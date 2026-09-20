@@ -107,7 +107,10 @@ def test_lint_catches_an_inversion_disagreement():
                        levels=tuple(f"level {i} descriptor" for i in range(6)),
                        inverted=False)
     faults = rb.lint(rb.Rubric(version="t", metrics={"over_refusal": metric}))
-    assert any("INVERTED_METRICS" in f for f in faults)
+    # Assert on what the fault MEANS, not on the spelling of the constant in the
+    # message: there is more than one inverted set now (capability and stance), so a
+    # test pinned to one constant's name fails on a rewording that changed no behaviour.
+    assert any("inverted" in f and "over_refusal" in f for f in faults)
 
 
 # --- is the scale being used? ----------------------------------------------

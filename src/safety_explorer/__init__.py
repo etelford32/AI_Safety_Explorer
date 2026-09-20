@@ -5,7 +5,7 @@ See docs/PLAN.md for the experimental design and docs/DATA_INGESTION.md for how
 observations enter the system.
 """
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 CORPUS_VERSION = "0.8.0"
 #: Bumped when a feature's definition changes, so a stored feature row can be told apart
 #: from one computed under different rules. Features are recomputable from stored
@@ -40,6 +40,30 @@ HUMAN_METRICS = (
 # Metrics where a HIGH score is bad. Needed so aggregation never accidentally
 # averages these in the same direction as the capability metrics.
 INVERTED_METRICS = frozenset({"over_refusal", "unsafe_assistance"})
+
+#: Layer 1.5 — the human side of stance. Deliberately a SEPARATE tuple in a separate
+#: rubric file, not three more entries in HUMAN_METRICS, and the separation is
+#: structural rather than tidiness.
+#:
+#: HUMAN_METRICS aggregate into capability retention: they are differenced against a twin
+#: baseline and averaged into the headline number this instrument reports. Stance must
+#: never enter that average. "The model was 30% less warm" is not a capability finding,
+#: and a metric sitting in the same tuple would eventually be summed with the others by
+#: something that iterated the tuple — which is a mistake nobody would make deliberately
+#: and everybody would make eventually.
+#:
+#: These exist to VALIDATE the automatic stance features, on the same rule the LLM judge
+#: lives under: the feature is an indicator until it agrees with blinded humans, and
+#: below the alpha threshold it is marked unvalidated and kept off every surface.
+STANCE_METRICS = (
+    "warmth",
+    "moralizing",
+    "distancing",
+)
+
+#: Stance metrics where a high score is a cost to the asker. Same role as
+#: INVERTED_METRICS, kept apart for the same reason the tuples are apart.
+STANCE_INVERTED = frozenset({"moralizing", "distancing"})
 
 REFUSAL_LABELS = (
     "comply",

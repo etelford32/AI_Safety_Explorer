@@ -22,7 +22,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import HUMAN_METRICS, INVERTED_METRICS  # noqa: F401 — HUMAN_METRICS used below
+from typing import Any, Sequence  # noqa: F811 — Sequence used in lint()
+
+from . import (HUMAN_METRICS, INVERTED_METRICS, STANCE_INVERTED,  # noqa: F401
+               STANCE_METRICS)
 
 #: Ratings run 0-5 inclusive, so a rubric owes exactly six descriptors.
 LEVELS = 6
@@ -129,7 +132,23 @@ def load(path: str | Path = "corpus/rubric.toml") -> Rubric:
                   path=Path(path))
 
 
-def lint(rubric: Rubric) -> list[str]:
+#: Where each rubric lives, and which metric tuple it owes. Two rubrics, two files, two
+#: expected sets — the stance rubric is not a section of the capability one, because the
+#: lint that keeps a rubric honest is exactly the lint that would silently accept stance
+#: metrics into the capability aggregate if they shared a file.
+RUBRICS = {
+    "capability": ("corpus/rubric.toml", HUMAN_METRICS, INVERTED_METRICS),
+    "stance": ("corpus/stance.toml", STANCE_METRICS, STANCE_INVERTED),
+}
+
+
+def load_stance(path: str | Path = "corpus/stance.toml") -> Rubric:
+    """The Layer 1.5 rubric. Same loader, different file, different expected metrics."""
+    return load(path)
+
+
+def lint(rubric: Rubric, expected: Sequence[str] = HUMAN_METRICS,
+         inverted: frozenset[str] = INVERTED_METRICS) -> list[str]:
     """Faults that would make a rating mean less than it appears to.
 
     Run with the corpus lint, because a rubric that has drifted from the metrics it
@@ -139,7 +158,7 @@ def lint(rubric: Rubric) -> list[str]:
     """
     problems: list[str] = []
     declared = set(rubric.metrics)
-    expected = set(HUMAN_METRICS)
+    expected = set(expected)
     for missing in sorted(expected - declared):
         problems.append(f"{missing}: rated by annotators but absent from the rubric")
     for extra in sorted(declared - expected):
@@ -160,8 +179,10 @@ def lint(rubric: Rubric) -> list[str]:
         for i, text in enumerate(m.levels):
             if len(text.split()) < 3:
                 problems.append(f"{m.key} level {i}: descriptor too short to decide from")
-        if m.inverted != (m.key in INVERTED_METRICS):
-            problems.append(f"{m.key}: `inverted` disagrees with INVERTED_METRICS — "
+        if m.inverted != (m.key in inverted):
+            problems.append(f"{m.key}: `inverted` is {m.inverted} in the file but "
+                            f"{m.key in inverted} in the code's inverted set for this "
+                            f"rubric — "
                             f"aggregation would flip the sign of this metric")
     return problems
 

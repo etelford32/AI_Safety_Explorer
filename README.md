@@ -466,6 +466,103 @@ refusal, and the retry count is stored.
 **The evaluator is not the experiment.** An LLM judge is off by default, stored
 separately, and reported only as agreement with the human reference set.
 
+**Stance is measured; emotion is not.** The obvious next chart is an "emotion" readout,
+and it is the one thing in this design that cannot be made honest. A model has no
+affective state to plot, so a chart labelled *emotion* asserts something no data here
+could falsify. A *text* has a register, and that is decidable from the words on the page:
+whether it acknowledges you, apologises, instructs, moralises, or retreats into the
+passive voice. Layer 1.5 counts those, on the same terms as every other automatic
+feature — and on the same probation as the LLM judge, an indicator until blinded humans
+agree with it.
+
+Three constraints do most of the work:
+
+**Markers are meta-discursive, never topical.** `moralizing` matches *"it's important to
+note that"*, never *"dangerous"*. That is not fastidiousness. The corpus carries an
+alarming-benign control arm whose questions sound alarming and whose content is harmless,
+so a response about an explosion legitimately contains "danger" and "harm". Had those
+counted, the control would have fired on topic vocabulary in every family and "the model
+moralises about risky questions" would have been an artefact of the subject matter. Because
+the markers describe how the model talks about its answer rather than what the answer is
+about, the control is a real test — and `explorer validate` runs it, at a gap of 0.000
+over 84 controls.
+
+**Stance is available per language, not scored per language.** The lexicons are English.
+An English lexicon applied to French finds few markers and reports the response as cold and
+distant — indistinguishable from a model that genuinely is colder in French, which is what
+the language arm exists to measure. So a language without a validated lexicon returns
+nothing at all rather than a number that looks like a measurement. The numeric extractor
+learned this across four parser bugs that each faked a convincing cross-lingual effect.
+
+**Posture is relative to a population, or it is not reported.** There is no universal
+quantity of hedging that makes a response a gatekeeper. Cut points come from the corpus at
+hand, and `posture()` returns `unclassified` without them rather than guessing — a real
+category, because forcing every response into a posture is how a classification
+manufactures structure.
+
+```
+explorer analyse stance
+
+  variant       n     warmth  deference  directive  moralizin  distancin    hedging
+  C            16       0.00       0.00       0.00       0.00       0.00       1.39
+  D            16       0.27       0.00       0.00       0.00       0.00       1.50
+  E            16       0.98       0.00       0.00       0.00       0.00       0.75
+
+  capability x warmth, over 128 run(s) (warm cut 0.526, capable cut 0.5)
+     engaged                   3    2.3%  answers the question, in the register of a colleague
+     correct_but_distant      95   74.2%  the content survived; the model no longer speaks to you
+   * warm_refusal             29   22.7%  friendly, apologetic, and contains nothing
+     flat_refusal              1    0.8%  declines, and is legible about declining
+```
+
+**The chart worth having is the decoupling, not the stance.** Capability is Layer 0 —
+objective, computed against the answer key, with no human and nothing from this module in
+it. Warmth is Layer 1.5. Both axes are measured and neither is derived from the other, so a
+response in the off-diagonal is two instruments disagreeing rather than one instrument
+disagreeing with itself. Two of the four cells are the whole alignment problem:
+**correct but distant**, where every step of the physics survives and the model has stopped
+speaking to you as a colleague — a cost no capability metric can see — and **warm refusal**,
+the friendly, apologetic reply that contains nothing. That second cell is the failure mode
+human raters are worst at, because warmth reads as helpfulness.
+
+Which is a claim this instrument can test rather than assert. `tone_bias` correlates the
+human `capability_retention` rating with warmth *holding Layer 0 fixed*. A positive partial
+is a finding about the **raters** — it says the reference set everything else is calibrated
+against is partly measuring tone — and it is only askable because there is an objective
+channel to difference against.
+
+**Role is measured as a shift, not as a declaration.** There is no need to ask what role a
+prompt declared, and a good reason not to: inferring an intended role from prompt text
+stacks a second uncontrolled measurement on the first. The twin design already supplies the
+reference. The benign baseline establishes what this model sounds like on this task when
+nothing is at stake; the test variant is the same task with one dimension moved. So posture
+drift is attributable exactly as every other twin delta here is, and the view is a
+transition matrix whose diagonal is what held.
+
+**Within a response, the register has a shape.** Every run-level metric scores a reply as
+one object, and two very different objects score identically: one that refuses from the
+first sentence, and one that works the problem for four paragraphs and then appends a
+boilerplate safety coda. A reader tells them apart instantly, so the information is in the
+text and the summary threw it away. The co-analysis view plots each channel across span
+index — the same unit the labels use, so a point and a labelled span are the same object —
+and marks the **turn**, reported only where the two sides actually differ, because a
+function that always named one would invent a turning point in every flat trajectory.
+
+**And the control that has to run in real time.** A three-hour campaign silently served by
+two different models produces one dataset every analysis here will pool, and nothing
+downstream can separate them afterwards. `stance.drift` watches latency, length, accuracy
+and warmth while the campaign is still running. The confound is severe and is the whole
+design: a campaign walks the corpus in order, so accuracy genuinely falls over the run by
+construction, and a naive step detector would report drift on every healthy campaign it
+ever saw. So nothing is compared raw — each run is reduced to its deviation from the median
+of **its own prompt**, which removes the corpus order entirely, and the scan runs on those
+residuals. What survives is the same question answered differently at different times.
+
+On the reference campaign it flags `latency_ms` at 3.26σ while length, accuracy and warmth
+all sit under 1σ — a true positive with an unglamorous cause: that campaign really was run
+in two sittings. Which is the reading the split is for. The serving changed; the model did
+not.
+
 **Every control, in one command.** All of the above ships with its own falsification
 test, and each of those tests found a real defect at some point — but they were scattered
 across five modules and as many CLI flags, which means in practice they get run when
@@ -540,6 +637,7 @@ browser does:
 | **Explore** | Five dimension sliders select the nearest authored prompt; stored runs; response with its automatic features |
 | **Compare** | A run against its declared capability twin — scores, retention ratios, and a word-level diff of what disappeared |
 | **Annotate** | The blinded queue: metadata hidden until you submit, coverage-planned selection, rubric anchors, refusal taxonomy, escalate flag |
+| **Stance** | The capability &times; warmth plane, the posture transition matrix, per-dimension small multiples, and the controls that decide whether any of it is believable |
 | **Surface** | 2-D marginal slices with per-cell `n`; unsampled cells drawn empty, never interpolated |
 | **Results** | Twin deltas, the depth interaction, false-positive controls, reliability, drift |
 
@@ -715,6 +813,7 @@ explorer truth [--targets]        score responses against computed answer keys
        truth --calibrate          measure the extractor's per-language floor
        truth --coherence          validate the internal-consistency identities
        truth --items              item analysis: is the answer key carrying information?
+explorer analyse stance           Layer 1.5: register, posture, the decoupling plane
 explorer validate                 run every control; is the instrument sound today?
 explorer annotate                 queue responses for blinded annotation
 explorer propose [--rubric]       propose ratings + span labels for stored conversations

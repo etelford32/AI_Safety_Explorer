@@ -235,6 +235,7 @@ def observations(conn: sqlite3.Connection, campaign_id: str | None = None,
                r.finish_reason, r.stop_details,
                r.cue_id, r.cue_level, r.cue_arm,
                p.family_id, p.twin_group_id, p.variant, p.arm, p.sub_arm, p.control_arm,
+               p.language,
                p.title, p.text AS prompt_text, p.expected_benign, p.answer_key,
                -- Dimensions are namespaced because `specificity` is BOTH a design
                -- dimension and a human metric. Without the prefix the annotation score
@@ -1311,3 +1312,124 @@ def campaign_comparison(conn: sqlite3.Connection, metric: str = "capability_rete
             "A difference smaller than the repeat spread is not evidence of drift.",
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Layer 1.5 — stance, posture and the decoupling
+# ---------------------------------------------------------------------------
+
+def stance_report(conn: sqlite3.Connection, corpus, campaign_id: str | None = None,
+                  tiers: str = "A", cue: str | None = "none") -> dict[str, Any]:
+    """Everything Layer 1.5 knows, assembled once.
+
+    Stance is recomputed from the stored responses rather than read back, so this is
+    always current with the lexicons and a lexicon fix needs no migration and no re-run.
+
+    The `cue` default matters and is the same one `twin_deltas` learned the hard way: read
+    on the uncued arm unless asked otherwise, so the ladder is never silently differenced
+    against a baseline from a different cue severity.
+    """
+    from . import stance as st
+
+    obs = st.attach(observations(conn, campaign_id, tiers, include_controls=True))
+    family_obs = [o for o in obs if o.get("arm") == "family"]
+    if cue is not None:
+        family_obs = [o for o in family_obs if (o.get("cue_id") or "none") == cue]
+
+    cuts = st.calibrate(family_obs)
+
+    # Per variant, the mean of each stance dimension. Unavailable languages contribute
+    # nothing rather than zero — an English lexicon scoring a French response as cold is
+    # the exact artefact this layer refuses to produce.
+    by_variant: dict[str, dict[str, Any]] = {}
+    for o in family_obs:
+        v = st.vector(o.get("stance") or {})
+        if v is None:
+            continue
+        cell = by_variant.setdefault(o["variant"], {"n": 0, **{d: 0.0 for d in st.DIMENSIONS}})
+        cell["n"] += 1
+        for d in st.DIMENSIONS:
+            cell[d] += v[d]
+    for cell in by_variant.values():
+        for d in st.DIMENSIONS:
+            cell[d] = round(cell[d] / cell["n"], 3) if cell["n"] else None
+
+    postures: dict[str, int] = {}
+    for o in family_obs:
+        p = st.posture(o.get("stance") or {}, cuts, o.get("gt_graded"))
+        postures[p] = postures.get(p, 0) + 1
+
+    # Posture shift needs both sides of each twin pair as full rows.
+    by_cell = {(o["prompt_id"], o["repeat_index"], o.get("cue_id") or "none"): o
+               for o in family_obs}
+    pairs = []
+    for o in family_obs:
+        variant = corpus.by_id(o["prompt_id"])
+        if variant is None or not variant.baseline:
+            continue
+        base = by_cell.get((variant.baseline, o["repeat_index"], o.get("cue_id") or "none"))
+        if base is None:
+            continue
+        pairs.append({"family_id": o["family_id"], "variant": o["variant"],
+                      "baseline_row": base, "test_row": o})
+
+    unavailable = sorted({(o.get("language") or "en") for o in obs
+                          if not st.available(o.get("language"))})
+
+    return {
+        "stance_version": st.STANCE_VERSION,
+        "n_observations": len(family_obs),
+        "n_scored": sum(1 for o in family_obs if st.vector(o.get("stance") or {})),
+        "languages_without_lexicon": unavailable,
+        "cuts": ({"quantile": cuts.quantile, "n": cuts.n,
+                  "high": {k: round(v, 3) for k, v in cuts.high.items()}}
+                 if cuts else None),
+        "by_variant": by_variant,
+        "postures": postures,
+        "posture_shift": st.posture_shift(pairs, cuts),
+        "decoupling": st.decouple(family_obs),
+        "tone_bias": st.tone_bias(family_obs),
+        "control_null": stance_control_null(obs),
+    }
+
+
+def stance_control_null(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """The null control for the stance lexicons: do they move on vocabulary alone?
+
+    The corpus carries an `alarming_benign` control arm — questions whose subject matter
+    sounds alarming and whose content is entirely harmless. A stance lexicon built out of
+    topic words would light up on those in every family, and the resulting "the model
+    moralises about risky-sounding questions" would be a restatement of which words the
+    question contained.
+
+    Because the markers here are meta-discursive by construction, that arm is a real test.
+    This function is what turns the construction into a measurement: the gap between the
+    alarming-benign controls and the benign family baselines is what should be near zero.
+
+    Reported for `moralizing` and `distancing`, the two dimensions whose lexicons a topic
+    word could plausibly have contaminated. Warmth markers have no topical form.
+    """
+    from . import stance as st
+
+    alarming = [r for r in rows if r.get("control_arm") == "alarming_benign"]
+    benign = [r for r in rows if r.get("arm") == "family" and r.get("variant") == "C"]
+
+    def mean(pool, dim):
+        vals = [v[dim] for r in pool if (v := st.vector(r.get("stance") or {}))]
+        return round(sum(vals) / len(vals), 3) if vals else None
+
+    out: dict[str, Any] = {"n_alarming": len(alarming), "n_benign": len(benign), "gaps": {}}
+    if not alarming or not benign:
+        out["note"] = ("needs both the alarming-benign control arm and benign family "
+                       "baselines in the same campaign")
+        return out
+
+    for dim in ("moralizing", "distancing"):
+        a, b = mean(alarming, dim), mean(benign, dim)
+        out["gaps"][dim] = {
+            "alarming_benign": a, "benign_baseline": b,
+            "gap": None if a is None or b is None else round(a - b, 3),
+        }
+    out["note"] = ("a large positive gap means the lexicon is reading the question's "
+                   "vocabulary rather than the response's register")
+    return out

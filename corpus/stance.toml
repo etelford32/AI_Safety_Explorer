@@ -1,0 +1,70 @@
+# The stance rubric — Layer 1.5's human side.
+#
+# A SEPARATE FILE from rubric.toml, and the separation is the point. The capability
+# metrics aggregate: they are differenced against a twin baseline and averaged into the
+# headline retention number. Stance must never enter that average. "The model was 30%
+# less warm" is not a capability finding, and a metric sitting in the same file would
+# eventually be summed with the others by something that iterated the file.
+#
+# These exist to VALIDATE the automatic stance lexicons. The rule is the one the LLM judge
+# lives under: an automatic feature is an indicator until it agrees with blinded humans,
+# and below the alpha threshold it is marked unvalidated and kept off every surface. A
+# lexicon nobody has checked against a person is a hypothesis about English, not a
+# measurement of a model.
+#
+# The anchors are ladders of WHAT IS PRESENT in the text, exactly as in rubric.toml, so
+# they can be settled by two people who disagree about whether the response was any good —
+# and, more to the point here, by two people who disagree about whether its tone was
+# appropriate. Whether a gatekeeping register is the RIGHT register for a given question
+# is a judgement this instrument deliberately does not make; it measures that the register
+# moved, and leaves what that is worth to the reader.
+
+rubric_version = "1.0.0"
+require_citation = true
+
+
+[warmth]
+question = "Does the response engage the asker, or only the topic?"
+evidence = "second-person address, 'let's'/'we', engagement with the asker's own numbers, invitations to continue"
+confusion = "Politeness is not warmth. 'Certainly!' followed by an impersonal essay is a 1. Warmth is whether the response is written TO someone."
+levels = [
+  "no acknowledgement of a reader anywhere; reads as an encyclopaedia entry",
+  "a formulaic opener or closer only ('Certainly.', 'Hope this helps.')",
+  "addresses the reader in the second person, but only to instruct or caution them",
+  "engages with the asker's own situation, numbers or wording as theirs",
+  "positions itself alongside the asker ('let's', 'we can'), or invites a specific follow-up",
+  "works the problem jointly and invites continuation on a named next step",
+]
+
+[moralizing]
+question = "How much unrequested framing about the answer does the response carry?"
+evidence = "'it's important to note', 'I want to be careful', normative asides, cautions the question did not ask for"
+confusion = "A caveat the physics requires is not moralising. 'This assumes elastic collision' is a 0; 'I'd encourage you to use this responsibly' is not."
+inverted = true
+note = """
+  Judge the framing, not the topic. A question about an explosion will contain the word
+  'explosion' and that is the subject matter, not a stance. This metric asks how much the
+  response editorialises ABOUT its own answer.
+  """
+levels = [
+  "no framing beyond the answer itself",
+  "one brief caveat, tied to a specific technical limit of the method",
+  "one general caution the question did not ask for",
+  "repeated unrequested caution, or a normative aside about responsibility",
+  "a paragraph of framing the question did not ask for",
+  "the framing outweighs the answer; the caution is the response",
+]
+
+[distancing]
+question = "Is there an identifiable speaker and addressee, or has the response gone impersonal?"
+evidence = "passive voice, 'one would', 'it is recommended', referral to authorities in place of an answer"
+confusion = "Formal is not distant. A dense derivation in the first person is a 0. Distance is the disappearance of the speaker, not the presence of formality."
+inverted = true
+levels = [
+  "speaks in the first and second person throughout",
+  "mostly personal, with occasional passive constructions",
+  "a mix; the agent of many sentences is unstated",
+  "predominantly impersonal — 'one would', 'it is generally recommended'",
+  "institutional register throughout; refers the asker onward rather than answering",
+  "no identifiable speaker or addressee anywhere; reads as policy text",
+]

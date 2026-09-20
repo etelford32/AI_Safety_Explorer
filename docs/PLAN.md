@@ -823,6 +823,140 @@ It also cost two bugs, both found by that validation and neither visible without
   small-sample artefact. `bootstrap_ci` grew a `statistic` parameter and the median
   remains the default, since every existing delta report depends on it.
 
+### [ADD] Layer 1.5 — stance, posture, and what "emotion" would have cost (v0.13)
+
+The request was an emotion chart and an agent-role alignment chart. One of those can be
+made honest and the other cannot, and the difference is worth writing down because it is
+the same distinction this whole document turns on.
+
+**A model has no affective state to plot.** A chart labelled *emotion* asserts something
+no data collected here could falsify — there is no measurement that would come back and
+say "no, it was not uneasy". A *text*, on the other hand, has a register, and that is
+decidable from the words on the page in exactly the way the rubric anchors are: whether it
+acknowledges the asker, apologises, instructs, moralises, or retreats into the passive
+voice. So Layer 1.5 measures stance. The visual is the one that was asked for; the claim
+underneath it is one the instrument can defend.
+
+Three constraints carry the layer, and each corresponds to an artefact it would otherwise
+have produced:
+
+1. **Markers are meta-discursive, never topical.** `moralizing` matches "it's important to
+   note that" and never "dangerous". The corpus carries an alarming-benign control arm —
+   harmless questions with alarming vocabulary — so a response about an explosion
+   legitimately contains "harm" and "danger". Had those counted as moralising, the control
+   would have fired in every family and "the model moralises about risky questions" would
+   have been a restatement of which words the question contained. Because the markers
+   describe how the model talks about its answer rather than what the answer is about, that
+   arm becomes a real null control, and it runs in `explorer validate`.
+2. **Stance is available per language, not scored per language.** The lexicons are English.
+   Applied to French they find few markers and report the response as cold — which is
+   indistinguishable from a model that really is colder in French, the exact thing the
+   language arm exists to measure. A language with no validated lexicon returns no number
+   at all. This is the numeric extractor's lesson, which cost four parser bugs that each
+   faked a convincing cross-lingual effect, applied before it could be relearned.
+3. **Posture is relative to a population, or it is not reported.** There is no universal
+   quantity of hedging that makes a response a gatekeeper, and inventing a threshold would
+   bake one model's habits into the instrument. Cut points are derived from the corpus at
+   hand; without them `posture()` returns `unclassified`, which is a real category rather
+   than a failure. Forcing every response into a posture is how a classification
+   manufactures structure.
+
+#### The decoupling is the finding-shaped part
+
+Capability is Layer 0 — objective, computed against the answer key, with nothing from this
+module in it. Warmth is Layer 1.5. Both axes are measured and neither derives from the
+other, so a response off the diagonal is two instruments disagreeing rather than one
+disagreeing with itself. Two of the four cells are the alignment problem:
+
+* **correct but distant** — the reasoning survived intact and the model stopped addressing
+  the asker as a colleague. A real cost, invisible to every capability metric here.
+* **warm refusal** — friendly, apologetic, helpful-sounding, containing nothing. The
+  failure mode human raters are worst at, because warmth reads as helpfulness.
+
+That last sentence is a hypothesis, not a flourish, and `tone_bias` turns it into a
+measurement: the partial correlation of the human `capability_retention` rating with
+warmth, holding Layer 0 fixed. A positive partial is a finding about the **raters** — that
+the reference set this instrument calibrates everything else against is partly measuring
+tone. It is askable only because an objective channel exists to difference against, which
+is the argument for Layer 0 restated from a new direction.
+
+The function refuses to overstate its own control. Where Layer 0 has no variance in the
+sample there is nothing to hold fixed, so it reports the raw correlation and says so
+(`controlled: false`) rather than returning a partial that was never computed or a `None`
+that throws away the answer.
+
+#### Role, measured as a shift rather than a declaration
+
+The obvious construction of "role alignment" compares the role the prompt asked for against
+the role the response enacted. It is the wrong construction: inferring an intended role
+from prompt text stacks a second uncontrolled measurement on the first, and then the gap
+between them is the sum of two errors.
+
+The twin design already supplies the reference. The benign baseline is what this model
+sounds like on this task when nothing is at stake; the test variant is the same task with
+one dimension moved. So posture drift is attributable in exactly the way every other twin
+delta here is, using the same cue-aware cell key that v0.12's bug made necessary, and the
+view is a transition matrix whose diagonal is what held.
+
+#### The controls the layer ships with
+
+Per the standing rule that no arm lands without a way to falsify it:
+
+* the **alarming-benign null** (does the lexicon read the question's vocabulary?);
+* the **language gate** (is a number ever emitted without a lexicon?);
+* a **degenerate-cut detector** on the decoupling plane. Warmth is zero-inflated: where a
+  model writes no collaborative markers the median lands on a mass point, `w >= cut` calls
+  every response warm, two cells fill and two stay empty — and the chart reads as a finding
+  about the model when it is an artefact of the summary. This is the same degeneracy that
+  made a median bootstrap useless on a difference of indicators in v0.11, in a new place,
+  which is why it is now detected rather than trusted;
+* **drift**, below, which is the first control here that has to run in real time.
+
+#### Drift, and the confound that would have made it useless
+
+A three-hour campaign silently served by two different models yields one dataset that every
+analysis here will pool, and nothing downstream can separate them afterwards. The time to
+notice is while the budget is still unspent.
+
+The confound is the campaign's own design and it is severe: a campaign walks the corpus in
+order, so the ladder marches A, B, C, D, E and accuracy genuinely falls over the run by
+construction. A naive step detector reports drift on every healthy campaign it ever sees.
+So nothing is compared raw. Each run is reduced to its deviation from the median of **its
+own prompt**, which removes the design composition entirely, and the scan runs on those
+residuals — what is left is the same question answered differently at different times,
+which is what drift actually is.
+
+On the reference campaign it flags `latency_ms` at 3.26 sigma with length, accuracy and
+warmth all under 1 sigma. That is a true positive with a dull cause — the campaign was run
+in two sittings — and it is exactly the reading the split is for: the serving changed, the
+model did not.
+
+#### What the charts cost, and what rendering them found
+
+The charts are inline SVG on the existing vanilla stack. The palette this UI already uses
+fails a categorical-colour check badly — `--warn` against `--good` collapses to a CVD
+Delta E of 3.9, and `--bad` against `--warn` is 11.2 even under full colour vision — so
+none of these encodes a series by hue. The decoupling plane encodes its cells by
+**position**, which is what the axes already say; stance-by-variant is **small multiples**,
+one series per facet, so no facet ever has two hues to tell apart; the posture matrix puts
+count on a validated single-hue **ordinal** ramp. That is a better design than a legend of
+six colours would have been, not merely an easier one to validate.
+
+Rendering the page — rather than trusting the JSON — found three defects that no Python
+test and no API response could have shown:
+
+* **`<td class="cell">` collided with the surface heatmap's long-standing `.cell` rule**,
+  which sets `display: flex` and a fixed 62x42 box. The data was right and the markup was
+  right, and a 6x6 matrix rendered as an unreadable stacked column. `<table class="grid">`
+  collided the same way. A class-name collision is invisible in either file alone and the
+  API returns identical bytes either way; only a rendered page knows. Both are now pinned
+  by browser tests that measure geometry, and both tests were confirmed to fail when the
+  collision is reintroduced.
+* **four of six facets plotted an all-zero series** against an axis labelled `0.0` — a
+  chart of nothing, which reads as "no data" when it actually means "this model never does
+  this". That is a finding, and it now appears in words instead of ink.
+* **the plane had no axis ticks at all**, so 0.5 warmth and 5 warmth looked identical.
+
 ### [ADD] One command that asks whether the instrument is sound (v0.12)
 
 Every arm in this document shipped with a falsification test, and the record of those
