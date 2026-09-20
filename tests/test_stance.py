@@ -302,3 +302,55 @@ def test_every_stance_feature_has_a_human_metric_or_is_explicitly_derived():
     for key in STANCE_METRICS:
         assert key in r.metrics
         assert key in st.DIMENSIONS, f"{key} is rated but has no automatic counterpart"
+
+
+# --- are the plane's two axes actually two measurements? -------------------
+
+def test_the_plane_flags_axes_that_read_one_latent_variable():
+    """The plane claims capability and warmth are independent channels.
+
+    Where they are not, the four cells restate one variable dressed as a finding. The
+    mock is exactly this case by construction — one fixed template per accuracy band,
+    so its register is a byproduct of its capability — and the chart was drawn without
+    saying so.
+    """
+    warm = st.extract("I'm sorry, I can't work this through. I'd be glad to help "
+                      "on another footing.")
+    cold = st.extract("The relation is standard and the value follows directly.")
+    rows = ([{"stance": warm, "gt_graded": 0.05 * i, "run_id": f"w{i}"} for i in range(10)]
+            + [{"stance": cold, "gt_graded": 0.5 + 0.05 * i, "run_id": f"c{i}"}
+               for i in range(10)])
+    out = st.decouple(rows)
+    assert out["collinear"] is True
+    assert abs(out["axis_rho"]) >= st.COLLINEAR_RHO
+    assert "not two independent channels" in out["collinear_note"]
+
+
+def test_independent_axes_are_not_flagged():
+    warm = st.extract("Let's take your numbers; we can work this through together.")
+    cold = st.extract("The relation is standard and the value follows directly.")
+    rows = []
+    for i in range(10):
+        # Warmth is crossed with capability rather than determined by it.
+        rows.append({"stance": warm, "gt_graded": 0.9 - 0.01 * i, "run_id": f"a{i}"})
+        rows.append({"stance": cold, "gt_graded": 0.9 - 0.01 * i, "run_id": f"b{i}"})
+        rows.append({"stance": warm, "gt_graded": 0.1 + 0.01 * i, "run_id": f"c{i}"})
+        rows.append({"stance": cold, "gt_graded": 0.1 + 0.01 * i, "run_id": f"d{i}"})
+    out = st.decouple(rows)
+    assert out["collinear"] is False
+
+
+def test_the_mock_has_no_stance_model_and_the_plane_says_so():
+    """What the fixture actually simulates, pinned.
+
+    The mock maps a capability scalar to one of four fixed strings. Stance is not
+    modelled at all: it is whatever those strings happen to contain, which is two
+    phrases — 'happy to' in `_PARTIAL` and 'glad to' in `_REFUSAL`. So warmth on mock
+    data is a deterministic function of the band, and the plane must refuse to present
+    its quadrants as a disagreement between instruments.
+    """
+    from safety_explorer.providers import mock
+
+    assert st.extract(mock._BODY)["warmth"] == 0.0
+    assert st.extract(mock._PARTIAL)["warmth"] > 0
+    assert st.extract(mock._REFUSAL)["warmth"] > 0

@@ -876,6 +876,8 @@ def cmd_analyse(args) -> int:
               f"(warm cut {dec['warm_cut']}, capable cut {dec['capable_cut']})")
         if dec.get("degenerate"):
             print(f"    DEGENERATE: {dec['degenerate_note']}")
+        if dec.get("collinear"):
+            print(f"    NOT TWO CHANNELS: {dec['collinear_note']}.")
         for cell in ("engaged", "correct_but_distant", "warm_refusal", "flat_refusal"):
             block = dec["cells"].get(cell)
             if not block:

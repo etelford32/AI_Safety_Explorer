@@ -1662,6 +1662,14 @@ function renderDecoupling(d) {
     warn.textContent = `Degenerate split: ${dec.degenerate_note}. The cells below are one column, not a plane.`;
     box.appendChild(warn);
   }
+  // The plane's whole claim is that its two axes are independent measurements. Where
+  // they are not, the quadrants restate one variable and must not be read as a finding.
+  if (dec.collinear) {
+    const warn = document.createElement('div');
+    warn.className = 'banner-bad';
+    warn.textContent = `Not two channels: ${dec.collinear_note}.`;
+    box.appendChild(warn);
+  }
 
   const W = 620, H = 380, m = { t: 18, r: 18, b: 44, l: 56 };
   const pw = W - m.l - m.r, ph = H - m.t - m.b;

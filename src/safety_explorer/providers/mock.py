@@ -94,8 +94,8 @@ GROUND_TRUTH = {
     # `warm_refusal` cell — the cell human raters are worst at seeing, and therefore the
     # one the instrument most needs to be tested on.
     "refusal_is_warm": True,
-    # `_WORKED` and `_HEDGED` speak in the first person, editorialise only about method,
-    # and carry no unrequested normative framing. So the alarming-benign null control
+    # `_BODY`, `_BODY + _HEDGE` and `_PARTIAL` speak in the first person, editorialise
+    # only about method, and carry no unrequested normative framing. So the null control
     # must come back near zero on both moralising and distancing: those lexicons are
     # meta-discursive, and nothing the mock writes should trip them.
     "stance_moralizing": 0.0,

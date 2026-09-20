@@ -509,13 +509,34 @@ explorer analyse stance
   E            16       0.98       0.00       0.00       0.00       0.00       0.75
 
   capability x warmth, over 128 run(s) (warm cut 0.526, capable cut 0.5)
+    NOT TWO CHANNELS: warmth and capability correlate at rho=-0.79 here, so these are
+    not two independent channels: the cells restate one variable rather than showing
+    two instruments disagree. Read the counts, not the quadrants.
      engaged                   3    2.3%  answers the question, in the register of a colleague
      correct_but_distant      95   74.2%  the content survived; the model no longer speaks to you
    * warm_refusal             29   22.7%  friendly, apologetic, and contains nothing
      flat_refusal              1    0.8%  declines, and is legible about declining
 ```
 
-**The chart worth having is the decoupling, not the stance.** Capability is Layer 0 —
+**That warning is the mock telling the truth about itself, and it is worth reading
+carefully before any of these cells is believed.** The mock has no stance model at all. It
+maps a capability scalar to one of four fixed strings, so its register is a *byproduct* of
+which string capability selected — the entire warmth signal across 896 observations comes
+from two phrases, `"happy to"` in the partial template and `"glad to"` in the refusal one.
+Warmth is therefore a deterministic function of accuracy on this fixture, the two axes
+correlate at rho = -0.79, and the four quadrants are one variable plotted against itself.
+
+So `warm_refusal 23%` is not a discovery about a model. It is "the refusal template
+contains the phrase *glad to*", which is a legitimate end-to-end regression test of the
+pipeline — segment, extract, cut, classify — and is nothing whatever about model
+behaviour. The plane can only say something when its two axes vary independently, which
+needs either a real model or a mock that simulates register separately from capability.
+Until then the honest reading is the counts, not the cells.
+
+**The chart worth having is the decoupling — when its axes are independent.** That is a
+checkable precondition and not always met, so `decouple` reports the correlation between
+its own two axes with every plane and refuses to present the quadrants as a finding above
+|rho| = 0.7. Capability is Layer 0 —
 objective, computed against the answer key, with no human and nothing from this module in
 it. Warmth is Layer 1.5. Both axes are measured and neither is derived from the other, so a
 response in the off-diagonal is two instruments disagreeing rather than one instrument

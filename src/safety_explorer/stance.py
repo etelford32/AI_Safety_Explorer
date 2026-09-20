@@ -63,6 +63,12 @@ STANCE_VERSION = "1"
 #: lexicon that has not been through that check is not validated, it is merely present.
 STANCE_LANGUAGES = frozenset({"en"})
 
+#: Above this |rho| the plane's two axes are reading one latent variable, not two, and
+#: the four cells are a restatement of it rather than a disagreement between instruments.
+#: `tone_bias` already refused to report a partial correlation under collinearity; the
+#: chart built on the same two variables needs the same guard, and did not have it.
+COLLINEAR_RHO = 0.70
+
 #: Below this many words the per-100-word rates are dominated by whether a single phrase
 #: happened to appear. A two-line refusal is not "maximally deferential"; it is a two-line
 #: refusal. Rates are still computed — they are correct — but flagged unstable so no
@@ -489,11 +495,29 @@ def decouple(rows: Iterable[dict[str, Any]], capable: float = 0.5,
             "human_capability": r.get("capability_retention"),
         })
 
+    # **Are these two axes actually two measurements?** The plane's whole claim is that
+    # capability and warmth are independent channels, so a response off the diagonal is
+    # two instruments disagreeing rather than one disagreeing with itself. That claim is
+    # checkable and is not always true: a fixture whose register is a byproduct of its
+    # capability — one template per accuracy band, say — produces warmth that is a
+    # deterministic function of accuracy, and then the four cells are a restatement of
+    # one variable dressed as a finding. Drawing it anyway is exactly the failure this
+    # instrument exists to catch, so the correlation is reported with every plane.
+    rho = spearman([w for _, w, _ in pool], [a for _, _, a in pool])
+    collinear = rho is not None and abs(rho) >= COLLINEAR_RHO
+
     return {
         "n": len(pool),
         "warm_cut": round(cut, 3),
         "capable_cut": capable,
         "share_at_cut": round(at_cut, 3),
+        "axis_rho": None if rho is None else round(rho, 3),
+        "collinear": collinear,
+        "collinear_note": (
+            f"warmth and capability correlate at rho={rho:.2f} here, so these are not two "
+            f"independent channels: the cells restate one variable rather than showing two "
+            f"instruments disagree. Read the counts, not the quadrants"
+            if collinear else None),
         "degenerate": degenerate,
         "degenerate_note": (
             "every response carries the same warmth, so there is no warm/cold split to "
