@@ -165,6 +165,11 @@ def analyse(text: str, corpus=None, cuts: st.Cuts | None = None,
                            if s.get("available") else None)
         # A long turn that fired almost nothing is probably under-read, not neutral.
         entry["underread"] = st.underread(s)
+        # The embedding reading sits beside the regex one, never replacing it. On a real
+        # transcript this is where recall shows: a warm turn the lexicon read as neutral
+        # may read as warm here — IF the backend is a real embedding. With the stdlib
+        # fallback it is a placeholder, and `trustworthy` says so.
+        entry["embedding"] = st.embedding_reading(t["text"])
         entry["spans"] = [
             {"index": sp.index, "kind": sp.kind, "n_words": sp.evidence["n_words"],
              "refusal": bool(sp.evidence["refusal"]),
@@ -195,6 +200,7 @@ def analyse(text: str, corpus=None, cuts: st.Cuts | None = None,
     layer0 = [t for t in turns
               if t["role"] == "user" and (t.get("corpus_match") or {}).get("layer0")]
     underread = [t for t in assistant if t.get("underread")]
+    emb = next((t.get("embedding") for t in assistant if t.get("embedding")), None)
 
     return {
         "live_version": LIVE_VERSION,
@@ -211,11 +217,13 @@ def analyse(text: str, corpus=None, cuts: st.Cuts | None = None,
         "has_cuts": cuts is not None,
         "layer0_available_turns": [t["index"] for t in layer0],
         "underread_turns": [t["index"] for t in underread],
-        "limits": _limits(split, scored, cuts, layer0, underread, language),
+        "embedding_backend": (emb or {}).get("backend"),
+        "embedding_trustworthy": bool((emb or {}).get("trustworthy")),
+        "limits": _limits(split, scored, cuts, layer0, underread, emb, language),
     }
 
 
-def _limits(split, scored, cuts, layer0, underread, language) -> list[str]:
+def _limits(split, scored, cuts, layer0, underread, emb, language) -> list[str]:
     """What this reading cannot tell you. Rendered with the result, never on request.
 
     A descriptive analysis presented without its limits is the failure this whole
@@ -249,6 +257,14 @@ def _limits(split, scored, cuts, layer0, underread, language) -> list[str]:
             "way. Read those turns, not their near-zero levels. This is the gap the "
             "stance rubric exists to close: the automatic reading is an indicator until "
             "blinded humans have rated the same turns.")
+    if emb is not None and not emb.get("trustworthy"):
+        out.append(
+            f"The embedding register reading uses the stdlib fallback backend "
+            f"({emb.get('backend')!r}), which is NOT semantic — it matches surface forms, "
+            "so it carries the same recall problem as the lexicon and its levels are a "
+            "placeholder, not a measurement. Install a real embedding backend and it must "
+            "pass the generalization control before its reading is believed; that reading "
+            "is what would close the recall gap the lexicon leaves.")
     if cuts is None:
         out.append(
             "No posture: posture is a statement about where a response sits in a "

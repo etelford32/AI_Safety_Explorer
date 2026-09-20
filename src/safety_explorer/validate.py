@@ -510,6 +510,48 @@ def run(conn, corpus, *, campaign_id: str | None = None) -> Report:
     _guard(report, "register does not move with depth", "layer 1.5",
            "warmth gap <= 1.0 across depth twins", register_ignores_depth)
 
+    def register_anchors_lint():
+        from . import register as reg
+        faults = reg.lint()
+        return (PASS if not faults else FAIL,
+                "; ".join(faults) if faults else "anchors well formed, probes held out",
+                len(faults))
+    _guard(report, "register anchors are well formed and probes are held out", "layer 1.5",
+           "0 faults", register_anchors_lint)
+
+    def register_separation():
+        from . import embed as embed_mod, register as reg
+        m = reg.load(backend=embed_mod.get_backend("hashing"))
+        sep = m.separation()
+        return (PASS if sep["passes"] else FAIL,
+                f"exemplar coherence AUC {sep['worst']} (a well-built set separates under "
+                f"any backend, including the lexical fallback)", sep["worst"])
+    _guard(report, "register exemplars are internally coherent", "layer 1.5",
+           f"leave-one-out AUC >= {__import__('safety_explorer.register', fromlist=['x']).SEPARATION_FLOOR}",
+           register_separation)
+
+    def register_generalization():
+        """The control that decides whether an embedding reading may be believed.
+
+        WARN, not FAIL, when the only backend is the stdlib fallback: no semantic backend
+        installed is missing capability, exactly like no human ratings yet, not a broken
+        instrument. It FAILS only when a backend CLAIMS to be semantic and does not
+        generalise — a real defect that would let an untrustworthy reading through.
+        """
+        from . import embed as embed_mod, register as reg
+        m = reg.load(backend=embed_mod.get_backend("hashing"))
+        gen = m.generalization()
+        if not m.backend.semantic:
+            return (WARN, "only the stdlib fallback is installed; it is lexical by design "
+                          "and cannot pass generalization, so no embedding reading is "
+                          "trusted yet. Install a real backend to exercise this control",
+                    gen["worst_margin"])
+        return (PASS if gen["passes"] else FAIL,
+                f"held-out paraphrase margin {gen['worst_margin']}; a backend that claims "
+                f"semantic must place probes it has never seen the words of", gen["worst_margin"])
+    _guard(report, "the embedding backend generalises to held-out paraphrases",
+           "layer 1.5", "semantic backend places the probes", register_generalization)
+
     def stance_insight_recovered():
         from .providers import mock
 

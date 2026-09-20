@@ -230,3 +230,23 @@ def test_the_live_view_always_shows_its_limits(page):
     page.wait_for_selector("#live-limits ul.limits", timeout=20000)
     text = page.inner_text("#live-limits")
     assert "Tier B" in text
+
+
+def test_the_live_view_shows_the_embedding_reading_labelled(page):
+    """The embedding reading appears beside the regex chips, and is dimmed when the
+    backend is the untrustworthy stdlib fallback so it never reads as a second
+    confirming measurement."""
+    page.click('nav button[data-view="live"]')
+    page.fill("#live-text",
+              "User: q\n"
+              "Assistant: Fair challenge, and I would genuinely love to dig into this "
+              "alongside you rather than hand over a bare number.")
+    page.click("#btn-live")
+    page.wait_for_selector("#live-turns .live-turn", timeout=20000)
+    assert page.errors == []
+    # The fallback is not trustworthy, so its chips are the dimmed variant.
+    trustworthy = page.evaluate("() => LIVE.data.embedding_trustworthy")
+    assert trustworthy is False
+    dimmed = page.query_selector_all("#live-turns .embchip-dim")
+    assert dimmed, "the untrustworthy embedding reading should render as dimmed chips"
+    assert any("stdlib fallback" in l for l in page.evaluate("() => LIVE.data.limits"))

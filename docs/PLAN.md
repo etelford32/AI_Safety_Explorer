@@ -823,6 +823,58 @@ It also cost two bugs, both found by that validation and neither visible without
   small-sample artefact. `bootstrap_ci` grew a `statistic` parameter and the median
   remains the default, since every existing delta report depends on it.
 
+### [ADD] An embedding register model, and the controls that gate it (v0.17)
+
+The real transcript in v0.16 showed the lexicon's recall is poor: 497 words of warm prose,
+one marker. That is not fixable with more regex — every phrase added is another surface
+form to miss around. So register now has a second estimator that scores by meaning.
+
+Each dimension is defined by exemplar sentences (`corpus/register_anchors.toml`), and a
+text is scored by where its embedding projects onto the difference-of-means axis between the
+positive and negative exemplars — the standard concept-axis construction. A paraphrase that
+shares no vocabulary with any exemplar still lands near it if the embedding is semantic,
+which is exactly the recall the lexicon lacks. Scores land on the same 0-5 ladder as the
+lexicon and a human rating, so the three are differenceable.
+
+**The design is the controls, not the axis.** An opaque model is harder to audit than a
+regex — the regex at least says why it fired — so an embedding reading is worth nothing
+without evidence it is real:
+
+* `separation` — leave-one-out AUC over the anchors. Coherence of the exemplar SET, and a
+  well-built set clears it under any backend including the lexical fallback. It proves the
+  anchors, not the model, and conflating that with semantics would let a lexical backend
+  look real on tidy anchors.
+* `generalization` — the discriminator. The probe sentences share no content words with the
+  anchors, so a surface-form backend scores them at chance and a semantic one places them
+  correctly. This earns a reading the right to be believed; the backend's own `semantic`
+  flag does not. A backend that claims semantic and fails this is caught and rejected — the
+  same stated-versus-measured check the whole instrument runs on.
+* `topic_null` — the control the embedding approach needs and the regex did not. Regex
+  markers are meta-discursive by construction, so a scary topic could never move them; an
+  embedding places text by meaning and could drift on topic alone. Matched benign and
+  alarming-benign texts must score the same register.
+
+The zero-dependency rule holds. A real backend is an optional extra
+(`pip install safety-explorer[embeddings]`), and with nothing installed the model runs on a
+stdlib hashing fallback — word n-grams into a fixed vector, lexical by construction. It
+fails generalization and says so, so the Live view shows its reading as a dimmed placeholder
+and the limits panel states it carries the same recall problem as the lexicon until a real
+backend is installed. That is the honest resting state: the architecture is here and
+controlled, declining to claim the recall fix until the control that would earn it passes.
+
+Proving the controls discriminate required a test backend that is genuinely semantic
+without a dependency: `ConceptBackend` maps disjoint vocabularies to shared latent axes
+(paraphrase invariance, the one property a real embedding has and hashing does not), plus a
+light lexical tail so neutral sentences do not collapse. The suite asserts hashing fails
+generalization while the concept backend passes it, and that a backend which merely CLAIMS
+to be semantic but behaves like hashing is rejected. Building it surfaced the usual lesson
+once more: the first `separation` implementation used a hard midpoint threshold and was
+brittle on small pools, reporting a sound exemplar set as incoherent; an AUC over
+leave-one-out projections is the robust form. And the anchor lint caught five probes that
+reused an anchor's content words, which would have made the generalization control test
+nothing — the probes are only held out if they share no vocabulary, and now that is
+enforced.
+
 ### [ADD] What a real transcript found (v0.16)
 
 The Live view was built and every test passed, so the honest next step was to paste a real

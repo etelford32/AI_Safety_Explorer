@@ -416,3 +416,5 @@ ul.limits li { color: var(--ink-dim); font-size: 12px; line-height: 1.6; margin-
 .chip.flag { border-color: var(--bad); color: var(--bad); }
 .ink-dim { color: var(--ink-dim); }
 .chip.warnchip { border-color: var(--warn); color: var(--warn); }
+.chip.embchip { border-color: var(--accent); color: var(--accent); }
+.chip.embchip-dim { border-style: dashed; color: var(--ink-faint); border-color: var(--ink-faint); }

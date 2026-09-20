@@ -782,6 +782,48 @@ is the difference between an indicator and an artefact. It is also the concrete 
 the stance rubric exists: the automatic reading is an indicator until blinded humans have
 rated the same turns, and now there is a real transcript showing what that gap looks like.
 
+**And it is why the register model went embedding-based.** The lexicon's recall problem is
+not fixable with more regex — every phrase you add is another surface form to miss around.
+So there is now a second register estimator that scores by *meaning*: each dimension is
+defined by exemplar sentences (`corpus/register_anchors.toml`), and a text is placed by
+where it projects onto the axis between the positive and negative exemplars' centroids. A
+paraphrase that shares no words with any exemplar still lands near it — if the embedding is
+semantic.
+
+That "if" is the whole design. An opaque model is harder to audit than a regex, not easier,
+so the embedding model ships with the controls that decide whether to believe it, and those
+controls are the deliverable:
+
+```
+explorer register
+
+  separation (exemplar coherence, leave-one-out AUC)        PASS
+  generalization (real embedding vs bag of surface forms)   FAIL
+    warmth      margin +0.159  (placed)
+    moralizing  margin +0.019  (not placed)
+    distancing  margin +0.209  (placed)
+  trustworthy: False
+```
+
+* **separation** asks whether the exemplar set is coherent — do positives out-rank
+  negatives on an axis built without them. A sound set clears it under *any* backend, so it
+  proves the anchors, not the model.
+* **generalization** is the one that matters. The probe sentences share no content words
+  with the anchors, so a backend that only matches surface forms scores them at chance
+  while a semantic one places them correctly. This — not the word "embedding" — is what
+  earns a reading the right to be believed.
+
+The zero-dependency rule holds: a real embedding backend is an optional extra, exactly like
+the provider SDKs, and with nothing installed the model runs on a stdlib hashing fallback
+that is lexical by construction. Its own generalization control reports that it is not
+semantic, so the Live view shows its reading as a dimmed placeholder and says in the limits
+panel that it carries the same recall problem as the lexicon until a real backend is
+installed and passes the control. That is the honest resting state: the architecture is
+here, controlled, and it declines to claim the recall fix it was built for until the
+control that would earn it passes. A backend that *claims* to be semantic and fails
+generalization is caught and rejected — the same stated-versus-measured check the whole
+instrument runs on.
+
 The same paste caught a false positive: the bare word "sandbagging" tripped the
 evaluation-awareness detector on *"it mirrors the insight gap in the sandbagging arm"* —
 domain vocabulary in a project whose second arm carries that name, not a model noticing it
@@ -977,6 +1019,7 @@ explorer truth [--targets]        score responses against computed answer keys
        truth --calibrate          measure the extractor's per-language floor
        truth --coherence          validate the internal-consistency identities
        truth --items              item analysis: is the answer key carrying information?
+explorer register                 the embedding register model and its controls
 explorer stance-model             what the mock's register will do, before a campaign
 explorer analyse stance           Layer 1.5: register, posture, the decoupling plane
 explorer validate                 run every control; is the instrument sound today?

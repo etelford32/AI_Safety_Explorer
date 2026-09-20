@@ -509,6 +509,47 @@ def _parse_sets(pairs: list[str] | None) -> dict[str, dict[str, Any]]:
     return out
 
 
+def cmd_register(args) -> int:
+    """The embedding register model and the controls that say whether to believe it."""
+    from . import embed as embed_mod, register as reg
+
+    faults = reg.lint()
+    if faults:
+        print("anchor file has faults:")
+        for f in faults:
+            print(f"  - {f}")
+        return 1
+
+    backend = embed_mod.get_backend(args.backend)
+    m = reg.load(backend=backend)
+    print(f"embedding register — anchors v{m.version}, backend {backend.name!r} "
+          f"(declares semantic={backend.semantic})")
+    print(f"  backends available: "
+          f"{', '.join(b['name'] for b in embed_mod.available())}")
+
+    sep = m.separation()
+    print(f"\n  separation (exemplar coherence, leave-one-out AUC)   "
+          f"{'PASS' if sep['passes'] else 'weak'}")
+    for d, v in sep["by_dimension"].items():
+        print(f"    {d:<12}{v['auc']:.3f}")
+
+    gen = m.generalization()
+    print(f"\n  generalization (real embedding vs bag of surface forms)   "
+          f"{'PASS' if gen['passes'] else 'FAIL'}")
+    for d, v in gen["by_dimension"].items():
+        print(f"    {d:<12}margin {v['margin']:+.3f}  "
+              f"({'placed' if v['separated'] else 'not placed'})")
+    print(f"    {gen['note']}")
+
+    print(f"\n  trustworthy: {m.trustworthy()}")
+    if not m.trustworthy():
+        print("  This backend's reading is a placeholder, not a measurement. Either it")
+        print("  does not claim to be semantic, or it failed generalization above. The")
+        print("  stdlib fallback is lexical by design; install a real embedding backend")
+        print("  and re-run — the same controls will certify it or reject it.")
+    return 0
+
+
 def cmd_stance_model(args) -> int:
     """Show what the mock's register will do before a campaign is spent on it."""
     from .providers import mock
@@ -1172,6 +1213,12 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--campaign", default=None)
     t.add_argument("--tiers", default="A")
     t.set_defaults(func=cmd_truth)
+
+    rg = sub.add_parser("register",
+                        help="the embedding register model and its controls")
+    rg.add_argument("--backend", default="hashing",
+                    help="embedding backend name (default: the stdlib hashing fallback)")
+    rg.set_defaults(func=cmd_register)
 
     sm = sub.add_parser("stance-model",
                         help="what the mock's register will do, before a campaign")

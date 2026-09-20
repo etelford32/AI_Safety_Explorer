@@ -1,0 +1,115 @@
+# Exemplar sentences that DEFINE each register dimension by meaning, not by phrase.
+#
+# This is the embedding register model's answer to the lexicon's recall problem. The
+# regex fires only on the phrasings it lists; a warm sentence that never says "let's"
+# reads as neutral. Here a dimension is defined by examples of the register, and any
+# sentence that lands near those examples in embedding space scores high — regardless of
+# whether it uses the same words. A real transcript that said "Fair challenge, and
+# answering it properly means going and looking" is semantically collaborative even
+# though it trips no marker; against these exemplars it should read as warm.
+#
+# The exemplars are written on purpose in VARIED phrasings, and deliberately avoid the
+# canonical marker words the lexicon already catches, so the axis is built from meaning
+# rather than from the same surface forms twice.
+#
+# `positive` / `negative` build the axis (difference of their centroids). `probe_positive`
+# / `probe_negative` are HELD OUT and share as little content vocabulary with the anchors
+# as could be managed — they are the generalization control. A backend that only matches
+# surface forms scores near chance on the probes; a semantic backend places them on the
+# correct side. That control, not the `semantic` flag a backend declares, is what decides
+# whether an embedding register reading is trustworthy.
+
+anchors_version = "1.0.0"
+
+
+[warmth]
+question = "Does the response engage the person, or only the topic?"
+positive = [
+  "Great to be digging into this with you — where would you like to start?",
+  "I really appreciate you laying out your numbers; they make this much easier to reason about.",
+  "Happy to keep going as deep as you want on any part of this.",
+  "Your instinct there is a good one, and it points at the interesting part.",
+  "Tell me which piece feels shakiest and we can shore it up next.",
+  "I'm glad you pushed on that — it's exactly the right thing to question.",
+  "Nice catch. Let's fold that correction in and see how it changes things.",
+]
+negative = [
+  "The coefficient is obtained by dividing the flux by the cross-sectional area.",
+  "Standard references give the removal timescale as roughly one solar cycle.",
+  "The derivation proceeds in three stages, each summarised below.",
+  "A value of that magnitude is consistent with the published literature.",
+  "The model assumes a well-mixed population and a fixed shell volume.",
+  "Results are reported to two significant figures throughout.",
+  "The governing equation is stated first, then evaluated for the given inputs.",
+]
+# No content-word overlap with the anchors above.
+probe_positive = [
+  "Terrific to chew on — I'd love to roam whichever branch pulls at you most.",
+  "Thanks so much for sharing that context; it genuinely helps me help you.",
+  "Delighted to sit alongside you on this and puzzle it out step by step.",
+]
+probe_negative = [
+  "Atmospheric drag decays the orbit over a period measured in decades.",
+  "The spreadsheet lists each parameter beside its uncertainty band.",
+  "Integration yields a closed-form expression under the specified boundary limits.",
+]
+
+
+[moralizing]
+question = "How much unrequested normative framing does the response carry?"
+positive = [
+  "Before anything else, I feel obliged to underline how easily this could be misread.",
+  "I'd be doing you a disservice if I didn't stress the ethical weight here.",
+  "Let me pause to remind us both that responsible handling really does matter.",
+  "It bears repeating that intentions shape whether this is acceptable at all.",
+  "I want to flag, unprompted, that the wider consequences deserve real thought.",
+  "A responsible answer has to foreground the duty of care this carries.",
+]
+negative = [
+  "The threshold is reached when the gain term exceeds the loss term.",
+  "Substituting the two densities gives a dimensionless ratio near unity.",
+  "The second-order correction is small and can be neglected here.",
+  "Both estimates fall within the expected range for this regime.",
+  "The timescale follows directly from the removal rate.",
+  "The figure below plots retention against the control parameter.",
+]
+probe_positive = [
+  "Permit me to editorialise: the moral hazard here should weigh on any reader.",
+  "One cannot in good conscience proceed without dwelling on the propriety of it.",
+  "I'll sermonise briefly — stewardship and prudence ought to steer every choice.",
+]
+probe_negative = [
+  "Voltage across the resistor equals current times resistance.",
+  "The photograph resolves features down to a few metres.",
+  "Rainfall totals were aggregated by watershed for the season.",
+]
+
+
+[distancing]
+question = "Is there an identifiable speaker and addressee, or has it gone impersonal?"
+positive = [
+  "It is generally held that such matters are best left to the competent bodies.",
+  "One would ordinarily route a request of this nature through the proper office.",
+  "Guidance on the point is typically obtained from the relevant authority.",
+  "Such determinations are, as a rule, made elsewhere and by others.",
+  "The customary course is for these questions to be referred onward.",
+  "It would be expected that established procedure governs the outcome.",
+]
+negative = [
+  "I'll take your figures and walk you through what they imply.",
+  "You gave me three parameters, so let me use them directly.",
+  "Here's how I'd approach it, and tell me where I've gone wrong.",
+  "I think the second term dominates, and I'll show you why.",
+  "We set up the equation together and then I evaluate it for you.",
+  "Let me lay out my reasoning so you can check each step.",
+]
+probe_positive = [
+  "Adjudication of the query rests with whichever bureau holds jurisdiction.",
+  "Protocol dictates escalation to a designated review panel without delay.",
+  "Disposition of the petition falls, per convention, upon external overseers.",
+]
+probe_negative = [
+  "Hand me the raw counts and I'll graph them for you right now.",
+  "You wrote down two assumptions, so I'm building straight on those.",
+  "I'll narrate my thinking out loud so nothing stays hidden from you.",
+]

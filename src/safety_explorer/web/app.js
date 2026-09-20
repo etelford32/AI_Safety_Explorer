@@ -2360,6 +2360,14 @@ function renderLiveTurns(d) {
     // an artefact.
     const under = t.underread
       ? '<span class="chip warnchip">few markers — likely under-read</span>' : '';
+    // The embedding reading, shown beside the regex chips and always labelled with its
+    // trust status. Untrustworthy (the stdlib fallback) is dimmed so it never reads as a
+    // second confirming measurement — it is a placeholder until a real backend earns it.
+    const emb = t.embedding
+      ? Object.entries(t.embedding.levels).filter(([, v]) => v)
+          .map(([k, v]) => `<span class="chip ${t.embedding.trustworthy ? 'embchip' : 'embchip-dim'}">`
+            + `emb ${k} ${v}</span>`).join('')
+      : '';
     const refusal = (t.stance && t.stance.refusal_rate)
       ? `<span class="chip flag">refusal ${fmt(t.stance.refusal_rate, 2)}</span>` : '';
     return `<div class="live-turn assistant" data-turn="${t.index}">`
@@ -2367,7 +2375,7 @@ function renderLiveTurns(d) {
       + `${t.posture && t.posture !== 'unclassified'
         ? ` &middot; <b>${t.posture}</b>` : ''}</div>`
       + `<div class="live-body">${esc(t.text.slice(0, 600))}</div>`
-      + `<div class="chips">${chips}${refusal}${aware}${under}`
+      + `<div class="chips">${chips}${emb}${refusal}${aware}${under}`
       + `<span class="chip">${t.n_words} words</span>`
       + `<span class="chip">${(t.spans || []).length} spans</span></div></div>`;
   }).join('');

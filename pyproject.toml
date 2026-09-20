@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "safety-explorer"
-version = "0.16.0"
+version = "0.17.0"
 description = "A research instrument for measuring how model behaviour changes as context framing becomes riskier while the reasoning task stays similar."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,8 +20,12 @@ dependencies = []
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40"]
 openai = ["openai>=1.40"]
+# A real embedding backend for the register model. Optional, like the provider SDKs:
+# the register model runs on the stdlib hashing fallback with nothing installed, and
+# reports (via its generalization control) that the fallback is not semantic.
+embeddings = ["sentence-transformers>=2.2"]
 dev = ["pytest>=8.0"]
-all = ["anthropic>=0.40", "openai>=1.40", "pytest>=8.0"]
+all = ["anthropic>=0.40", "openai>=1.40", "sentence-transformers>=2.2", "pytest>=8.0"]
 
 [project.scripts]
 explorer = "safety_explorer.cli:main"

@@ -336,6 +336,48 @@ def underread(stance: dict[str, Any]) -> bool:
     return total <= 1
 
 
+#: A process-wide register model, built once on first use. None until then. Kept module
+#: level because building the axes embeds every anchor, which is wasteful per call and
+#: pointless per identical backend.
+_REGISTER = None
+
+
+def register_model(backend_name: str | None = None):
+    """The embedding register model, or None if it cannot be built.
+
+    Lazily constructed and cached. Returns None rather than raising when the anchors file
+    is missing, so a caller can always ask and simply get no embedding reading — the
+    regex reading is never blocked on the embedding one being available.
+    """
+    global _REGISTER
+    if _REGISTER is not None and backend_name is None:
+        return _REGISTER
+    try:
+        from . import embed as embed_mod, register as reg
+        model = reg.load(backend=embed_mod.get_backend(backend_name or "hashing"))
+    except Exception:  # noqa: BLE001 — no embedding reading is a valid state
+        return None
+    if backend_name is None:
+        _REGISTER = model
+    return model
+
+
+def embedding_reading(text: str | None, backend_name: str | None = None) -> dict[str, Any] | None:
+    """The embedding register levels for a text, with the trust status attached.
+
+    Returns None when no model can be built. Carries `trustworthy` so no caller can use
+    the levels without also knowing whether the backend behind them actually generalises —
+    with the stdlib fallback it does not, and the levels are then a placeholder, present so
+    the wiring is exercised and absent of authority until a real backend is installed.
+    """
+    model = register_model(backend_name)
+    if model is None:
+        return None
+    scored = model.score(text or "")
+    scored["trustworthy"] = model.trustworthy()
+    return scored
+
+
 def vector(stance: dict[str, Any]) -> dict[str, float] | None:
     """Just the dimension rates, or None when stance was unavailable."""
     if not stance.get("available"):
