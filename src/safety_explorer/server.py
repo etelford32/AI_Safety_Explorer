@@ -486,10 +486,15 @@ class ExplorerHandler(BaseHTTPRequestHandler):
 
         if path == "/api/coanalysis":
             from . import coanalyse
+            from . import rubric as rubric_mod
             return {
                 "coverage": coanalyse.coverage(self.conn),
                 "agreement": coanalyse.agreement(self.conn),
                 "usable_alpha": coanalyse.USABLE_ALPHA,
+                # Shown while rating, not after: a dead anchor found at the end of a
+                # session is a session rated on a scale that was quietly narrower than
+                # it looked.
+                "rubric": rubric_mod.usage(self.conn),
             }
 
         if path == "/api/controls":

@@ -772,6 +772,45 @@ def cmd_analyse(args) -> int:
     if args.what == "reliability":
         print(json.dumps(analysis.reliability(conn, args.annotator), indent=2))
         return 0
+    if args.what == "rubric":
+        from . import rubric as rubric_mod
+        live = rubric_mod.load()
+        use = rubric_mod.usage(conn, live)
+        print(f"rating system v{live.version} — {use['n_annotations']} rating(s)\n")
+        print(f"  {'metric':<22}{'n':>4}{'n/a':>5}  {'levels used':<18}flags")
+        for key, block in use["metrics"].items():
+            print(f"  {key:<22}{block['n']:>4}{block['n_na']:>5}  "
+                  f"{str(block['levels_used']):<18}{','.join(block['flags'])}")
+        skipped = [(k, lvl, text) for k, b in use["metrics"].items()
+                   for lvl, text in b["anchors_never_chosen"].items()]
+        if skipped:
+            print("\n  anchors raters stepped over:")
+            for key, lvl, text in skipped:
+                print(f"    {key} {lvl}: {text}")
+        print(f"\n  {use['verdict']}")
+        print(f"  {use['note']}")
+
+        effect = rubric_mod.anchor_effect(conn)
+        print()
+        if not effect["comparable"]:
+            print(f"  anchor effect: {effect['verdict']}")
+            return 0
+        print(f"  anchor effect — {effect['baseline']} vs {effect['anchored']}")
+        print(f"  {'metric':<22}{'alpha before':>13}{'after':>8}{'lift':>8}{'ci95':>18}")
+        for key, block in effect["metrics"].items():
+            before = block["alpha"].get(effect["baseline"])
+            after = block["alpha"].get(effect["anchored"])
+            ci = block["ci95"]
+            ci_s = "—" if ci[0] is None else f"[{ci[0]}, {ci[1]}]"
+            mark = " *" if block["excludes_zero"] else ""
+            print(f"  {key:<22}{str(before):>13}{str(after):>8}"
+                  f"{str(block['mean_agreement_lift']):>8}{ci_s:>18}{mark}")
+        print(f"\n  {effect['verdict']}")
+        print("  The lift is the change in per-run exact agreement between the two")
+        print("  scales, bootstrapped over runs. It is only meaningful where the same")
+        print("  responses were rated by the same people under both.")
+        return 0
+
     if args.what == "coanalysis":
         from . import coanalyse
         cov = coanalyse.coverage(conn)
@@ -972,7 +1011,7 @@ def build_parser() -> argparse.ArgumentParser:
     an = sub.add_parser("analyse", help="run an analysis")
     an.add_argument("what", choices=["twins", "surface", "depth", "language",
                                      "sandbagging", "controls", "reliability",
-                                     "judge", "coanalysis", "drift"])
+                                     "judge", "coanalysis", "rubric", "drift"])
     an.add_argument("--campaign", default=None)
     an.add_argument("--metric", default="capability_retention", choices=list(HUMAN_METRICS))
     an.add_argument("--tiers", default="A", help="provenance tiers to include, e.g. A or AB")

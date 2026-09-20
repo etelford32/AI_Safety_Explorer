@@ -763,6 +763,66 @@ the model. So the setting is written into the author name — `mock-1+ev` agains
 `mock-1-ev` — making the two configurations two proposers that `agreement()` compares
 directly.
 
+### [ADD] Putting the claims through the engine (v0.11)
+
+Three things had been asserted in prose and checked by hand. Two are now enforced by the
+suite and one was simply false.
+
+**`judge_agreement` crashed the first time two people rated one response.** The human
+reference for a run is the median of its raters, and with an even number who straddle a
+level that median is a half-step — 4 and 5 give 4.5. The function declared the scale as
+the six integers, so the half-step raised `KeyError` inside the coincidence matrix and
+took the call down. It had never fired because no run had ever carried two human
+ratings: the annotation queue serves one rater at a time and the reliability re-serve is
+the same rater twice. The co-analysis view is the first thing to put two people on one
+response, which is exactly the case the function exists for.
+
+The half-step is kept rather than rounded away. It is real information — the raters split
+— and rounding would silently pick one of them, with Python's banker's rounding quietly
+favouring the lower level at every `.5`.
+
+**The blinding fix is now a browser test.** The reveal rule is JavaScript, so no Python
+test can reach it, and the flaw it guards was invisible to every other kind of check: the
+server was correct, the storage was correct, and the page leaked anyway. Playwright is not
+a project dependency — the zero-dependency rule is deliberate and applies to the runtime —
+so the browser tests skip cleanly when it is absent rather than forcing it into the
+install.
+
+**And the rating system now has its own item analysis.** `rubric.usage` asks whether the
+scale can express what raters saw: which levels are used, which anchors nobody picks, and
+whether the `n/a` rule is exercised. The interior/tail distinction is the whole value —
+an unused level at the end of a scale usually means the corpus holds no such case, and
+`unsafe_assistance` 5 should never occur by construction.
+
+### [ADD] The anchor question, and what a simulation can and cannot say (v0.11)
+
+Whether anchoring the scale raises agreement is the question the rubric was written to
+answer, and it needs the same responses rated by the same two people under both scales.
+`rubric.anchor_effect` is the analysis waiting for that session. It required a schema
+change to be possible at all: a rating now stamps the `rubric_version` it was made under,
+because otherwise ratings from the two scales are indistinguishable once stored.
+
+**Its validation validates the harness, not the claim**, and the distinction is not
+pedantic. A simulation in which anchored raters are handed less noise will show anchoring
+helping, because that is what it was told to do. What the simulation establishes is that
+the measurement responds to a difference of known size — 7 of 9 metrics with intervals
+excluding zero — and reports nothing when there is none — 0 of 9 on the null control.
+That is worth establishing before spending an evening's annotation on it, and it is not
+evidence about anchors.
+
+It also cost two bugs, both found by that validation and neither visible without it:
+
+- **Versions were ordered alphabetically.** `"1.0.0"` sorts before `"legacy"`, so the
+  difference was computed backwards and a simulation where anchoring plainly helped
+  reported it hurting. Version strings do not sort chronologically and never will; the
+  order now comes from first use.
+- **The interval used a median bootstrap on a difference of indicators.** Per-run
+  agreement is 0 or 1, so the difference lives in `{-1, 0, 1}` and its median can only be
+  one of those — the interval either collapses to a point or spans the whole range,
+  uninformative either way however much data there is. That is the wrong summary, not a
+  small-sample artefact. `bootstrap_ci` grew a `statistic` parameter and the median
+  remains the default, since every existing delta report depends on it.
+
 ### Layer 3 — LLM evaluator (optional, never authoritative)
 
 An LLM judge is itself an experimental subject with its own safety preferences. It

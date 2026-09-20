@@ -61,15 +61,26 @@ def interpret_delta(d: float) -> str:
 
 def bootstrap_ci(values: Sequence[float], groups: Sequence[Any] | None = None,
                  n_resamples: int = 10_000, alpha: float = 0.05,
-                 seed: int = 20260919) -> tuple[float, float]:
-    """Percentile bootstrap CI for a median.
+                 seed: int = 20260919, statistic: str = "median") -> tuple[float, float]:
+    """Percentile bootstrap CI for a median, or for a mean on request.
 
     When `groups` is given, resampling is done over groups (families), not individual
     observations — repeats within a family are not independent, and resampling them as
     if they were would produce an interval far narrower than the evidence supports.
+
+    **The statistic has to suit the quantity.** The median is right for the delta
+    distributions this instrument mostly reports, which are skewed and full of exact
+    zeros. It is useless for a difference of two 0/1 indicators — per-run agreement,
+    say — because the median of such a set is almost always exactly 0 or ±1 whatever the
+    underlying rate, so the interval comes back degenerate however much data there is.
+    That is not a small-sample artefact; it is the wrong summary. Those cases ask for
+    `statistic="mean"`.
     """
     if not values:
         return (float("nan"), float("nan"))
+    if statistic not in ("median", "mean"):
+        raise ValueError(f"unknown statistic {statistic!r}; expected median or mean")
+    summarise = median if statistic == "median" else (lambda xs: sum(xs) / len(xs))
     rng = random.Random(seed)
 
     if groups is not None:
@@ -83,10 +94,11 @@ def bootstrap_ci(values: Sequence[float], groups: Sequence[Any] | None = None,
         for _ in range(n_resamples):
             picked = [rng.choice(keys) for _ in keys]
             pool = [x for k in picked for x in buckets[k]]
-            stats.append(median(pool))
+            stats.append(summarise(pool))
     else:
         n = len(values)
-        stats = [median([rng.choice(values) for _ in range(n)]) for _ in range(n_resamples)]
+        stats = [summarise([rng.choice(values) for _ in range(n)])
+                 for _ in range(n_resamples)]
 
     stats.sort()
     lo = stats[int((alpha / 2) * n_resamples)]
@@ -1201,7 +1213,22 @@ def judge_agreement(conn: sqlite3.Connection, metric: str = "capability_retentio
         units[j["run_id"]] = [h, float(score)]
         pairs.append((h, float(score)))
 
-    alpha = krippendorff_alpha(units, levels=[0, 1, 2, 3, 4, 5])
+    # The human reference for a run is the median of its raters, and with an even
+    # number of raters who straddle a level that median lands on a half-step — 4 and 5
+    # give 4.5. Declaring the scale as the six integers then raised KeyError inside the
+    # coincidence matrix and took the whole call down.
+    #
+    # It never fired before because no run had ever carried two human ratings: the
+    # annotation queue serves one rater at a time and the reliability re-serve is the
+    # same rater twice. The co-analysis view is the first thing to put two people on one
+    # response, which is exactly the case this function exists for.
+    #
+    # The half-step is kept rather than rounded away. It is real information — the
+    # raters split — and rounding it would silently pick one of them, with Python's
+    # banker's rounding quietly favouring the lower level at every .5.
+    levels = sorted({0.0, 1.0, 2.0, 3.0, 4.0, 5.0}
+                    | {v for vs in units.values() for v in vs})
+    alpha = krippendorff_alpha(units, levels=levels)
     exact = sum(1 for h, s in pairs if round(h) == round(s))
     within1 = sum(1 for h, s in pairs if abs(h - s) <= 1)
     return {

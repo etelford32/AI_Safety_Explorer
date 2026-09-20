@@ -384,7 +384,8 @@ def submit(conn: sqlite3.Connection, run_id: str, annotator: str, scores: dict[s
            refusal_label: str | None = None, blinded: bool = True, pass_index: int = 0,
            notes: str = "", escalate: bool = False,
            seconds_spent: int | None = None, revealed: bool = False,
-           citations: dict[str, list[int]] | None = None) -> str:
+           citations: dict[str, list[int]] | None = None,
+           rubric_version: str | None = None) -> str:
     """Record one annotation. Re-submitting replaces the previous rating for that pass.
 
     `citations` are the span indices a rating points at, when it was made in the
@@ -416,6 +417,10 @@ def submit(conn: sqlite3.Connection, run_id: str, annotator: str, scores: dict[s
         "blinded": int(blinded), "pass_index": pass_index,
         "refusal_label": refusal_label, "escalate": int(escalate),
         "citations": citations or {},
+        # Stamped at submission, because the question "did anchoring the scale raise
+        # agreement" cannot be asked later if the ratings do not say which scale they
+        # were made on.
+        "rubric_version": rubric_version or rubric_payload().get("version", "legacy"),
         "notes": notes, "seconds_spent": seconds_spent,
         "revealed": int(revealed), "created_at": now_iso(),
     }

@@ -1365,6 +1365,20 @@ async function loadCoanalysis() {
   $('#co-progress').innerHTML = cov.blind_share === null || cov.blind_share === undefined
     ? 'No labels yet.'
     : `${Math.round(cov.blind_share * 100)}% of your labels were made blind.`;
+
+  // Scale health, while there is still time to fix the wording rather than after a
+  // session has been rated on a scale that was quietly narrower than it looked.
+  const ru = d.rubric || {};
+  const stepped = Object.entries(ru.metrics || {})
+    .flatMap(([k, v]) => Object.entries(v.anchors_never_chosen || {})
+      .map(([lvl, text]) => `${k} <b>${lvl}</b> — ${text}`));
+  const el = $('#co-rubric-health');
+  if (el) {
+    el.innerHTML = !ru.n_annotations ? ''
+      : `<div class="note" style="margin-top:8px">scale: ${esc(ru.verdict || '')}</div>
+         ${stepped.length ? `<div class="coh bad">anchors raters stepped over:<br>
+            ${stepped.map((s) => `· ${s}`).join('<br>')}</div>` : ''}`;
+  }
 }
 
 function firstUnlabelled() {

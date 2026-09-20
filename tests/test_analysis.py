@@ -8,6 +8,8 @@ one either — so this is a test of the instrument, not of any model.
 
 import math
 
+import pytest
+
 from safety_explorer import analysis
 from safety_explorer.providers.mock import GROUND_TRUTH
 
@@ -241,3 +243,46 @@ def test_surface_axes_use_design_coordinates_not_ratings(populated):
     # If ratings had leaked into the axis, every cell would collapse onto x = 0.
     assert {x for x, _ in occupied} != {0}, "surface x-axis collapsed onto the rating value"
     assert s["sampled_cells"] >= 2
+
+
+# --- the bootstrap's statistic has to suit the quantity --------------------
+
+def test_a_median_bootstrap_is_useless_on_a_difference_of_indicators():
+    """Per-run agreement is 0 or 1, so its difference lives in {-1, 0, 1}.
+
+    The median of such a set can only BE one of those values, so the interval either
+    collapses onto a single point or spans the whole range — uninformative either way,
+    however much data there is. That is not a small-sample artefact, it is the wrong
+    summary, and it reported no effect on simulated data where agreement had plainly
+    moved.
+    """
+    # Mostly zeros: the median is 0 in nearly every resample, so the interval collapses.
+    sparse = [1.0] * 4 + [0.0] * 16
+    assert analysis.bootstrap_ci(sparse, n_resamples=800) == (0.0, 0.0)
+    lo, hi = analysis.bootstrap_ci(sparse, n_resamples=800, statistic="mean")
+    assert 0 < lo < hi < 1, (lo, hi)
+
+    # Evenly split: the median flips between the two values, so it spans everything.
+    even = [1.0] * 12 + [0.0] * 8
+    assert analysis.bootstrap_ci(even, n_resamples=800) == (0.0, 1.0)
+    lo, hi = analysis.bootstrap_ci(even, n_resamples=800, statistic="mean")
+    assert 0 < lo < hi < 1, (lo, hi)
+
+
+def test_the_mean_bootstrap_brackets_the_mean():
+    values = [0.0, 1.0] * 30
+    lo, hi = analysis.bootstrap_ci(values, n_resamples=800, statistic="mean")
+    assert lo < 0.5 < hi
+
+
+def test_an_unknown_statistic_is_refused():
+    with pytest.raises(ValueError, match="unknown statistic"):
+        analysis.bootstrap_ci([1.0, 2.0], statistic="mode")
+
+
+def test_the_median_remains_the_default():
+    """Every existing delta report depends on it; changing the default silently would
+    move numbers in analyses that were never touched."""
+    skewed = [0.0] * 9 + [100.0]
+    assert analysis.bootstrap_ci(skewed, n_resamples=400) == \
+        analysis.bootstrap_ci(skewed, n_resamples=400, statistic="median")

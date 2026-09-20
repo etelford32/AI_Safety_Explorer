@@ -62,6 +62,7 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("judgement", "coherence", "TEXT NOT NULL DEFAULT '{}'"),
     ("judgement", "problems", "TEXT NOT NULL DEFAULT '[]'"),
     ("annotation", "citations", "TEXT NOT NULL DEFAULT '{}'"),
+    ("annotation", "rubric_version", "TEXT NOT NULL DEFAULT 'legacy'"),
 ]
 
 

@@ -305,6 +305,47 @@ very little, and pretending otherwise would manufacture disagreements. Self-cohe
 telling you which proposal to read first. Accuracy comes only from the blind human
 comparison below.
 
+**Is the scale itself being used?** `explorer analyse rubric` is `item_analysis` pointed
+at the rating system instead of the answer key. It asks the one thing no other check
+does: can the scale the rater was handed express what they saw?
+
+```
+  metric                   n  n/a  levels used       flags
+  technical_depth         80    0  [0, 2, 4, 5]      skipped_interior_level
+
+  anchors raters stepped over:
+    technical_depth 3: correct formalism at textbook level
+```
+
+An unused level at the **end** of a scale usually means the corpus holds no such case —
+`unsafe_assistance` 5 should never occur by construction, and flagging that would be
+flagging the content policy. An unused level in the **middle** is different: raters went
+2, 4, 2, 4 and stepped over the 3, which is a fault in that anchor's wording. It needs no
+second rater and no ground truth, so it runs on the first session — a dead anchor found
+after sixty responses is sixty responses rated on a scale that was quietly narrower than
+it looked.
+
+**Did anchoring the scale actually help?** That is the question the rubric was written to
+answer and the one thing none of this settles on its own: it needs the same responses
+rated by the same two people under both scales. `anchor_effect` is the analysis waiting
+for that session — alpha per metric per rubric version, with the per-run agreement
+difference bootstrapped over runs.
+
+It is validated against simulated raters, **and that validates the harness, not the
+claim**. A simulation in which anchored raters are handed less noise will show anchoring
+helping, because that is what it was told to do. What it establishes is that the
+measurement responds to a difference of known size (7 of 9 metrics, intervals excluding
+zero) and reports nothing when there is none (0 of 9 on the null control) — worth
+knowing before betting an evening's annotation on it, and not evidence about anchors.
+
+Building it cost two bugs, both caught by that validation. Versions were ordered
+alphabetically, so `"1.0.0"` sorted before `"legacy"` and the difference came out
+backwards — a simulation where anchoring plainly helped reported it hurting. And the
+interval used a **median** bootstrap on a difference of two 0/1 indicators, whose median
+can only be 0 or ±1, so it returned `(0.0, 0.0)` on data where agreement had moved by
+half. `bootstrap_ci` grew a `statistic` parameter; the median stays the default, because
+every existing delta report depends on it.
+
 **The blinding rule is the whole design.** An analyst shown a proposal before judging
 agrees with it more often, and that agreement is not evidence the proposal was right —
 it is evidence the analyst was anchored. So the proposal stays hidden until you have
@@ -614,7 +655,7 @@ explorer truth [--targets]        score responses against computed answer keys
 explorer annotate                 queue responses for blinded annotation
 explorer propose [--rubric]       propose ratings + span labels for stored conversations
 explorer analyse {twins,surface,depth,language,sandbagging,controls,reliability,
-                  judge,coanalysis,drift}
+                  judge,coanalysis,rubric,drift}
 explorer serve                    the Explorer UI
 explorer export                   JSONL export (escalated responses withheld)
 ```

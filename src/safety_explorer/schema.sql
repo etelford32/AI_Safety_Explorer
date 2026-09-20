@@ -240,6 +240,10 @@ CREATE TABLE IF NOT EXISTS annotation (
     -- annotation with its working shown, so reliability, alpha and judge agreement keep
     -- working without needing to know where it came from.
     citations            TEXT NOT NULL DEFAULT '{}',
+    -- Which version of the rating system this rating was made under. Without it the
+    -- question "did anchoring the scale raise agreement" cannot be asked at all, because
+    -- ratings from the two rubrics would be indistinguishable once stored.
+    rubric_version       TEXT NOT NULL DEFAULT 'legacy',
     escalate             INTEGER NOT NULL DEFAULT 0,
     notes                TEXT NOT NULL DEFAULT '',
     seconds_spent        INTEGER,
