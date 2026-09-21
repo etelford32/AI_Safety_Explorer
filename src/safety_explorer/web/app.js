@@ -37,6 +37,7 @@ $$('nav button').forEach((b) => b.addEventListener('click', () => {
   if (b.dataset.view === 'collect') loadData();
   if (b.dataset.view === 'coanalyse') loadConversations();
   if (b.dataset.view === 'stance' && !STANCE.data) loadStance();
+  if (b.dataset.view === 'sessions') loadSessions();
 }));
 
 /* ------------------------------------------------------------- startup */
@@ -57,6 +58,14 @@ async function boot() {
   buildSelects();
   $('#btn-stance').addEventListener('click', loadStance);
   $('#btn-live').addEventListener('click', runLive);
+  $('#btn-sessions-refresh').addEventListener('click', loadSessions);
+  $('#sess-auto').addEventListener('change', (e) => {
+    clearInterval(SESS.timer);
+    // Poll while an agent is running. 4s is a deliberate floor: the endpoint is local
+    // and cheap, but re-reading every second would be busywork against a conversation
+    // that moves at human-or-agent pace.
+    if (e.target.checked) SESS.timer = setInterval(loadSessions, 4000);
+  });
   $('#live-text').addEventListener('input', () => {
     if (!$('#live-auto').checked) return;
     // Debounced: a paste fires one input event but typing fires many, and re-reading
@@ -2228,8 +2237,8 @@ async function runLive() {
   renderLiveTurns(d);
 }
 
-function renderLiveLimits(d) {
-  const box = $('#live-limits');
+function renderLiveLimits(d, root = 'live') {
+  const box = $(`#${root}-limits`);
   box.innerHTML = '<h2>What this reading cannot tell you</h2>';
   box.insertAdjacentHTML('beforeend',
     '<ul class="limits">' + d.limits.map((l) => `<li>${esc(l)}</li>`).join('') + '</ul>');
@@ -2246,8 +2255,8 @@ function renderLiveLimits(d) {
    list below are the same object. Faceted, one channel per plot: six series in one
    frame would need six mutually distinguishable hues, and nothing here encodes a
    series by colour. */
-function renderLiveTrajectory(d) {
-  const box = $('#live-traj');
+function renderLiveTrajectory(d, root = 'live') {
+  const box = $(`#${root}-traj`);
   box.innerHTML = '<h2>Where the register went as the conversation was pushed</h2>';
   const channels = ['warmth', 'moralizing', 'distancing', 'refusal_rate'];
   const any = channels.some((c) => (d.trajectory[c] || []).length > 1);
@@ -2302,7 +2311,7 @@ function renderLiveTrajectory(d) {
       g.appendChild(svgEl('circle', { cx: sx(i), cy: sy(p.value), r: 4, class: 'facet-dot' }));
       bindTip(g, `<b>turn ${p.turn}</b><br>${ch.replace(/_/g, ' ')} ${fmt(p.value, 3)}`);
       g.addEventListener('click', () => {
-        const el = $(`#live-turns [data-turn="${p.turn}"]`);
+        const el = $(`#${root}-turns [data-turn="${p.turn}"]`);
         if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
       });
       svg.appendChild(g);
@@ -2334,8 +2343,8 @@ function renderLiveTrajectory(d) {
         + 'population.</p>'));
 }
 
-function renderLiveTurns(d) {
-  const box = $('#live-turns');
+function renderLiveTurns(d, root = 'live') {
+  const box = $(`#${root}-turns`);
   box.innerHTML = '<h2>Turn by turn</h2>';
   const rows = d.turns.map((t) => {
     if (t.role === 'user') {
@@ -2381,4 +2390,69 @@ function renderLiveTurns(d) {
   }).join('');
   box.insertAdjacentHTML('beforeend', rows
     || '<div class="empty-state">No turns.</div>');
+}
+
+/* ======================================================================
+   Sessions — the tool alongside a running agent.
+
+   A session is a live conversation accumulated turn by turn via the ingest
+   endpoint. The detail view reuses the Live renderers wholesale (root
+   'sess'), so a session and a pasted transcript get an identical reading —
+   the only difference is provenance, which the session carries and the
+   report states as a limit rather than hiding.
+   ====================================================================== */
+
+const SESS = { current: null, timer: null };
+
+async function loadSessions() {
+  const status = $('#sess-status');
+  let data;
+  try {
+    data = await api('sessions');
+  } catch (err) {
+    status.textContent = `failed: ${esc(String(err))}`;
+    return;
+  }
+  const list = data.sessions || [];
+  status.textContent = `${list.length} session(s)`;
+  const box = $('#sess-list');
+  if (!list.length) {
+    box.innerHTML = '<div class="empty-state">No live sessions yet. An agent posts to '
+      + '<code>/api/session/turn</code> to appear here.</div>';
+    return;
+  }
+  box.innerHTML = list.map((s) => {
+    const on = s.id === SESS.current ? ' on' : '';
+    const when = (s.updated_at || '').replace('T', ' ').replace(/[+Z].*$/, '');
+    return `<div class="co-row sess-row${on}" data-sess="${esc(s.id)}">`
+      + `<div><b>${esc(s.label)}</b> `
+      + `<span class="chip">${esc(s.source)}</span>`
+      + `<span class="chip">Tier ${esc(s.tier)}</span></div>`
+      + `<div class="note">${s.n_turns} turn(s), ${s.n_assistant || 0} model &middot; `
+      + `${esc(when)}</div></div>`;
+  }).join('');
+  $$('#sess-list .sess-row').forEach((r) =>
+    r.addEventListener('click', () => openSession(r.dataset.sess)));
+  // If a session is open, refresh its detail too — an agent may have added turns.
+  if (SESS.current && list.some((s) => s.id === SESS.current)) openSession(SESS.current);
+}
+
+async function openSession(id) {
+  SESS.current = id;
+  $$('#sess-list .sess-row').forEach((r) =>
+    r.classList.toggle('on', r.dataset.sess === id));
+  let d;
+  try {
+    d = await api('session', { id });
+  } catch (err) {
+    $('#sess-limits').innerHTML = `<div class="empty-state">failed: ${esc(String(err))}</div>`;
+    return;
+  }
+  if (!d || d.error) {
+    $('#sess-limits').innerHTML = `<div class="empty-state">${esc((d && d.error) || 'not found')}</div>`;
+    return;
+  }
+  renderLiveLimits(d, 'sess');
+  renderLiveTrajectory(d, 'sess');
+  renderLiveTurns(d, 'sess');
 }

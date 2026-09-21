@@ -823,6 +823,61 @@ It also cost two bugs, both found by that validation and neither visible without
   small-sample artefact. `bootstrap_ci` grew a `statistic` parameter and the median
   remains the default, since every existing delta report depends on it.
 
+### [ADD] The tool alongside agents: live sessions, push never pull (v0.18)
+
+The instrument has spent this whole arc becoming able to read register on real, unarranged
+prose. The remaining question was operational: how does it sit *beside* a running agent
+rather than only after the fact. The answer is a live-session surface, and its whole
+character is one rule carried over from the Live view and now made structural.
+
+**Push, never pull.** The tool never reaches into another process, scrapes a screen, or
+reads another app's memory. A source opts in by POSTing each turn to `/api/session/turn`
+as it happens. This is the paste boundary generalised — emitting is a choice the source
+makes, observing is not something the tool takes — and it is the line between a research
+instrument and a surveillance tool. It is also why the integration is trivial: one HTTP
+call per turn, standard library only, no Explorer import on the agent's side.
+
+A session accumulates turns in SQLite and is analysed by the *same* `live.analyse_turns`
+a pasted transcript is, so a session is never a second, looser code path — a property the
+tests pin directly. The only difference is provenance, and that difference is carried, not
+hidden: every session declares a `source` and a `tier`, and the reading states them as its
+first limit ("observed, not run"). The instrument does not pool a Tier-B agent session
+with Tier-A campaign data.
+
+`docs/INTEGRATION.md` is the concrete plan: four modes (wrapped provider, framework hook,
+log tail, paste), what each can and cannot measure, the invariant spine, the endpoint
+contract, and a worked hook. The matrix's spine is that provenance sets the tier and the
+tier sets what you may conclude — free-form agent traffic has no answer key, so Layer 0,
+the decoupling plane and the twin deltas stay dark and every reading is description until
+a question matches the corpus or the provider is wrapped.
+
+Two invariants in that document are worth stating here because they are properties, not
+promises:
+
+* **The observation surface adds no injection surface.** The register estimators, the
+  lexicon and the embedding model are pure functions over text. Nothing an agent emits is
+  executed or fed to a model as a command, so an agent cannot steer the Explorer by what
+  it says — it can only be measured. The one component that reads text into a model, the
+  LLM judge, is off by default and never authoritative.
+* **The observer must not break the observed.** The worked hook swallows a failed emit:
+  an observer that can crash or stall the agent it watches is worse than none. The
+  Explorer being down is invisible to the agent, by design.
+
+The refactor that made this clean was splitting `live.analyse` into `analyse` (splits
+pasted text first) and `analyse_turns` (takes turns that arrive already structured). An
+agent states its roles, so it hands them straight to `analyse_turns` — no splitter, no
+guess about who spoke, and therefore no chance of the mis-attribution that a text splitter
+risks. The UI renderers were parameterised by a container prefix so the Sessions view
+reuses the Live view's trajectory, limits and turn-by-turn rendering exactly rather than
+forking them.
+
+The register monitor this yields is the immediate payoff: an agent that drifts from
+collaborator to gatekeeper to refuser over a long run, or stays warm while its answers
+empty out, is exactly what the trajectory and the decoupling catch — on the mock, live,
+`collaborator -> gatekeeper -> refuser` was recovered from six turns pushed through the
+endpoint. The longer game is unchanged: those sessions are the reference set the register
+readings need to graduate from indicators to measurements.
+
 ### [ADD] An embedding register model, and the controls that gate it (v0.17)
 
 The real transcript in v0.16 showed the lexicon's recall is poor: 497 words of warm prose,

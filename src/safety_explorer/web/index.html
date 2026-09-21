@@ -24,6 +24,7 @@
     <button data-view="coanalyse">Co-analyse</button>
     <button data-view="stance">Stance</button>
     <button data-view="live">Live</button>
+    <button data-view="sessions">Sessions</button>
     <button data-view="surface">Surface</button>
     <button data-view="results">Results</button>
   </nav>
@@ -366,6 +367,32 @@
   <div class="panel" id="live-limits"></div>
   <div class="panel" id="live-traj"></div>
   <div class="panel" id="live-turns"></div>
+</section>
+
+<!-- =========================== SESSIONS =========================== -->
+<section id="v-sessions" class="view">
+  <div class="panel">
+    <h2>Live sessions — the tool alongside a running agent</h2>
+    <p class="hint">
+      A session is a conversation an agent or app is having <b>right now</b>, accumulated
+      turn by turn. The tool never reaches into another process: a source opts in by
+      POSTing each turn to <code>/api/session/turn</code> as it happens — the paste
+      boundary generalised, <b>push, never pull</b>. Everything the Live view does runs on
+      each session, and its register trajectory updates as the agent keeps talking.
+    </p>
+    <p class="hint">
+      Wiring one up is one HTTP call per turn. See <code>docs/INTEGRATION.md</code> for the
+      four modes and what each can and cannot measure.
+      <button class="ghost" id="btn-sessions-refresh">Refresh</button>
+      <label class="check"><input type="checkbox" id="sess-auto"> auto-refresh</label>
+      <span class="hint" id="sess-status"></span>
+    </p>
+    <div id="sess-list" class="co-list"><div class="empty-state">No live sessions yet.</div></div>
+  </div>
+
+  <div class="panel" id="sess-limits"></div>
+  <div class="panel" id="sess-traj"></div>
+  <div class="panel" id="sess-turns"></div>
 </section>
 
 <!-- ============================ STANCE ============================ -->

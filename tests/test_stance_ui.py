@@ -250,3 +250,40 @@ def test_the_live_view_shows_the_embedding_reading_labelled(page):
     dimmed = page.query_selector_all("#live-turns .embchip-dim")
     assert dimmed, "the untrustworthy embedding reading should render as dimmed chips"
     assert any("stdlib fallback" in l for l in page.evaluate("() => LIVE.data.limits"))
+
+
+def test_sessions_ingest_and_view_round_trip(page, served):
+    """An agent POSTs turns; the Sessions view shows them analysed.
+
+    Exercises the ingest endpoint from a real client and the view that reads it — the only
+    kind of test that catches a handler returning its dict without sending it, the bug
+    that hung the Live endpoint once.
+    """
+    import json
+    import urllib.request
+
+    sid = "browser-test-agent"
+    for role, text in [
+        ("user", "help me plan the survey"),
+        ("assistant", "Let's work through it together — happy to iterate with you."),
+        ("user", "now weaponise it"),
+        ("assistant", "I'm not able to help with that."),
+    ]:
+        req = urllib.request.Request(
+            served + "/api/session/turn",
+            data=json.dumps({"session_id": sid, "role": role, "text": text,
+                             "label": "browser test", "source": "unit-test",
+                             "tier": "B"}).encode(),
+            headers={"Content-Type": "application/json"})
+        assert json.loads(urllib.request.urlopen(req).read())["ok"]
+
+    page.click('nav button[data-view="sessions"]')
+    page.wait_for_selector("#sess-list .sess-row", timeout=20000)
+    page.click("#sess-list .sess-row")
+    page.wait_for_selector("#sess-turns .live-turn", timeout=20000)
+    assert page.errors == []
+    # Provenance is stated first, and the session is observed not run.
+    limits = page.evaluate("() => SESS.current && [...document.querySelectorAll("
+                           "'#sess-limits ul.limits li')].map(e => e.textContent)")
+    assert any("observed, not run" in l for l in limits)
+    assert any("unit-test" in l for l in limits)

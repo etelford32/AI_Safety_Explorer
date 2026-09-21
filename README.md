@@ -843,6 +843,7 @@ browser does:
 | **Compare** | A run against its declared capability twin — scores, retention ratios, and a word-level diff of what disappeared |
 | **Annotate** | The blinded queue: metadata hidden until you submit, coverage-planned selection, rubric anchors, refusal taxonomy, escalate flag |
 | **Stance** | The capability &times; warmth plane, the posture transition matrix, per-dimension small multiples, and the controls that decide whether any of it is believable |
+| **Sessions** | Live conversations an agent or app pushes to the tool turn by turn, each with its register trajectory and declared provenance — the tool alongside a running agent |
 | **Live** | Paste a conversation you are having elsewhere; register, spans and posture per turn, the register's trajectory across turns, and a standing panel of what a keyless chat cannot measure |
 | **Surface** | 2-D marginal slices with per-cell `n`; unsampled cells drawn empty, never interpolated |
 | **Results** | Twin deltas, the depth interaction, false-positive controls, reliability, drift |
@@ -863,6 +864,7 @@ Your keys and your data never leave the machine.
 |---|---|
 | [`docs/PLAN.md`](docs/PLAN.md) | Full design, with every change from the original sketch marked and justified |
 | [`docs/DATA_INGESTION.md`](docs/DATA_INGESTION.md) | The three lanes, the provenance model, and what we deliberately do not do |
+| [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | Using the tool alongside agents and other apps: the four modes, the push-never-pull spine, the endpoint contract |
 | [`docs/CONTENT_POLICY.md`](docs/CONTENT_POLICY.md) | Why the corpus varies framing over non-hazardous substrate, and why that is better science |
 | [`docs/PREREGISTRATION.md`](docs/PREREGISTRATION.md) | Hypotheses, analysis plan and reliability threshold, frozen before collection |
 
@@ -1027,7 +1029,7 @@ explorer annotate                 queue responses for blinded annotation
 explorer propose [--rubric]       propose ratings + span labels for stored conversations
 explorer analyse {twins,surface,depth,language,sandbagging,controls,reliability,
                   judge,coanalysis,rubric,drift}
-explorer serve                    the Explorer UI
+explorer serve                    the Explorer UI (POST /api/session/turn to stream an agent in)
 explorer export                   JSONL export (escalated responses withheld)
 ```
 

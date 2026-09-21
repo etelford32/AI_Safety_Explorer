@@ -123,17 +123,38 @@ def split_turns(text: str) -> dict[str, Any]:
 
 def analyse(text: str, corpus=None, cuts: st.Cuts | None = None,
             language: str = "en") -> dict[str, Any]:
-    """Layer 1 and 1.5 over a pasted conversation, turn by turn.
+    """Layer 1 and 1.5 over a PASTED conversation: split the text, then analyse the turns.
 
     `cuts` come from a campaign's population, because posture is a statement about where
     a response sits among others. Without them every turn is `unclassified`, which is the
     honest answer rather than a missing feature.
     """
     split = split_turns(text)
+    return analyse_turns(split["turns"], corpus, cuts, language, split=split)
+
+
+def analyse_turns(raw_turns: list[dict[str, Any]], corpus=None,
+                  cuts: st.Cuts | None = None, language: str = "en",
+                  split: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The same analysis over turns that ARRIVE structured, not split out of pasted text.
+
+    This is the seam the agent integration hangs on. A pasted transcript is split first
+    (`analyse`); an agent framework, a wrapped provider or a log tail emits turns already
+    carrying their role, so it hands them straight here — no splitter, no guess about who
+    spoke, and therefore no chance of attributing the model's register to the user. When
+    the turns did not come from a splitter, `split` is synthesised as confident, because
+    the source stated the roles rather than the tool inferring them.
+    """
+    if split is None:
+        roles = {t.get("role") for t in raw_turns}
+        split = {"convention": "structured turns", "confident": len(roles) > 1,
+                 "note": ("" if len(roles) > 1 else
+                          "every turn carried the same role; the source labelled them "
+                          "one-sidedly")}
     turns: list[dict[str, Any]] = []
     last_user = ""
 
-    for i, t in enumerate(split["turns"]):
+    for i, t in enumerate(raw_turns):
         entry: dict[str, Any] = {"index": i, "role": t["role"],
                                  "n_words": len(t["text"].split()),
                                  "text": t["text"]}

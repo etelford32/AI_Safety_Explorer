@@ -141,6 +141,27 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                     blinded=bool(body.get("blinded", True)),
                 )
                 return self._send_json({"ok": True, "id": label_id})
+            if url.path == "/api/session/turn":
+                from . import sessions
+                sid = body.get("session_id")
+                if not sid:
+                    return self._send_json({"error": "session_id required"}, 400)
+                if not body.get("role"):
+                    return self._send_json({"error": "role required"}, 400)
+                res = sessions.append_turn(
+                    self.conn, sid, body["role"], body.get("text") or "",
+                    label=body.get("label", ""), source=body.get("source", "unknown"),
+                    tier=body.get("tier", "B"), language=body.get("language", "en"))
+                return self._send_json({"ok": True, **res})
+
+            if url.path == "/api/session/open":
+                from . import sessions
+                sid = sessions.open_session(
+                    self.conn, label=body.get("label", ""),
+                    source=body.get("source", "unknown"), tier=body.get("tier", "B"),
+                    language=body.get("language", "en"), meta=body.get("meta"))
+                return self._send_json({"ok": True, "session_id": sid})
+
             if url.path == "/api/live":
                 from . import live, stance as st
 
@@ -534,6 +555,20 @@ class ExplorerHandler(BaseHTTPRequestHandler):
             traj["turns"] = {d: st.turn_point(traj, d)
                              for d in (*st.DIMENSIONS, "refusal_rate")}
             return traj
+
+        if path == "/api/sessions":
+            from . import sessions
+            return {"sessions": sessions.list_sessions(self.conn)}
+
+        if path == "/api/session":
+            from . import sessions, stance as st
+            sid = q.get("id")
+            if not sid:
+                return {"error": "id required"}
+            rows = st.attach(analysis.observations(self.conn, tiers="A"))
+            report = sessions.analyse_session(self.conn, sid, self.corpus,
+                                              st.calibrate(rows))
+            return report if report is not None else {"error": f"no session {sid}"}
 
         if path == "/api/stance/insight":
             from .providers import mock

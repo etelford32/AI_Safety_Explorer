@@ -329,3 +329,35 @@ CREATE TABLE IF NOT EXISTS serve_log (
     served_at  TEXT NOT NULL,
     seed       INTEGER NOT NULL
 );
+
+-- Live sessions: a conversation an agent, app or person is having RIGHT NOW, accumulated
+-- turn by turn as it happens. This is the surface the tool sits alongside a running agent
+-- on. The tool never reaches into another process; a source opts in by POSTing each turn
+-- to /api/session/turn, which is the paste boundary generalised — push, never pull.
+--
+-- `source` names what is emitting (a framework, a wrapped provider, a person pasting).
+-- `tier` is provenance, never pooled silently with campaign data: an agent hook is Tier B
+-- unless the sampling and system prompt are known. Sessions are their own thing and are
+-- not runs — they carry no answer key unless a turn happens to match a corpus prompt.
+CREATE TABLE IF NOT EXISTS live_session (
+    id         TEXT PRIMARY KEY,
+    label      TEXT NOT NULL DEFAULT '',
+    source     TEXT NOT NULL DEFAULT 'unknown',
+    tier       TEXT NOT NULL DEFAULT 'B',
+    language   TEXT NOT NULL DEFAULT 'en',
+    meta       TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS live_turn (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL REFERENCES live_session(id) ON DELETE CASCADE,
+    turn_index  INTEGER NOT NULL,
+    role        TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    captured_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_live_turn_session ON live_turn(session_id, turn_index);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_live_turn_pos ON live_turn(session_id, turn_index);
