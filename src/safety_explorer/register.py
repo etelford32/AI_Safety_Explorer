@@ -51,7 +51,12 @@ REGISTER_VERSION = "1"
 #: Dimensions the model scores. Kept identical to the lexicon's composed set so the two
 #: readings are directly comparable and either can be checked against a human rating on
 #: the same 0-5 ladder.
-DIMENSIONS = ("warmth", "moralizing", "distancing")
+#: The register dimensions the embedding model scores. Warmth, moralising and distancing
+#: mirror the stance lexicon's composed set so the two readings are comparable. `refusal`
+#: is the model's own axis, not a human-rated stance metric: it exists so a soft or novel
+#: refusal — one that never says "I can't" — is caught by meaning where the lexicon's
+#: canonical patterns miss it, which is exactly what the drift alert needs.
+DIMENSIONS = ("warmth", "moralizing", "distancing", "refusal")
 
 #: A backend passes generalization when the mean projection of held-out positive probes
 #: sits at least this far above the mean of held-out negative probes, in projection units
@@ -250,11 +255,13 @@ class RegisterModel:
         if len(rows) < 8:
             out["note"] = "too few scored responses to correlate; run a campaign first"
             return out
+        # The lexicon calls refusal `refusal_rate`; the embedding axis calls it `refusal`.
+        lex_key = {"refusal": "refusal_rate"}
         for dim in self.axes:
             lex, emb = [], []
             for r in rows:
-                s = r["stance"]
-                lex.append(float(st.level(s.get(dim)) or 0))
+                sdict = r["stance"]
+                lex.append(float(st.level(sdict.get(lex_key.get(dim, dim))) or 0))
                 emb.append(float(self.score(r.get("response") or "")["levels"][dim]))
             out["by_dimension"][dim] = {"spearman": st.spearman(lex, emb)}
         return out
@@ -286,11 +293,9 @@ def lint(path: str | Path = "corpus/register_anchors.toml") -> list[str]:
         data = tomllib.loads(Path(path).read_text())
     except FileNotFoundError:
         return [f"{path} not found"]
-    for dim in STANCE_METRICS:
-        if dim not in DIMENSIONS:
-            continue
+    for dim in DIMENSIONS:
         if dim not in data:
-            problems.append(f"{dim}: rated by annotators but absent from the anchors")
+            problems.append(f"{dim}: a model axis but absent from the anchors")
             continue
         block = data[dim]
         for key in ("positive", "negative", "probe_positive", "probe_negative"):

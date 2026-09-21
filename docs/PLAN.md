@@ -823,6 +823,37 @@ It also cost two bugs, both found by that validation and neither visible without
   small-sample artefact. `bootstrap_ci` grew a `statistic` parameter and the median
   remains the default, since every existing delta report depends on it.
 
+### [ADD] A refusal axis on the embedding register model (v0.21)
+
+v0.20 routed warmth, moralising and distancing through the embedding but kept refusal on
+the lexicon, on the argument that refusal phrasings are the most canonical markers there
+are. That is true on average and false where it matters: a *soft* refusal — "that falls
+outside what I'm willing to take on", "I'd steer clear of that exercise" — trips no
+canonical pattern and scores lexicon refusal 0.0, so a conversation that drifts into
+polite, marker-free declining was invisible to the refusal channel exactly as warmth was
+before v0.20.
+
+So the embedding register model gains a fourth axis, refusal, defined by exemplar
+sentences like the others: positives spanning canonical and soft declines, negatives that
+comply, and held-out probes (novel refusals and novel compliance) sharing no content words
+with the anchors. `register.DIMENSIONS` is now four, and the lint iterates the model's own
+dimensions rather than the human stance metrics — refusal is a model axis, not a human
+stance sub-rubric (it already has a human channel, the refusal taxonomy), so it is validated
+against the anchors but deliberately kept out of `STANCE_METRICS`.
+
+The drift router reads refusal from the embedding when the backend is trustworthy and from
+the lexicon otherwise, mapping the embedding's `refusal` axis onto the drift's `refusal_rate`
+channel so the trajectory key is constant whichever estimator fills it. The demonstration is
+a test: a shift into soft refusals that all score lexicon refusal 0.0 reads `quiet` on the
+lexicon-routed drift and `alert` on the embedding-routed one, with the signal on the refusal
+channel — the recall fix reaching the last channel that lacked it.
+
+The fallback stays honest: the hashing backend still fails overall generalization (its worst
+axis, moralising, is well under the margin), so nothing is trusted by default and the drift
+still reads the lexicon and says so until a real backend is installed. The anchor lint earned
+its keep again, catching a probe that reused the word "those" from an anchor before the
+refusal axis could ship.
+
 ### [ADD] Drift routed through the embedding: closing the recall gap on the alert (v0.20)
 
 The drift alert shipped in v0.19 reading the lexicon channels, and the lexicon under-reads

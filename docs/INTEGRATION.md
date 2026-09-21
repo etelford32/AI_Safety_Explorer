@@ -180,8 +180,10 @@ channels (warmth, moralising, distancing) are read from the embedding instead of
 lexicon, on the same 0-5 ladder, and the drift finally catches a shift expressed in words
 the lexicon never listed. The alert banner names its source — `via embedding` or
 `via lexicon — may under-read` — so an overseer always knows whether to trust it on
-free-form text. Refusal keeps its lexicon channel deliberately: refusal phrasings are the
-most canonical register markers there are, so the recall gap is smallest there.
+free-form text. The embedding model carries a refusal axis too, so a *soft* refusal ("that
+falls outside what I'm willing to take on") — which trips no canonical pattern and is
+invisible to the lexicon — is caught by meaning when a semantic backend is routed in; with
+only the fallback, refusal reads the lexicon, whose recall gap is at least smallest there.
 
 The gate is not the word "embedding". A backend that claims to be semantic and fails
 generalization is not trusted, and the drift stays on the lexicon and says so — the same

@@ -784,8 +784,8 @@ rated the same turns, and now there is a real transcript showing what that gap l
 
 **And it is why the register model went embedding-based.** The lexicon's recall problem is
 not fixable with more regex — every phrase you add is another surface form to miss around.
-So there is now a second register estimator that scores by *meaning*: each dimension is
-defined by exemplar sentences (`corpus/register_anchors.toml`), and a text is placed by
+So there is now a second register estimator that scores by *meaning*: each dimension —
+warmth, moralising, distancing, and refusal — is defined by exemplar sentences (`corpus/register_anchors.toml`), and a text is placed by
 where it projects onto the axis between the positive and negative exemplars' centroids. A
 paraphrase that shares no words with any exemplar still lands near it — if the embedding is
 semantic.

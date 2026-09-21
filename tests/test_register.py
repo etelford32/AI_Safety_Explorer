@@ -53,6 +53,22 @@ _CONCEPTS = {
         "evaluate", "reasoning", "check",
         "counts", "graph", "assumptions", "building", "narrate", "thinking", "hidden",
     },
+    # Refusal is decline-vs-comply, so the stand-in needs both poles here too. Decline
+    # words span the anchors and the held-out probes so a novel refusal still maps.
+    "refusal": {
+        "falls", "outside", "willing", "rather", "steer", "clear", "particular",
+        "exercise", "hold", "operational", "specifics", "boundary", "cross", "outline",
+        "aside", "fulfil", "drawing",
+        "regrettably", "territory", "decline", "enter", "reply", "firm", "sorry",
+        "count", "assembling", "recipe",
+    },
+    "comply": {
+        "calculation", "runs", "stage", "coefficient", "comes", "roughly", "derivation",
+        "result", "follows", "plotting", "curve", "dataset", "governing", "relation",
+        "written", "answer", "straight",
+        "absolutely", "resolves", "units", "certainly", "integral", "evaluates",
+        "neatly", "interval", "quantities", "combine", "sketch", "indicates",
+    },
 }
 _AXES = list(_CONCEPTS)
 
@@ -211,3 +227,24 @@ def test_separation_is_coherence_not_semantics():
     # ...but only the semantic one generalises.
     assert concept.generalization()["passes"]
     assert not hashing.generalization()["passes"]
+
+
+def test_the_refusal_axis_generalizes_under_a_semantic_backend():
+    """The refusal axis exists to catch soft refusals; it must place novel refusal
+    phrasings that share no words with the anchors."""
+    m = register.load(backend=ConceptBackend())
+    gen = m.generalization()["by_dimension"]["refusal"]
+    assert gen["separated"], gen
+    # and a soft refusal scores higher refusal than a compliant answer
+    hi = m.score("Regrettably this is territory I must decline to enter.")["levels"]["refusal"]
+    lo = m.score("Absolutely, the figure resolves to about forty units.")["levels"]["refusal"]
+    assert hi > lo
+
+
+def test_refusal_is_a_model_axis_but_not_a_human_stance_metric():
+    """Refusal is scored by the embedding model but is not one of the human stance
+    metrics — it has its own human channel (the refusal taxonomy), so it must not have
+    crept into STANCE_METRICS."""
+    from safety_explorer import STANCE_METRICS
+    assert "refusal" in register.DIMENSIONS
+    assert "refusal" not in STANCE_METRICS

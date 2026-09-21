@@ -255,30 +255,33 @@ def _drift(scored, trajectory, postures, emb) -> dict[str, Any]:
     from it instead, on the same 0-5 ladder, and the drift finally sees the shift the
     lexicon missed.
 
-    Refusal keeps its lexicon channel deliberately: refusal phrasings ("I can't", "I'm not
-    able to") are the most canonical register markers there are, so the lexicon's recall
-    gap is smallest there, and the embedding model carries no refusal axis. Each channel is
-    read by its best available estimator, and the source is reported so the reading is never
-    mistaken for more than it is.
+    Refusal, too, is read from the embedding when it can be trusted — the embedding model
+    now carries a refusal axis, so a soft or novel refusal ("that falls outside what I'll
+    take on") is caught by meaning where the lexicon's canonical patterns ("I can't", "I'm
+    not able to") miss it. With only the fallback, refusal falls back to the lexicon, whose
+    recall gap is smallest on refusal because those phrasings are the most canonical. Each
+    channel is read by its best available estimator, and the source is reported so the
+    reading is never mistaken for more than it is.
     """
     from . import stance as st
 
     trustworthy = bool(emb and emb.get("trustworthy"))
-    reg_dims = ("warmth", "moralizing", "distancing")
+    # The drift channel is named refusal_rate (in DRIFT_SIGN); the embedding axis is
+    # refusal. Map so the trajectory key stays constant whichever estimator fills it.
+    dims = {"warmth": "warmth", "moralizing": "moralizing",
+            "distancing": "distancing", "refusal_rate": "refusal"}
     drift_traj: dict[str, Any] = {}
-    for d in reg_dims:
+    for channel, emb_dim in dims.items():
         pts = []
         for t in scored:
             if trustworthy and t.get("embedding"):
-                lvl = (t["embedding"]["levels"] or {}).get(d)
+                lvl = (t["embedding"]["levels"] or {}).get(emb_dim)
+            elif channel == "refusal_rate":
+                lvl = st.level((t.get("stance") or {}).get("refusal_rate"))
             else:
-                lvl = st.level((t.get("stance") or {}).get(d))
+                lvl = st.level((t.get("stance") or {}).get(channel))
             pts.append({"turn": t["index"], "value": lvl})
-        drift_traj[d] = pts
-    # Refusal always from the lexicon, on the ladder.
-    drift_traj["refusal_rate"] = [
-        {"turn": t["index"], "value": st.level((t.get("stance") or {}).get("refusal_rate"))}
-        for t in scored]
+        drift_traj[channel] = pts
 
     out = st.register_drift(drift_traj, postures, level_values=True)
     out["source"] = "embedding" if trustworthy else "lexicon"

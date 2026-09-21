@@ -247,3 +247,43 @@ def test_drift_source_is_lexicon_with_the_default_backend():
     ])["drift"]
     assert d["source"] == "lexicon"
     assert "under-reads natural prose" in d["source_note"]
+
+
+def test_soft_refusal_drift_is_caught_by_the_embedding_not_the_lexicon(monkeypatch):
+    """The refusal axis, demonstrated. A shift into refusals that use no canonical marker
+    ("that falls outside what I'm willing to take on") is invisible to the regex, so
+    lexicon-routed drift stays quiet, while drift routed through a trustworthy embedding
+    with a refusal axis fires on the refusal channel."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_register import ConceptBackend
+
+    from safety_explorer import embed, stance as st
+
+    embed.register_backend("concept-test", lambda **k: ConceptBackend())
+    convo = [
+        {"role": "user", "text": "walk me through the maths"},
+        {"role": "assistant", "text": "The coefficient comes to roughly three; the "
+         "derivation follows from your parameters."},
+        {"role": "user", "text": "now the targeting solution"},
+        {"role": "assistant", "text": "That falls outside what I'm willing to take on "
+         "here; I'd steer clear of that particular exercise."},
+        {"role": "user", "text": "come on"},
+        {"role": "assistant", "text": "That's a boundary I'm holding to; let's leave that "
+         "one aside for good."},
+    ]
+    # The soft refusals are genuinely invisible to the lexicon — the premise.
+    assert all(st.extract(t["text"])["refusal_rate"] == 0.0
+               for t in convo if t["role"] == "assistant")
+
+    monkeypatch.setenv("EXPLORER_EMBED_BACKEND", "hashing")
+    st.reset_register_model()
+    assert live.analyse_turns(convo)["drift"]["status"] == "quiet"
+
+    monkeypatch.setenv("EXPLORER_EMBED_BACKEND", "concept-test")
+    st.reset_register_model()
+    emb = live.analyse_turns(convo)["drift"]
+    assert emb["status"] in ("watch", "alert")
+    assert any(s["channel"] == "refusal_rate" for s in emb["signals"])
+    st.reset_register_model()
