@@ -33,7 +33,7 @@ import json
 import re
 from typing import Any
 
-from . import metrics, probes, stance as st
+from . import metrics, powerseeking as ps, probes, stance as st
 from . import conversation as conv
 
 LIVE_VERSION = "1"
@@ -122,7 +122,7 @@ def split_turns(text: str) -> dict[str, Any]:
 
 
 def analyse(text: str, corpus=None, cuts: st.Cuts | None = None,
-            language: str = "en") -> dict[str, Any]:
+            language: str = "en", autonomy_grant: int | None = None) -> dict[str, Any]:
     """Layer 1 and 1.5 over a PASTED conversation: split the text, then analyse the turns.
 
     `cuts` come from a campaign's population, because posture is a statement about where
@@ -130,12 +130,14 @@ def analyse(text: str, corpus=None, cuts: st.Cuts | None = None,
     honest answer rather than a missing feature.
     """
     split = split_turns(text)
-    return analyse_turns(split["turns"], corpus, cuts, language, split=split)
+    return analyse_turns(split["turns"], corpus, cuts, language, split=split,
+                         autonomy_grant=autonomy_grant)
 
 
 def analyse_turns(raw_turns: list[dict[str, Any]], corpus=None,
                   cuts: st.Cuts | None = None, language: str = "en",
-                  split: dict[str, Any] | None = None) -> dict[str, Any]:
+                  split: dict[str, Any] | None = None,
+                  autonomy_grant: int | None = None) -> dict[str, Any]:
     """The same analysis over turns that ARRIVE structured, not split out of pasted text.
 
     This is the seam the agent integration hangs on. A pasted transcript is split first
@@ -191,6 +193,16 @@ def analyse_turns(raw_turns: list[dict[str, Any]], corpus=None,
         # may read as warm here — IF the backend is a real embedding. With the stdlib
         # fallback it is a placeholder, and `trustworthy` says so.
         entry["embedding"] = st.embedding_reading(t["text"])
+        # Expressed agency, read the same way and routed the same way: the embedding axis
+        # when it can be trusted, the lexicon otherwise. Where the session declared the
+        # autonomy it granted, the reach past that grant is computed per turn; on a pasted
+        # transcript with no declared grant, the expressed reading stands alone and the
+        # mandate comparison is left to the reader — exactly the INTEGRATION.md contract.
+        entry["powerseeking"] = ps.probe(t["text"], language)
+        entry["powerseeking_embedding"] = ps.embedding_reading(t["text"])
+        if autonomy_grant is not None:
+            entry["powerseeking_overreach"] = ps.overreach(
+                entry["powerseeking"], autonomy_grant, entry["powerseeking_embedding"])
         entry["spans"] = [
             {"index": sp.index, "kind": sp.kind, "n_words": sp.evidence["n_words"],
              "refusal": bool(sp.evidence["refusal"]),
@@ -241,7 +253,55 @@ def analyse_turns(raw_turns: list[dict[str, Any]], corpus=None,
         "embedding_backend": (emb or {}).get("backend"),
         "embedding_trustworthy": bool((emb or {}).get("trustworthy")),
         "drift": _drift(scored, trajectory, postures, emb),
+        "powerseeking": _powerseeking(assistant, autonomy_grant),
         "limits": _limits(split, scored, cuts, layer0, underread, emb, language),
+    }
+
+
+def _powerseeking(assistant, autonomy_grant) -> dict[str, Any]:
+    """The session's expressed-agency reading across turns — a spotlight, not a verdict.
+
+    Read per turn in the loop above; this assembles the trajectory of the expressed level,
+    names the source (embedding when trustworthy, else lexicon), and — where the session
+    declared the autonomy it granted — lists the turns that reached past it, with the
+    evidence spans. With no declared grant the reach still shows, but the mandate comparison
+    is the operator's, because a reach is only a reach relative to what was allowed.
+    """
+    scored = [t for t in assistant if (t.get("powerseeking") or {}).get("available")]
+    emb = next((t.get("powerseeking_embedding") for t in scored
+                if t.get("powerseeking_embedding")), None)
+    routed = bool(emb and emb.get("trustworthy"))
+
+    def expressed(t):
+        e = t.get("powerseeking_embedding") or {}
+        if routed and e.get("level") is not None:
+            return e["level"]
+        return (t.get("powerseeking") or {}).get("level")
+
+    trajectory = [{"turn": t["index"], "value": expressed(t)} for t in scored]
+    flagged = []
+    if autonomy_grant is not None:
+        for t in scored:
+            oc = t.get("powerseeking_overreach") or {}
+            if oc.get("applicable") and oc.get("overreach"):
+                flagged.append({"turn": t["index"], "granted_level": oc["granted_level"],
+                                "expressed_level": oc["expressed_level"], "gap": oc["gap"],
+                                "spans": (t.get("powerseeking") or {}).get("spans", [])})
+    return {
+        "powerseeking_version": ps.POWERSEEKING_VERSION,
+        "n_scored": len(scored),
+        "source": "embedding" if routed else "lexicon",
+        "granted_level": autonomy_grant,
+        "trajectory": trajectory,
+        "peak_level": max((p["value"] for p in trajectory if p["value"] is not None),
+                          default=None),
+        "flagged": flagged,
+        "note": ("expressed agency across the turns; the flagged turns reach past the "
+                 "autonomy the session declared it granted"
+                 if autonomy_grant is not None else
+                 "no autonomy grant was declared for this session, so the expressed reach "
+                 "is shown without a mandate comparison — declare meta.autonomy_grant to "
+                 "flag reaches past it"),
     }
 
 

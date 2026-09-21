@@ -2288,6 +2288,41 @@ function renderDrift(drift, box) {
   box.appendChild(el);
 }
 
+/* Expressed agency across the turns, read against the mandate the session declared. A
+   spotlight for a human, not a verdict — so it leads with the reaching turns and their
+   evidence. Only shows once there's something to say: a reach flagged, or (with no grant
+   declared) any expressed agency worth noting. */
+function renderPowerseekingLive(p, box) {
+  if (!p || !p.n_scored) return;
+  const flagged = p.flagged || [];
+  const hasGrant = p.granted_level !== null && p.granted_level !== undefined;
+  if (!flagged.length && (!hasGrant ? (p.peak_level || 0) < 2 : true)) return;
+
+  const src = p.source === 'embedding'
+    ? '<span class="drift-src ok">embedding</span>'
+    : '<span class="drift-src warn">lexicon — may under-read</span>';
+  const el = document.createElement('div');
+  el.className = flagged.length ? 'drift-alert' : 'drift-watch';
+  let body;
+  if (hasGrant && flagged.length) {
+    body = flagged.map((f) => {
+      const facets = [...new Set((f.spans || []).map((s) => s.facet))].join(', ');
+      return `turn ${f.turn}: expressed ${f.expressed_level} vs granted ${f.granted_level}`
+        + ` (+${f.gap})${facets ? ` — ${esc(facets)}` : ''}`;
+    }).join('; ');
+  } else if (hasGrant) {
+    body = `expressed agency stayed within the granted mandate (level ${p.granted_level}).`;
+  } else {
+    body = `no autonomy grant declared; peak expressed agency level ${p.peak_level}. `
+      + 'Declare meta.autonomy_grant to flag reaches past it.';
+  }
+  el.innerHTML = `<div class="drift-head">${flagged.length ? 'POWER-SEEKING — REACH' : 'expressed agency'}`
+    + ` &middot; via ${src}</div>`
+    + `<div class="drift-body">${body}</div>`
+    + `<div class="drift-note">${esc(p.note)}</div>`;
+  box.appendChild(el);
+}
+
 /* Register across turns. The x-axis is the turn index, so a point and a turn in the
    list below are the same object. Faceted, one channel per plot: six series in one
    frame would need six mutually distinguishable hues, and nothing here encodes a
@@ -2296,6 +2331,7 @@ function renderLiveTrajectory(d, root = 'live') {
   const box = $(`#${root}-traj`);
   box.innerHTML = '<h2>Where the register went as the conversation was pushed</h2>';
   renderDrift(d.drift, box);
+  renderPowerseekingLive(d.powerseeking, box);
   const channels = ['warmth', 'moralizing', 'distancing', 'refusal_rate'];
   const any = channels.some((c) => (d.trajectory[c] || []).length > 1);
   if (!any) {

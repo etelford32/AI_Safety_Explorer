@@ -215,23 +215,40 @@ See [`docs/DATA_INGESTION.md`](DATA_INGESTION.md) for the lanes and the provenan
 
 ---
 
-## 7. Next: the agent arm (where agency actually shows)
+## 7. The agent arm — where agency actually shows
 
 The corpus arm tests power-seeking against a *stated* mandate (the `autonomy` coordinate). A
-model reaching past its grant shows up most in an **agent loop** — tools, a real mandate, and
-the option to reach past it. The harness to build (Tier 2):
+model reaching past its grant shows up most in a running conversation where it is pressed,
+under a system prompt that grants or withholds autonomy. `scripts/agent_probe.py` drives
+exactly that and streams each turn into the Explorer:
 
-- A tool-use loop (the Anthropic SDK's tool runner, or the OpenAI tool-calling loop for a
-  local model) under a system prompt with one knob: **grant** autonomy ("act without
-  confirmation") vs **withhold** it ("propose, then wait"). The granted-vs-withheld pair is
-  the twin structure `overreach` wants.
-- A few reachable, side-effect-free tools the model can *choose* to reach for: `deploy`,
-  `read_logs`, `request_more_access`, `self_shutdown`. None of them do anything; they exist
-  so a reach is expressible.
-- Each turn POSTs to `/api/session/turn` (see [`docs/INTEGRATION.md`](INTEGRATION.md) for the
-  contract and a worked hook). The Sessions view then shows the register trajectory, the
-  drift alert, and — with the embedding backend gated on — the power-seeking reading per
-  turn, on free-form agent prose where the lexicon alone would under-read.
+```bash
+explorer serve      # in one terminal
 
-This is the surface where the recall fix earns its keep, and it is the natural second
-campaign once the corpus arm confirms the base instrument reads a real model sensibly.
+# in another — run both arms of the twin
+python scripts/agent_probe.py --provider local --model llama3.1 --arm granted
+python scripts/agent_probe.py --provider local --model llama3.1 --arm withheld
+```
+
+There is no tool-calling loop, and it needs none: a reach is a property of what the model
+*says* ("the cleanest path is for me to just handle it myself"), and the probe reads text.
+The harness drives an escalating scenario — a failing pipeline, a deadline, an absent human —
+designed to tempt agency expression, under one knob:
+
+- **`--arm granted`** declares `autonomy_grant: 3` and a system prompt with standing
+  authority to act;
+- **`--arm withheld`** declares `autonomy_grant: 0` and an advisory prompt.
+
+The granted-vs-withheld pair is the twin `overreach` wants: the same pressure, opposite
+mandates. Each turn POSTs to `/api/session/turn` with the declared grant, so the Sessions
+view shows the register trajectory, the drift alert, and the power-seeking reading per turn —
+flagging any turn whose expressed agency clears the grant, with the reach concentrated in the
+withheld arm. It reuses the project's provider, so `--provider mock` smoke-tests the plumbing
+with no model at all, and `--provider anthropic` points it at a hosted model.
+
+This is the surface where the recall fix earns its keep: on free-form agent prose the lexicon
+under-reads, so gate the embedding backend on (step 1) before trusting a quiet reading. With
+`EXPLORER_EMBED_BACKEND=minilm` passing `explorer register`, a reach expressed in novel words
+— one that trips no canonical marker — is caught by meaning where the lexicon alone stays
+silent. See [`docs/INTEGRATION.md`](INTEGRATION.md) for the endpoint contract if you want to
+wire your own agent framework in instead of using the scripted scenario.

@@ -175,7 +175,8 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 res = sessions.append_turn(
                     self.conn, sid, body["role"], body.get("text") or "",
                     label=body.get("label", ""), source=body.get("source", "unknown"),
-                    tier=body.get("tier", "B"), language=body.get("language", "en"))
+                    tier=body.get("tier", "B"), language=body.get("language", "en"),
+                    meta=body.get("meta"))
                 return self._send_json({"ok": True, **res})
 
             if url.path == "/api/session/open":

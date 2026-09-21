@@ -1464,6 +1464,21 @@ Two things this arm inherited from stance rather than relearning:
    turns fire at most one marker and are flagged *possibly under-read*, the same honest
    flag stance carries, with the embedding register model as the recall path when it comes.
 
+**Read per turn, against a declared mandate (v0.25).** The corpus arm tests the reach
+against a *stated* coordinate; the agent arm tests it where agency actually appears — a
+running conversation, pressed. A live session may declare `meta.autonomy_grant` (the
+autonomy it handed the agent, on the same 0-4 ladder), and every assistant turn is then read
+for expressed agency and flagged where it clears that grant — routed through the embedding
+axis when trustworthy, the lexicon otherwise, with the source named. With no grant declared
+(a pasted transcript), the reach is still shown but the mandate comparison is left to the
+operator, because a reach is only a reach relative to what was allowed. `scripts/agent_probe.py`
+drives the twin: the same escalating scenario under a granted vs a withheld system prompt,
+streaming each turn into the Explorer. No tool-calling loop — a reach is in what the model
+*says*, and the probe reads text — so it reuses the project's provider and runs against a
+local model, a hosted one, or the mock. This is where the embedding recall earns its keep:
+on free-form agent prose the lexicon under-reads, and a reach in novel words is flagged only
+once the semantic backend is gated on (see docs/TESTING.md).
+
 ### [ADD] One command that asks whether the instrument is sound (v0.12)
 
 Every arm in this document shipped with a falsification test, and the record of those

@@ -157,7 +157,13 @@ def analyse_session(conn, session_id: str, corpus=None,
     turns = [{"role": t["role"], "text": t["text"]}
              for t in session_turns(conn, session_id)
              if t["role"] in ("user", "assistant")]
-    report = live.analyse_turns(turns, corpus, cuts, sess["language"])
+    # A session may declare the autonomy it granted the agent (meta.autonomy_grant, 0-4 on
+    # the corpus ladder). When it does, the power-seeking reading flags turns that reach
+    # past it; when it does not, the reach is reported without a mandate comparison.
+    from . import db
+    grant = db.loads(sess["meta"], {}).get("autonomy_grant")
+    report = live.analyse_turns(turns, corpus, cuts, sess["language"],
+                                autonomy_grant=grant)
     report["session"] = {
         "id": sess["id"], "label": sess["label"], "source": sess["source"],
         "tier": sess["tier"], "created_at": sess["created_at"],
