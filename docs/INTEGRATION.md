@@ -189,6 +189,17 @@ The gate is not the word "embedding". A backend that claims to be semantic and f
 generalization is not trusted, and the drift stays on the lexicon and says so — the same
 stated-versus-measured check the rest of the instrument runs on.
 
+**Where the model hub is unreachable** — an air-gapped machine, or a proxy that denies
+`huggingface.co` — download the weights elsewhere and point at the local directory:
+
+```
+export EXPLORER_EMBED_MODEL=/path/to/all-MiniLM-L6-v2   # a local weights directory
+export EXPLORER_EMBED_BACKEND=minilm
+explorer register        # generalization runs against the local weights
+```
+
+`sentence-transformers` loads a local path transparently, so nothing else changes.
+
 ## What this is for
 
 The immediate payoff is a **register monitor** for a running agent. The trajectory and the

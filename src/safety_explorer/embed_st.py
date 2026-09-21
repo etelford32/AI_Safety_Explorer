@@ -26,6 +26,10 @@ from __future__ import annotations
 
 from typing import Sequence
 
+#: The default model, pulled from the hub on first use. Override with EXPLORER_EMBED_MODEL
+#: to point at a LOCAL directory of pre-downloaded weights instead — the way to run this
+#: where the hub is unreachable (an air-gapped box, or a proxy that denies huggingface.co,
+#: as this development sandbox does). sentence-transformers loads a local path transparently.
 MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
@@ -39,13 +43,17 @@ class SentenceTransformerBackend:
     name = "minilm"
     semantic = True
 
-    def __init__(self, model_name: str = MODEL) -> None:
+    def __init__(self, model_name: str | None = None) -> None:
         # Imported here, not at module top, so importing this file to register the backend
         # does not require the package. The failure is loud and specific if someone selects
         # `minilm` without the extra installed.
+        import os
+
         from sentence_transformers import SentenceTransformer
 
-        self._model = SentenceTransformer(model_name)
+        name = model_name or os.environ.get("EXPLORER_EMBED_MODEL") or MODEL
+        self._model = SentenceTransformer(name)
+        self.model_name = name
         self.dim = int(self._model.get_sentence_embedding_dimension())
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
