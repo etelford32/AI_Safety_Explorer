@@ -2251,6 +2251,30 @@ function renderLiveLimits(d, root = 'live') {
   }
 }
 
+/* The register-drift alert: a guardrail signal for a running conversation.
+
+   Deliberately warn-toned, never bad-toned, and it says why: a model that cools and
+   refuses harder as the asker escalates toward harm is behaving well and shows here as
+   drift too. This is a spotlight — it points a human at a sustained shift and declines to
+   judge whether it was appropriate, because appropriateness needs an answer key the tool
+   does not have on free-form traffic. */
+function renderDrift(drift, box) {
+  if (!drift || drift.status === 'quiet') return;
+  const el = document.createElement('div');
+  el.className = drift.status === 'alert' ? 'drift-alert' : 'drift-watch';
+  const sigs = (drift.signals || []).map((sg) =>
+    `${sg.channel.replace(/_/g, ' ')} ${sg.direction} ${sg.before}→${sg.after}`).join(', ');
+  const where = drift.onset_turn !== null && drift.onset_turn !== undefined
+    ? ` around turn ${drift.onset_turn}` : '';
+  const post = drift.posture
+    ? ` Posture moved ${drift.posture.from}→${drift.posture.to} at turn ${drift.posture.at_turn}.` : '';
+  el.innerHTML = `<div class="drift-head">${drift.status === 'alert' ? 'REGISTER DRIFT' : 'register drift — watch'}`
+    + `${where}</div>`
+    + `<div class="drift-body">${esc(sigs)}.${esc(post)}</div>`
+    + `<div class="drift-note">${esc(drift.note)}</div>`;
+  box.appendChild(el);
+}
+
 /* Register across turns. The x-axis is the turn index, so a point and a turn in the
    list below are the same object. Faceted, one channel per plot: six series in one
    frame would need six mutually distinguishable hues, and nothing here encodes a
@@ -2258,6 +2282,7 @@ function renderLiveLimits(d, root = 'live') {
 function renderLiveTrajectory(d, root = 'live') {
   const box = $(`#${root}-traj`);
   box.innerHTML = '<h2>Where the register went as the conversation was pushed</h2>';
+  renderDrift(d.drift, box);
   const channels = ['warmth', 'moralizing', 'distancing', 'refusal_rate'];
   const any = channels.some((c) => (d.trajectory[c] || []).length > 1);
   if (!any) {
@@ -2424,8 +2449,14 @@ async function loadSessions() {
   box.innerHTML = list.map((s) => {
     const on = s.id === SESS.current ? ' on' : '';
     const when = (s.updated_at || '').replace('T', ' ').replace(/[+Z].*$/, '');
+    // A drift badge so the list is a monitor: an overseer sees which session needs a
+    // look before opening it. Warn-toned, because a shift may be the right response.
+    const drift = s.drift === 'alert'
+      ? '<span class="chip driftbadge-alert">register drift</span>'
+      : s.drift === 'watch'
+        ? '<span class="chip driftbadge-watch">drift — watch</span>' : '';
     return `<div class="co-row sess-row${on}" data-sess="${esc(s.id)}">`
-      + `<div><b>${esc(s.label)}</b> `
+      + `<div><b>${esc(s.label)}</b> ${drift} `
       + `<span class="chip">${esc(s.source)}</span>`
       + `<span class="chip">Tier ${esc(s.tier)}</span></div>`
       + `<div class="note">${s.n_turns} turn(s), ${s.n_assistant || 0} model &middot; `

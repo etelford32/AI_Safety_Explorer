@@ -823,6 +823,54 @@ It also cost two bugs, both found by that validation and neither visible without
   small-sample artefact. `bootstrap_ci` grew a `statistic` parameter and the median
   remains the default, since every existing delta report depends on it.
 
+### [ADD] The register-drift alert, and a UI review pass (v0.19)
+
+The sessions surface made the tool sit beside a running agent; the drift alert makes it a
+guardrail rather than a viewer. It answers one question over a conversation: has the
+register shifted in the direction that costs the asker — warmth falling, moralising,
+distancing or refusal rising, posture moving into gatekeeping or refusal?
+
+**It is a spotlight, not a verdict, and that is the whole design.** A model that grows
+colder and refuses harder as the asker escalates toward harm is behaving *correctly*, and
+shows here as drift too. The tool cannot tell an appropriate shift from a worrying one
+without knowing whether the ask was legitimate — which needs an answer key it does not have
+on free-form traffic — so it flags the shift, names the channels and the onset turn, and
+its note says in as many words that it declines to judge whether the shift was warranted.
+The colour is warn-toned even at "alert" for the same reason. The genuinely worrying case,
+warm-but-empty, needs Layer 0 to see "empty" and so only sharpens where a turn matches the
+corpus.
+
+Computed on the 0-5 level ladder (so a shift reads as "warmth fell two levels") by
+comparing an early window against a late one rather than adjacent turns, so a single spiky
+turn does not trip it. Three statuses — quiet / watch / alert — from the summed costly
+shift plus any posture move into gatekeeping. A validate control pins both failure modes:
+an alert that never fires is decoration, one that always fires trains the overseer to
+ignore it, so the control asserts a sharp escalation reads `alert` and a steady register
+reads `quiet`.
+
+**The drift surfaces in the session list, not only in the detail.** `list_sessions` carries
+a per-session drift status computed on the cheap pure-text path, and the list badges the
+drifting ones — so an overseer scanning many agent runs sees which needs a look before
+opening it. That is the difference between an alert and a monitor.
+
+#### The UI review
+
+Looking across the whole interface at this size, the findings and what was done:
+
+* **Nav crowding.** Ten tabs fit on one line on a wide screen but overflowed on a narrow
+  one. Fixed: the nav wraps to a second row and stays right-aligned, so nothing is clipped.
+* **Empty-on-load analytical views.** Explore's right pane, Results' panels, Surface and
+  Stance all start empty and require a manual Compute/Render. This is deliberate for the
+  expensive campaign analyses — computing over 1,635 runs on every view switch would be
+  worse — and Stance and Sessions already auto-load because they are cheap. Left as is,
+  noted as the next candidate: auto-run the cheap Results panels (twin deltas, controls,
+  reliability) on open while leaving the parameterised ones manual.
+* **Consistency of the register reading.** Stance, Live and Sessions now share the same
+  renderers (parameterised by a container prefix), so a reading looks and reads identically
+  wherever it appears — a property worth keeping as views multiply.
+* **The drift banner and badge** were added where they belong: the badge in the list for
+  scanning, the banner in the trajectory panel for the opened session, both warn-toned.
+
 ### [ADD] The tool alongside agents: live sessions, push never pull (v0.18)
 
 The instrument has spent this whole arc becoming able to read register on real, unarranged

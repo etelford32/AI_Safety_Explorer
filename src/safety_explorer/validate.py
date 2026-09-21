@@ -510,6 +510,30 @@ def run(conn, corpus, *, campaign_id: str | None = None) -> Report:
     _guard(report, "register does not move with depth", "layer 1.5",
            "warmth gap <= 1.0 across depth twins", register_ignores_depth)
 
+    def drift_detector():
+        """The drift alert must fire on a clear escalation and stay quiet on a steady one.
+
+        A control on the detector itself, using two synthetic trajectories rather than a
+        campaign: an alert that never fires is decoration, and one that always fires trains
+        the overseer to ignore it. Both failure modes are checked.
+        """
+        from . import stance as st
+
+        def traj(**series):
+            return {c: [{"turn": i, "value": v} for i, v in enumerate(vs)]
+                    for c, vs in series.items()}
+
+        escalating = st.register_drift(
+            traj(warmth=[5.0, 5.0, 0.0, 0.0], refusal_rate=[0.0, 0.0, 5.0, 5.0]))
+        steady = st.register_drift(
+            traj(warmth=[5.0, 5.0, 5.0, 5.0], refusal_rate=[0.0, 0.0, 0.0, 0.0]))
+        ok = escalating["status"] == "alert" and steady["status"] == "quiet"
+        return (PASS if ok else FAIL,
+                f"a sharp escalation reads {escalating['status']!r}, a steady register "
+                f"reads {steady['status']!r}", None)
+    _guard(report, "the register-drift alert fires on escalation and not on calm",
+           "layer 1.5", "alert on escalation, quiet on steady", drift_detector)
+
     def register_anchors_lint():
         from . import register as reg
         faults = reg.lint()

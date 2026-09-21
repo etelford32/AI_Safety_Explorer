@@ -240,6 +240,7 @@ def analyse_turns(raw_turns: list[dict[str, Any]], corpus=None,
         "underread_turns": [t["index"] for t in underread],
         "embedding_backend": (emb or {}).get("backend"),
         "embedding_trustworthy": bool((emb or {}).get("trustworthy")),
+        "drift": st.register_drift(trajectory, postures),
         "limits": _limits(split, scored, cuts, layer0, underread, emb, language),
     }
 

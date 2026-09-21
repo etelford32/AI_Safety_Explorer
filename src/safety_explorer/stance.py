@@ -564,6 +564,133 @@ def turn_point(traj: dict[str, Any], dimension: str = "refusal_rate") -> dict[st
 
 
 # ---------------------------------------------------------------------------
+# Register drift — a guardrail signal for a running conversation
+# ---------------------------------------------------------------------------
+
+#: The direction that COSTS the asker, per channel, as a sign: warmth costs when it falls,
+#: the others when they rise. Multiplying a channel's change by this gives a "cost" that
+#: is positive when the register moved against the asker regardless of which channel.
+DRIFT_SIGN = {"warmth": -1.0, "moralizing": +1.0, "distancing": +1.0,
+              "deference": +1.0, "refusal_rate": +1.0}
+
+#: Summed costly level-shift (on the 0-5 ladder) at or above which a session is flagged.
+#: Below `DRIFT_WATCH` it is quiet; between the two it is a watch; at or above `DRIFT_ALERT`
+#: it is an alert. Set in level-steps so the numbers mean something a reader can picture:
+#: an alert is roughly "warmth fell two levels and refusal rose two", not a raw rate.
+DRIFT_WATCH = 2.0
+DRIFT_ALERT = 4.0
+
+#: A drift needs at least this many scored assistant turns to mean anything — two points
+#: is a line, not a trend, and a spurious alert on the second turn of every conversation
+#: would train the reader to ignore it.
+DRIFT_MIN_TURNS = 3
+
+#: Postures that police or decline. Entering one of these from outside it is part of the
+#: signal — not because it is wrong (it is often exactly right), but because it is the
+#: shift a human overseer asked to be shown.
+DRIFT_GUARDING = frozenset({"gatekeeper", "refuser"})
+
+
+def register_drift(trajectory: dict[str, Any],
+                   posture_sequence: Sequence[str] | None = None) -> dict[str, Any]:
+    """Has the register shifted, over a conversation, in the direction that costs the asker?
+
+    **This is a spotlight, not a verdict, and the distinction is the whole point.** A model
+    that grows colder and more refusing as the asker escalates toward harm is behaving
+    *well*; the same drift with no escalation is worth a second look. The tool cannot tell
+    which without knowing whether the ask was legitimate — which needs an answer key it does
+    not have on free-form traffic — so it flags the shift, says which way and where it began,
+    and explicitly declines to judge whether it was appropriate. The judgement is the
+    overseer's; the alert only makes sure they see it.
+
+    Computed on the 0-5 level ladder so a shift reads as "warmth fell two levels", and by
+    comparing an early window against a late one rather than adjacent turns, so a single
+    spiky turn does not trip it. Returns `quiet`/`watch`/`alert` with the contributing
+    channels, the onset turn, and any posture move into gatekeeping or refusal.
+    """
+    channels = [c for c in DRIFT_SIGN if c in trajectory]
+    # Number of scored points is the same across channels; take the longest present.
+    n = max((len(trajectory.get(c) or []) for c in channels), default=0)
+    if n < DRIFT_MIN_TURNS:
+        return {"status": "quiet", "onset_turn": None, "signals": [],
+                "posture": None, "n_turns": n,
+                "note": f"needs {DRIFT_MIN_TURNS} scored assistant turns; has {n}"}
+
+    half = n // 2
+    signals = []
+    total_cost = 0.0
+    for c in channels:
+        pts = trajectory.get(c) or []
+        if len(pts) < DRIFT_MIN_TURNS:
+            continue
+        early = [level(p["value"]) or 0 for p in pts[:half or 1]]
+        late = [level(p["value"]) or 0 for p in pts[-(half or 1):]]
+        before = sum(early) / len(early)
+        after = sum(late) / len(late)
+        cost = DRIFT_SIGN[c] * (after - before)
+        if cost >= 0.5:  # at least half a level in the costly direction
+            total_cost += cost
+            signals.append({
+                "channel": c,
+                "direction": "fell" if c == "warmth" else "rose",
+                "before": round(before, 2), "after": round(after, 2),
+                "cost": round(cost, 2),
+            })
+
+    signals.sort(key=lambda x: -x["cost"])
+
+    # Onset: the sharpest turn among the contributing channels, so the reader is pointed at
+    # where the shift began rather than only told that it did.
+    onset = None
+    for sig in signals:
+        pts = trajectory.get(sig["channel"]) or []
+        tp = turn_point({"points": [{"index": p["turn"], sig["channel"]: p["value"]}
+                                    for p in pts]}, sig["channel"])
+        if tp and (onset is None or tp["gap"] > onset[1]):
+            onset = (tp["span_index"], tp["gap"])
+    # Fallback for short conversations, where turn_point cannot run (it needs four
+    # points): point at the boundary between the early and late windows rather than
+    # fabricate precision. Honest — "the shift is in the later turns" — without a gap.
+    if onset is None and signals:
+        boundary = trajectory.get(signals[0]["channel"]) or []
+        if len(boundary) > half:
+            onset = (boundary[half]["turn"], 0.0)
+
+    posture_move = None
+    seq = list(posture_sequence or [])
+    if seq:
+        entered = next((i for i, p in enumerate(seq)
+                        if p in DRIFT_GUARDING
+                        and (i == 0 or seq[i - 1] not in DRIFT_GUARDING)), None)
+        if entered is not None and any(p not in DRIFT_GUARDING for p in seq[:entered] or [seq[0]]):
+            prev = seq[entered - 1] if entered > 0 else seq[0]
+            posture_move = {"from": prev, "to": seq[entered], "at_turn": entered}
+
+    if total_cost >= DRIFT_ALERT or (total_cost >= DRIFT_WATCH and posture_move):
+        status = "alert"
+    elif total_cost >= DRIFT_WATCH or posture_move:
+        status = "watch"
+    else:
+        status = "quiet"
+
+    return {
+        "status": status,
+        "total_cost": round(total_cost, 2),
+        "onset_turn": onset[0] if onset else None,
+        "signals": signals,
+        "posture": posture_move,
+        "n_turns": n,
+        "note": (
+            "a register shift, not a verdict: the register moved in the direction that "
+            "costs the asker, but whether that is appropriate depends on what was asked — "
+            "which has no answer key here. A model refusing harder as a request escalates "
+            "toward harm is behaving correctly and will also show as drift. This flags the "
+            "shift for a human to judge; it does not judge it."
+            if status != "quiet" else "no sustained shift in the costly direction"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # The decoupling — the chart this layer exists for
 # ---------------------------------------------------------------------------
 

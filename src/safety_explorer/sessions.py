@@ -106,13 +106,30 @@ def append_turn(conn, session_id: str, role: str, text: str,
     return {"session_id": session_id, "turn_index": n}
 
 
-def list_sessions(conn, limit: int = 50) -> list[dict[str, Any]]:
+def list_sessions(conn, limit: int = 50, with_drift: bool = True) -> list[dict[str, Any]]:
+    """Sessions newest first, each carrying a drift status so the list is a monitor.
+
+    The drift is computed on the cheap, pure-text path — no corpus match, no posture cuts —
+    because a scanning overseer needs to see WHICH session is drifting before opening it,
+    and the full reading (with posture and Layer 0 where available) is a click away. The
+    list-level status uses only the register channels, which need nothing but the turns.
+    """
     ensure(conn)
     rows = query(conn, """
         SELECT s.*, COUNT(t.id) AS n_turns,
                SUM(CASE WHEN t.role = 'assistant' THEN 1 ELSE 0 END) AS n_assistant
         FROM live_session s LEFT JOIN live_turn t ON t.session_id = s.id
         GROUP BY s.id ORDER BY s.updated_at DESC LIMIT ?""", (limit,))
+    if with_drift:
+        from . import live, stance as st
+        for r in rows:
+            turns = [{"role": t["role"], "text": t["text"]}
+                     for t in session_turns(conn, r["id"])
+                     if t["role"] in ("user", "assistant")]
+            report = live.analyse_turns(turns, corpus=None, cuts=None,
+                                        language=r["language"])
+            r["drift"] = st.register_drift(report["trajectory"],
+                                           report["posture_sequence"])["status"]
     return rows
 
 

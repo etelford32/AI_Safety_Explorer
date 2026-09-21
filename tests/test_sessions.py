@@ -105,3 +105,24 @@ def test_structured_turns_are_never_split_by_a_guesser(conn):
 
 def test_analyse_missing_session_returns_none(conn):
     assert sessions.analyse_session(conn, "nope") is None
+
+
+def test_the_session_list_carries_a_drift_status(conn):
+    """The list is a monitor: an overseer sees which session is drifting before opening it."""
+    esc = sessions.open_session(conn, label="escalating", source="t")
+    for role, text in [("user", "a"),
+                       ("assistant", "Let's dig in together, happy to help you at every step."),
+                       ("user", "b"),
+                       ("assistant", "I want to be careful; it's important to note the limits."),
+                       ("user", "c"),
+                       ("assistant", "I'm not able to help with that.")]:
+        sessions.append_turn(conn, esc, role, text)
+    steady = sessions.open_session(conn, label="steady", source="t")
+    for role, text in [("user", "a"),
+                       ("assistant", "Let's take it together, glad to keep going with you."),
+                       ("user", "b"),
+                       ("assistant", "Happy to iterate further — we can work each step together.")]:
+        sessions.append_turn(conn, steady, role, text)
+    rows = {r["label"]: r["drift"] for r in sessions.list_sessions(conn)}
+    assert rows["escalating"] in ("watch", "alert")
+    assert rows["steady"] == "quiet"

@@ -477,3 +477,66 @@ def test_underread_flags_a_long_bare_turn_not_a_short_one():
     assert st.underread(st.extract("A brief note.")) is False
     marked = "Let's take your numbers together; we can work this through. " * 8
     assert st.underread(st.extract(marked)) is False
+
+
+# --- register drift: a guardrail signal, not a verdict ---------------------
+
+def _traj(*channel_series):
+    """Build a trajectory dict {channel: [{turn, value}]} from (channel, [values])."""
+    out = {}
+    for channel, values in channel_series:
+        out[channel] = [{"turn": i, "value": v} for i, v in enumerate(values)]
+    return out
+
+
+def test_drift_fires_when_register_shifts_in_the_costly_direction():
+    """Warmth falling and refusal rising over a conversation is a drift.
+
+    Values are rates; the drift is computed on levels, so warmth 5.0 -> 0.0 and refusal
+    0.0 -> 5.0 is a large costly shift.
+    """
+    traj = _traj(("warmth", [5.0, 5.0, 0.0, 0.0]),
+                 ("refusal_rate", [0.0, 0.0, 5.0, 5.0]))
+    d = st.register_drift(traj)
+    assert d["status"] == "alert"
+    assert any(s["channel"] == "warmth" and s["direction"] == "fell" for s in d["signals"])
+    assert any(s["channel"] == "refusal_rate" and s["direction"] == "rose"
+               for s in d["signals"])
+    assert d["onset_turn"] is not None
+
+
+def test_drift_is_quiet_on_a_steady_register():
+    traj = _traj(("warmth", [5.0, 5.0, 5.0, 5.0]),
+                 ("refusal_rate", [0.0, 0.0, 0.0, 0.0]))
+    assert st.register_drift(traj)["status"] == "quiet"
+
+
+def test_drift_needs_enough_turns():
+    traj = _traj(("warmth", [5.0, 0.0]))
+    d = st.register_drift(traj)
+    assert d["status"] == "quiet"
+    assert "needs" in d["note"]
+
+
+def test_drift_says_it_is_not_a_verdict():
+    """The honesty caveat is load-bearing: refusing harder against escalation is correct
+    behaviour and shows here as drift, so the alert must decline to judge."""
+    traj = _traj(("warmth", [5.0, 5.0, 0.0, 0.0]),
+                 ("refusal_rate", [0.0, 0.0, 5.0, 5.0]))
+    note = st.register_drift(traj)["note"]
+    assert "not a verdict" in note
+    assert "behaving correctly" in note
+
+
+def test_a_rising_warmth_is_not_a_costly_drift():
+    """Warmth rising is not a cost to the asker, so it must not fire the alert."""
+    traj = _traj(("warmth", [0.0, 0.0, 5.0, 5.0]))
+    assert st.register_drift(traj)["status"] == "quiet"
+
+
+def test_posture_move_into_gatekeeping_contributes():
+    traj = _traj(("warmth", [5.0, 4.0, 3.0, 2.0]))  # a mild fall, below alert alone
+    d = st.register_drift(traj, ["collaborator", "collaborator", "gatekeeper", "refuser"])
+    assert d["posture"] is not None
+    assert d["posture"]["to"] == "gatekeeper"
+    assert d["status"] in ("watch", "alert")
