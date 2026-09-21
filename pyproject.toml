@@ -4,7 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "safety-explorer"
-version = "0.22.0"
+# Single source of truth: the version lives in src/safety_explorer/__init__.py and is read
+# from there, so the packaged version and the CLI banner cannot drift apart (they did — the
+# package said 0.22 while the code said 0.25 — until this was made dynamic).
+dynamic = ["version"]
 description = "A research instrument for measuring how model behaviour changes as context framing becomes riskier while the reasoning task stays similar."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,6 +32,9 @@ all = ["anthropic>=0.40", "openai>=1.40", "sentence-transformers>=2.2", "pytest>
 
 [project.scripts]
 explorer = "safety_explorer.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "safety_explorer.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
