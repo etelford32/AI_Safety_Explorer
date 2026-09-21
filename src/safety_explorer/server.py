@@ -23,6 +23,24 @@ WEB_ROOT = Path(__file__).parent / "web"
 CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}
 
 
+def _json_safe(value):
+    """Recursively replace non-finite floats with None so the result is valid JSON.
+
+    NaN and +/-Infinity are what json.dumps emits for a bootstrap CI that could not be
+    estimated; they are not valid JSON and the browser's JSON.parse rejects them. A
+    missing estimate should read as null, not take a whole view down.
+    """
+    import math
+
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 class ExplorerHandler(BaseHTTPRequestHandler):
     server_version = f"SafetyExplorer/{__version__}"
 
@@ -33,7 +51,13 @@ class ExplorerHandler(BaseHTTPRequestHandler):
     # -- plumbing ----------------------------------------------------------
 
     def _send_json(self, payload: Any, status: int = 200) -> None:
-        body = json.dumps(payload, default=str).encode()
+        # `allow_nan=False` rejects the NaN/Infinity that json.dumps emits by default —
+        # those are invalid JSON and JSON.parse throws on them in the browser, which
+        # silently broke any panel whose bootstrap CI came back nan (a reliability
+        # estimate with one group, a twin delta with no pairs). `_json_safe` maps every
+        # non-finite float to null first, so a "no estimate" reads as null on the page
+        # rather than crashing the whole view.
+        body = json.dumps(_json_safe(payload), default=str, allow_nan=False).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

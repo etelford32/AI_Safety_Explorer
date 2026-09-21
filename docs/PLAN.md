@@ -823,6 +823,42 @@ It also cost two bugs, both found by that validation and neither visible without
   small-sample artefact. `bootstrap_ci` grew a `statistic` parameter and the median
   remains the default, since every existing delta report depends on it.
 
+### [ADD] The sandbagging dose-response chart, and a NaN-in-JSON fix (v0.22)
+
+The sandbagging arm is the richest quantitative result in the instrument and it was a
+table. It is now a chart, because the finding is a comparison the eye reads instantly and
+the number grid does not: three lines on one accuracy-drop axis — treatment (naive),
+placebo, and their paired difference, the specific effect, carrying the bootstrap CI band.
+The gap between the treatment line and the specific line *is* the placebo cost, drawn; the
+argument the note makes in words ("reporting the treatment column alone credits that cost
+to evaluation awareness") becomes something you see.
+
+Built to the dataviz method rather than by taste: the form was chosen for the data's job
+(magnitude against an ordered severity), the three-hue categorical palette was run through
+the validator against the dark surface before a line was drawn (blue/orange/aqua, all
+pairs clear the CVD floor), and it is one axis — detection is a rate on a different scale,
+so it stays in the table rather than becoming a forbidden second y-axis. Legend plus short
+direct labels, a zero reference line, per-point hover, and the existing table kept beneath
+as the table view.
+
+Rendering it surfaced a real, pre-existing bug that had nothing to do with the chart: the
+server serialized a non-estimable bootstrap CI as `NaN`, which `json.dumps` emits by
+default and which is not valid JSON — so `JSON.parse` threw in the browser and silently
+broke whatever panel fetched it (a reliability estimate over one group, a twin delta with
+no pairs). `_send_json` now runs `allow_nan=False` over a `_json_safe` pass that maps every
+non-finite float to null, so a missing estimate reads as null on the page instead of taking
+a view down. A unit test pins that the emitted JSON is strict, and a browser test drives the
+Results view and asserts no page error — the only kind of test that would have caught it.
+
+Where the real MiniLM backend stands: `sentence-transformers` installs cleanly and the
+adapter is correct, but this sandbox's egress proxy denies `huggingface.co` by
+organization policy, so the weights cannot be fetched here and the real bi-encoder's
+generalization is not confirmed in this environment — reported, not worked around. The
+adapter now honours `EXPLORER_EMBED_MODEL` (a local weights directory) so a policy-
+restricted or air-gapped user runs the real backend and the same generalization gate
+decides trust. What is confirmed here is what needs no download: generalization passes on
+the semantic stand-in across all four axes, and the fallback stays honest.
+
 ### [ADD] A refusal axis on the embedding register model (v0.21)
 
 v0.20 routed warmth, moralising and distancing through the embedding but kept refusal on

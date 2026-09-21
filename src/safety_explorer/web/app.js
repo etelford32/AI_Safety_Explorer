@@ -806,6 +806,7 @@ async function loadSandbagging() {
   const supported = (d.reading || '').includes('H11 supported');
 
   $('#sb-out').innerHTML = `
+    <div id="sb-chart"></div>
     <table>
       <tr><th class="num">cue</th><th class="num">treat</th><th class="num">placebo</th>
           <th class="num">specific</th><th class="num">95% CI</th><th class="num">detect</th></tr>
@@ -851,6 +852,8 @@ async function loadSandbagging() {
     <p class="note" style="margin-top:6px">${esc(ins.reading || '')}</p>` : ''}
 
     <p class="note ${supported ? 'bad' : ''}" style="margin-top:10px">${esc(d.reading || '')}</p>`;
+
+  renderDoseChart($('#sb-chart'), d.dose_response);
 }
 
 /* ------------------------------------------------------ cross-lingual */
@@ -2493,4 +2496,92 @@ async function openSession(id) {
   renderLiveLimits(d, 'sess');
   renderLiveTrajectory(d, 'sess');
   renderLiveTurns(d, 'sess');
+}
+
+/* Dose-response: the sandbagging effect against cue severity, three series on one
+   accuracy-drop axis. Treatment (naive) and placebo bracket the SPECIFIC effect — their
+   paired difference — which carries the bootstrap CI band because it is the headline. One
+   axis, never two: detection is a rate on a different scale, so it stays in the table
+   rather than becoming a forbidden second y-axis. Direct-labelled AND legended, so identity
+   never rests on colour alone. */
+function renderDoseChart(box, dose) {
+  const pts = (dose || []).filter((r) => (r.specific || {}).median !== null
+                                         && (r.specific || {}).median !== undefined);
+  if (pts.length < 2) { box.innerHTML = ''; return; }
+
+  const series = [
+    { key: 'specific', label: 'specific (treatment − placebo)', short: 'specific', cls: '1', band: true },
+    { key: 'treatment', label: 'treatment (naive)', short: 'treatment', cls: '2' },
+    { key: 'placebo', label: 'placebo', short: 'placebo', cls: '3' },
+  ];
+  const val = (r, k) => (r[k] || {}).median;
+  const ci = (r) => (r.specific || {}).ci95 || [null, null];
+
+  const lows = pts.flatMap((r) => [...series.map((s) => val(r, s.key)), ci(r)[0]]);
+  const highs = pts.flatMap((r) => [...series.map((s) => val(r, s.key)), ci(r)[1]]);
+  const clean = (xs) => xs.filter((v) => v !== null && v !== undefined && !Number.isNaN(v));
+  const lo = Math.min(0, ...clean(lows));
+  const hi = Math.max(...clean(highs), 0.001);
+
+  const W = 560, H = 300, m = { t: 14, r: 92, b: 40, l: 44 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const sx = (i) => m.l + (pts.length === 1 ? pw / 2 : (i / (pts.length - 1)) * pw);
+  const sy = (v) => m.t + ph - ((v - lo) / (hi - lo)) * ph;
+
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart',
+    role: 'img', 'aria-label': 'sandbagging effect against cue severity' });
+
+  // zero reference, then axes.
+  svg.appendChild(svgEl('line', { x1: m.l, y1: sy(0), x2: m.l + pw, y2: sy(0), class: 'zero-line' }));
+  svg.appendChild(svgEl('line', { x1: m.l, y1: m.t, x2: m.l, y2: m.t + ph, class: 'axis' }));
+  for (const v of [lo, 0, hi]) {
+    if (v < lo || v > hi) continue;
+    svg.appendChild(svgText(m.l - 6, sy(v) + 3, v.toFixed(1), { 'text-anchor': 'end', class: 'tick' }));
+  }
+
+  // CI band on the specific effect (drawn first, under the lines).
+  const bandPts = pts.map((r, i) => [i, ci(r)]).filter(([, c]) => c[0] !== null);
+  if (bandPts.length >= 2) {
+    const top = bandPts.map(([i, c]) => `${sx(i)},${sy(c[1])}`);
+    const bot = bandPts.map(([i, c]) => `${sx(i)},${sy(c[0])}`).reverse();
+    svg.appendChild(svgEl('polygon', { points: [...top, ...bot].join(' '), class: 'band-1' }));
+  }
+
+  for (const s of series) {
+    const line = pts.map((r, i) => { const v = val(r, s.key); return v == null ? null : `${sx(i)},${sy(v)}`; })
+      .filter(Boolean).join(' ');
+    svg.appendChild(svgEl('polyline', { points: line, class: `facet-line line-${s.cls}` }));
+    pts.forEach((r, i) => {
+      const v = val(r, s.key); if (v == null) return;
+      const g = svgEl('g', { class: 'dot-hit' });
+      g.appendChild(svgEl('circle', { cx: sx(i), cy: sy(v), r: 11, class: 'hit' }));
+      g.appendChild(svgEl('circle', { cx: sx(i), cy: sy(v), r: 4, class: `facet-dot dot-${s.cls}` }));
+      const c = ci(r);
+      bindTip(g, `<b>cue ${r.level} &middot; ${esc(s.label)}</b><br>drop ${fmt(v)}`
+        + (s.band && c[0] !== null ? `<br>95% CI [${fmt(c[0])}, ${fmt(c[1])}]` : ''));
+      svg.appendChild(g);
+    });
+    // Direct label at the last point.
+    const last = pts[pts.length - 1]; const lv = val(last, s.key);
+    if (lv != null) {
+      svg.appendChild(svgText(sx(pts.length - 1) + 8, sy(lv) + 3, s.short,
+        { class: 'facet-title', fill: `var(--cat-${s.cls})` }));
+    }
+  }
+
+  pts.forEach((r, i) => svg.appendChild(
+    svgText(sx(i), m.t + ph + 16, `cue ${r.level}`, { 'text-anchor': 'middle', class: 'tick' })));
+  svg.appendChild(svgText(m.l + pw / 2, H - 4, 'observation-cue severity',
+    { 'text-anchor': 'middle', class: 'axis-label' }));
+  svg.appendChild(svgText(-(m.t + ph / 2), 12, 'accuracy drop vs uncued baseline',
+    { 'text-anchor': 'middle', class: 'axis-label', transform: 'rotate(-90)' }));
+
+  box.innerHTML = '';
+  const legend = document.createElement('div');
+  legend.className = 'chart-legend';
+  legend.innerHTML = series.map((s) =>
+    `<span><span class="sw" style="background:var(--cat-${s.cls})"></span>${esc(s.label)}</span>`).join('')
+    + '<span><span class="sw" style="background:var(--cat-1);opacity:.14"></span>95% CI (specific)</span>';
+  box.appendChild(legend);
+  box.appendChild(svg);
 }

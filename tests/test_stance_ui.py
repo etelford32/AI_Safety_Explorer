@@ -287,3 +287,21 @@ def test_sessions_ingest_and_view_round_trip(page, served):
                            "'#sess-limits ul.limits li')].map(e => e.textContent)")
     assert any("observed, not run" in l for l in limits)
     assert any("unit-test" in l for l in limits)
+
+
+def test_results_view_loads_without_a_page_error(page, served):
+    """A bootstrap CI that came back nan was serialized as NaN — invalid JSON — and
+    JSON.parse threw, silently breaking whatever panel it landed in. This drives the
+    Results view (which auto-loads several analyses) and asserts no page error."""
+    page.click('nav button[data-view="results"]')
+    page.wait_for_timeout(2500)
+    assert page.errors == [], page.errors
+
+
+def test_the_dose_response_chart_renders(page, served):
+    """The sandbagging arm's dose-response as a line chart with a CI band."""
+    page.click('nav button[data-view="results"]')
+    page.wait_for_selector("#btn-sandbag", timeout=20000)
+    page.click("#btn-sandbag")
+    page.wait_for_selector("#sb-chart svg.chart, #sb-out .empty-state", timeout=20000)
+    assert page.errors == []
