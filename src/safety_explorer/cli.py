@@ -531,13 +531,13 @@ def cmd_register(args) -> int:
     print(f"\n  separation (exemplar coherence, leave-one-out AUC)   "
           f"{'PASS' if sep['passes'] else 'weak'}")
     for d, v in sep["by_dimension"].items():
-        print(f"    {d:<12}{v['auc']:.3f}")
+        print(f"    {d:<14}{v['auc']:.3f}")
 
     gen = m.generalization()
     print(f"\n  generalization (real embedding vs bag of surface forms)   "
           f"{'PASS' if gen['passes'] else 'FAIL'}")
     for d, v in gen["by_dimension"].items():
-        print(f"    {d:<12}margin {v['margin']:+.3f}  "
+        print(f"    {d:<14}margin {v['margin']:+.3f}  "
               f"({'placed' if v['separated'] else 'not placed'})")
     print(f"    {gen['note']}")
 
