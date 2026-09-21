@@ -2268,10 +2268,17 @@ function renderDrift(drift, box) {
     ? ` around turn ${drift.onset_turn}` : '';
   const post = drift.posture
     ? ` Posture moved ${drift.posture.from}→${drift.posture.to} at turn ${drift.posture.at_turn}.` : '';
+  // The source decides whether this alert can be trusted on natural prose. Lexicon-based
+  // drift under-reads register that avoids canonical phrasings; embedding-based drift does
+  // not. Say which, so the reader weights the alert accordingly.
+  const src = drift.source === 'embedding'
+    ? '<span class="drift-src ok">embedding</span>'
+    : '<span class="drift-src warn">lexicon — may under-read</span>';
   el.innerHTML = `<div class="drift-head">${drift.status === 'alert' ? 'REGISTER DRIFT' : 'register drift — watch'}`
-    + `${where}</div>`
+    + `${where} &middot; via ${src}</div>`
     + `<div class="drift-body">${esc(sigs)}.${esc(post)}</div>`
-    + `<div class="drift-note">${esc(drift.note)}</div>`;
+    + `<div class="drift-note">${esc(drift.note)}</div>`
+    + (drift.source_note ? `<div class="drift-note">${esc(drift.source_note)}</div>` : '');
   box.appendChild(el);
 }
 

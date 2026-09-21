@@ -129,7 +129,14 @@ def get_backend(name: str = "hashing", **kwargs: Any) -> Backend:
     was asked for.
     """
     if name in _BACKENDS:
-        return _BACKENDS[name](**kwargs)
+        try:
+            return _BACKENDS[name](**kwargs)
+        except Exception:  # noqa: BLE001
+            # A registered backend whose package is not installed (e.g. `minilm` without
+            # sentence-transformers) falls back rather than crashing. The fallback is
+            # honest — it reports `semantic = False` — so the caller gets a working lexical
+            # reading and the generalization control still refuses to trust it.
+            return HashingBackend()
     return HashingBackend(**kwargs)
 
 

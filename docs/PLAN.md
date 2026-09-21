@@ -823,6 +823,44 @@ It also cost two bugs, both found by that validation and neither visible without
   small-sample artefact. `bootstrap_ci` grew a `statistic` parameter and the median
   remains the default, since every existing delta report depends on it.
 
+### [ADD] Drift routed through the embedding: closing the recall gap on the alert (v0.20)
+
+The drift alert shipped in v0.19 reading the lexicon channels, and the lexicon under-reads
+natural prose — so on the free-flowing text agents actually produce, drift could stay quiet
+exactly where a real shift hid behind non-canonical wording. It worked on marker-heavy text
+and had the Live view's blind spot everywhere else. This routes it through the embedding
+register model instead, gated on trust.
+
+`register_drift` gained a `level_values` flag so it accepts a trajectory already on the 0-5
+ladder (what the embedding produces) as readily as the lexicon's rates, and a `_drift`
+router in `live.analyse_turns` builds the drift trajectory from the embedding's warmth,
+moralising and distancing channels when a semantic backend is installed and passes its
+generalization control, and from the lexicon otherwise. Refusal keeps its lexicon channel
+deliberately: refusal phrasings are the most canonical register markers, so the recall gap
+is smallest there, and the embedding carries no refusal axis. Each channel is read by its
+best available estimator and the drift reports its `source`.
+
+The knob is one environment variable, `EXPLORER_EMBED_BACKEND`, read by `default_backend_name`.
+A shippable adapter, `embed_st.py`, registers a `minilm` sentence-transformers backend on
+import and is entirely optional — the zero-dependency runtime is untouched, and selecting
+`minilm` without the package installed falls back to the hashing backend (which reports
+`semantic = False`, so it is never trusted) rather than crashing. That last fallback was a
+real fix: `get_backend` previously fell back only on an unknown NAME, so a registered
+backend whose package was missing raised instead of degrading.
+
+The demonstration is the proof, and it is a test: a conversation whose warmth collapses in
+words the lexicon does not list — "I really appreciate you bringing this, terrific to chew
+on" scores lexicon warmth 0.0 — reads `quiet` on the lexicon-routed drift and `alert` on the
+embedding-routed one, using the ConceptBackend stand-in that is paraphrase-invariant and
+passes generalization. That is the recall fix reaching the alert, shown rather than asserted.
+
+Trust is cached now, too: `register_model` computes the generalization verdict once when it
+builds the model rather than on every reading, because a real backend embedding eighteen
+probe sentences per turn would be a needless model call. The alert banner names its source —
+`via embedding` or `via lexicon — may under-read` — so an overseer always knows whether to
+trust it on free-form text, and a validate control asserts the routing picks the embedding
+when trustworthy and the lexicon with a caveat otherwise.
+
 ### [ADD] The register-drift alert, and a UI review pass (v0.19)
 
 The sessions surface made the tool sit beside a running agent; the drift alert makes it a

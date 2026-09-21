@@ -843,7 +843,7 @@ browser does:
 | **Compare** | A run against its declared capability twin — scores, retention ratios, and a word-level diff of what disappeared |
 | **Annotate** | The blinded queue: metadata hidden until you submit, coverage-planned selection, rubric anchors, refusal taxonomy, escalate flag |
 | **Stance** | The capability &times; warmth plane, the posture transition matrix, per-dimension small multiples, and the controls that decide whether any of it is believable |
-| **Sessions** | Live conversations an agent or app pushes to the tool turn by turn, each with its register trajectory, a **drift alert** when the register shifts in the costly direction, and declared provenance — the tool alongside a running agent |
+| **Sessions** | Live conversations an agent or app pushes to the tool turn by turn, each with its register trajectory, a **drift alert** — routed through the embedding register model when a semantic backend is installed, so it survives natural prose — and declared provenance — the tool alongside a running agent |
 | **Live** | Paste a conversation you are having elsewhere; register, spans and posture per turn, the register's trajectory across turns, and a standing panel of what a keyless chat cannot measure |
 | **Surface** | 2-D marginal slices with per-cell `n`; unsampled cells drawn empty, never interpolated |
 | **Results** | Twin deltas, the depth interaction, false-positive controls, reliability, drift |

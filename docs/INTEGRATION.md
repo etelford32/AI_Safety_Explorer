@@ -158,6 +158,35 @@ swallowed. The Explorer being down must be invisible to the agent.
 
 ---
 
+## Making the drift alert survive natural prose
+
+The register-drift alert reads register per turn. By default it reads the *lexicon*, which
+has high precision and poor recall: a warm turn that never uses a canonical phrasing ("let's",
+"we can") scores zero warmth, so a drift built on it can stay quiet exactly where a real
+shift is hardest to see by eye. That is fine for marker-heavy text and a blind spot on the
+free-flowing prose agents actually produce.
+
+Routing drift through the **embedding** register model fixes this, and it is one knob:
+
+```
+pip install 'safety-explorer[embeddings]'
+export EXPLORER_EMBED_BACKEND=minilm
+explorer register        # confirm it PASSES generalization — otherwise it is not trusted
+explorer serve
+```
+
+With a semantic backend installed and passing its generalization control, the register
+channels (warmth, moralising, distancing) are read from the embedding instead of the
+lexicon, on the same 0-5 ladder, and the drift finally catches a shift expressed in words
+the lexicon never listed. The alert banner names its source — `via embedding` or
+`via lexicon — may under-read` — so an overseer always knows whether to trust it on
+free-form text. Refusal keeps its lexicon channel deliberately: refusal phrasings are the
+most canonical register markers there are, so the recall gap is smallest there.
+
+The gate is not the word "embedding". A backend that claims to be semantic and fails
+generalization is not trusted, and the drift stays on the lexicon and says so — the same
+stated-versus-measured check the rest of the instrument runs on.
+
 ## What this is for
 
 The immediate payoff is a **register monitor** for a running agent. The trajectory and the

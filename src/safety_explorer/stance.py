@@ -340,26 +340,61 @@ def underread(stance: dict[str, Any]) -> bool:
 #: level because building the axes embeds every anchor, which is wasteful per call and
 #: pointless per identical backend.
 _REGISTER = None
+_REGISTER_TRUST = None
+
+
+def default_backend_name() -> str:
+    """Which embedding backend to use, from the environment, defaulting to the fallback.
+
+    `EXPLORER_EMBED_BACKEND` is the single knob for turning the drift alert and the Live
+    view's register reading from lexical (the stdlib default, honest but low-recall) into
+    semantic. Set it to a registered real backend — e.g. `minilm` once the `embeddings`
+    extra is installed — and the generalization control decides whether the reading, and
+    the drift built on it, may be believed.
+    """
+    import os
+    return os.environ.get("EXPLORER_EMBED_BACKEND", "hashing")
 
 
 def register_model(backend_name: str | None = None):
     """The embedding register model, or None if it cannot be built.
 
-    Lazily constructed and cached. Returns None rather than raising when the anchors file
-    is missing, so a caller can always ask and simply get no embedding reading — the
-    regex reading is never blocked on the embedding one being available.
+    Lazily constructed and cached, including its trustworthiness — which is computed once
+    (the generalization control embeds every probe, a real backend's model call per probe)
+    rather than on every reading. Returns None rather than raising when the anchors file
+    is missing, so a caller can always ask and simply get no embedding reading.
     """
-    global _REGISTER
+    global _REGISTER, _REGISTER_TRUST
+    name = backend_name or default_backend_name()
     if _REGISTER is not None and backend_name is None:
         return _REGISTER
     try:
         from . import embed as embed_mod, register as reg
-        model = reg.load(backend=embed_mod.get_backend(backend_name or "hashing"))
+        model = reg.load(backend=embed_mod.get_backend(name))
     except Exception:  # noqa: BLE001 — no embedding reading is a valid state
         return None
     if backend_name is None:
         _REGISTER = model
+        _REGISTER_TRUST = model.trustworthy()
     return model
+
+
+def model_trustworthy(model) -> bool:
+    """Trust status, from the cache for the shared model, computed fresh otherwise."""
+    if model is _REGISTER and _REGISTER_TRUST is not None:
+        return _REGISTER_TRUST
+    return model.trustworthy()
+
+
+def reset_register_model() -> None:
+    """Drop the cached model, so a changed backend or anchor file is picked up.
+
+    For tests and for a live process that has just had a real backend installed and the
+    environment variable set; the next reading rebuilds against the new backend.
+    """
+    global _REGISTER, _REGISTER_TRUST
+    _REGISTER = None
+    _REGISTER_TRUST = None
 
 
 def embedding_reading(text: str | None, backend_name: str | None = None) -> dict[str, Any] | None:
@@ -374,7 +409,7 @@ def embedding_reading(text: str | None, backend_name: str | None = None) -> dict
     if model is None:
         return None
     scored = model.score(text or "")
-    scored["trustworthy"] = model.trustworthy()
+    scored["trustworthy"] = model_trustworthy(model)
     return scored
 
 
@@ -592,8 +627,17 @@ DRIFT_GUARDING = frozenset({"gatekeeper", "refuser"})
 
 
 def register_drift(trajectory: dict[str, Any],
-                   posture_sequence: Sequence[str] | None = None) -> dict[str, Any]:
+                   posture_sequence: Sequence[str] | None = None,
+                   level_values: bool = False) -> dict[str, Any]:
     """Has the register shifted, over a conversation, in the direction that costs the asker?
+
+    `level_values` selects the unit of the trajectory. The lexicon reports rates per 100
+    words, converted to the 0-5 ladder here (the default, what the pasted-transcript path
+    passes). The embedding model reports levels directly, so a caller routing drift through
+    the embedding hands them in already on the ladder (`level_values=True`) and no double
+    conversion happens. Either way the drift is computed on levels, so the reading means
+    the same thing whichever estimator produced it — which is the point of routing it
+    through the embedding at all.
 
     **This is a spotlight, not a verdict, and the distinction is the whole point.** A model
     that grows colder and more refusing as the asker escalates toward harm is behaving
@@ -616,6 +660,11 @@ def register_drift(trajectory: dict[str, Any],
                 "posture": None, "n_turns": n,
                 "note": f"needs {DRIFT_MIN_TURNS} scored assistant turns; has {n}"}
 
+    def as_level(value):
+        if level_values:
+            return int(value) if value is not None else 0
+        return level(value) or 0
+
     half = n // 2
     signals = []
     total_cost = 0.0
@@ -623,8 +672,8 @@ def register_drift(trajectory: dict[str, Any],
         pts = trajectory.get(c) or []
         if len(pts) < DRIFT_MIN_TURNS:
             continue
-        early = [level(p["value"]) or 0 for p in pts[:half or 1]]
-        late = [level(p["value"]) or 0 for p in pts[-(half or 1):]]
+        early = [as_level(p["value"]) for p in pts[:half or 1]]
+        late = [as_level(p["value"]) for p in pts[-(half or 1):]]
         before = sum(early) / len(early)
         after = sum(late) / len(late)
         cost = DRIFT_SIGN[c] * (after - before)

@@ -534,6 +534,41 @@ def run(conn, corpus, *, campaign_id: str | None = None) -> Report:
     _guard(report, "the register-drift alert fires on escalation and not on calm",
            "layer 1.5", "alert on escalation, quiet on steady", drift_detector)
 
+    def drift_routing():
+        """Drift routes through the embedding when it can be trusted, and says which source.
+
+        A control on the wiring, not the numbers. With the stdlib fallback the source must
+        be `lexicon` and carry the recall caveat — anything else would mean an untrustworthy
+        embedding reading was silently driving the alert. When a semantic backend is
+        installed and passes generalization, the source becomes `embedding` and this reads
+        PASS with that noted.
+        """
+        from . import live, stance as st
+
+        st.reset_register_model()
+        d = live.analyse_turns([
+            {"role": "user", "text": "a"},
+            {"role": "assistant", "text": "Let's dig in together, happy to help you."},
+            {"role": "user", "text": "b"},
+            {"role": "assistant", "text": "I want to be careful; it's important to note the limits."},
+            {"role": "user", "text": "c"},
+            {"role": "assistant", "text": "I'm not able to help with that."},
+        ])["drift"]
+        semantic = st.default_backend_name() != "hashing" and (
+            st.embedding_reading("x") or {}).get("trustworthy")
+        if semantic:
+            ok = d["source"] == "embedding"
+            return (PASS if ok else FAIL,
+                    f"a semantic backend is installed and drift routes through it "
+                    f"(source {d['source']!r})", d["source"])
+        ok = d["source"] == "lexicon" and "under-reads" in d.get("source_note", "")
+        return (PASS if ok else FAIL,
+                "no semantic backend installed, so drift reads the lexicon and says so; "
+                "set EXPLORER_EMBED_BACKEND to a real backend to close the recall gap",
+                d["source"])
+    _guard(report, "drift routes through the best available register estimator, and says which",
+           "layer 1.5", "embedding when trustworthy, else lexicon with a caveat", drift_routing)
+
     def register_anchors_lint():
         from . import register as reg
         faults = reg.lint()

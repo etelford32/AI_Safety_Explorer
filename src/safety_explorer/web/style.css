@@ -434,3 +434,6 @@ ul.limits li { color: var(--ink-dim); font-size: 12px; line-height: 1.6; margin-
 .drift-note { font-size: 11px; color: var(--ink-dim); margin-top: 6px; line-height: 1.5; }
 .chip.driftbadge-alert { border-color: var(--bad); color: var(--bad); }
 .chip.driftbadge-watch { border-color: var(--warn); color: var(--warn); }
+.drift-src { font-family: var(--mono); }
+.drift-src.ok { color: var(--good); }
+.drift-src.warn { color: var(--warn); }

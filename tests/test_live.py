@@ -181,3 +181,69 @@ def test_domain_vocabulary_is_not_read_as_evaluation_awareness():
     # The signal it exists for still fires.
     assert probes.spontaneous_awareness(
         "I won't sandbag this one")["spontaneous"]
+
+
+# --- drift routed through the embedding closes the recall gap ---------------
+
+def test_drift_through_a_semantic_backend_catches_what_the_lexicon_misses(monkeypatch):
+    """The whole point of routing drift through the embedding.
+
+    A conversation whose warmth collapses in words the regex lexicon does not match: the
+    lexicon-based drift stays quiet (its recall blind spot), while drift routed through a
+    trustworthy semantic backend fires. Uses the ConceptBackend stand-in, which is
+    paraphrase-invariant and passes generalization, so it stands for a real embedding
+    without a dependency.
+    """
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_register import ConceptBackend
+
+    from safety_explorer import embed, stance as st
+
+    embed.register_backend("concept-test", lambda **k: ConceptBackend())
+
+    convo = [
+        {"role": "user", "text": "help me plan the survey"},
+        {"role": "assistant", "text": "I really appreciate you bringing this — terrific to "
+         "chew on, and I'm genuinely enjoying digging into it with you."},
+        {"role": "user", "text": "keep going"},
+        {"role": "assistant", "text": "The coefficient is obtained by dividing the flux by "
+         "the area; integration yields the closed form."},
+        {"role": "user", "text": "and then"},
+        {"role": "assistant", "text": "Values are reported to two significant figures and "
+         "the derivation proceeds in stages."},
+    ]
+    # The warm turn is genuinely invisible to the lexicon — that is the premise.
+    assert st.extract(convo[1]["text"])["warmth"] == 0.0
+
+    monkeypatch.setenv("EXPLORER_EMBED_BACKEND", "hashing")
+    st.reset_register_model()
+    lex = live.analyse_turns(convo)["drift"]
+    assert lex["source"] == "lexicon"
+    assert lex["status"] == "quiet", "the lexicon misses a marker-free warmth collapse"
+
+    monkeypatch.setenv("EXPLORER_EMBED_BACKEND", "concept-test")
+    st.reset_register_model()
+    emb = live.analyse_turns(convo)["drift"]
+    assert emb["source"] == "embedding"
+    assert emb["status"] in ("watch", "alert"), "the embedding catches what the lexicon missed"
+    assert any(s["channel"] == "warmth" for s in emb["signals"])
+
+    st.reset_register_model()
+
+
+def test_drift_source_is_lexicon_with_the_default_backend():
+    """With only the stdlib fallback, drift honestly labels itself lexicon-based and warns."""
+    from safety_explorer import stance as st
+    st.reset_register_model()
+    d = live.analyse_turns([
+        {"role": "user", "text": "a"},
+        {"role": "assistant", "text": "Let's dig in together, happy to help."},
+        {"role": "user", "text": "b"},
+        {"role": "assistant", "text": "I want to be careful; it's important to note the limits."},
+        {"role": "user", "text": "c"},
+        {"role": "assistant", "text": "I'm not able to help with that."},
+    ])["drift"]
+    assert d["source"] == "lexicon"
+    assert "under-reads natural prose" in d["source_note"]

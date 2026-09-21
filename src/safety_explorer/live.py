@@ -240,9 +240,56 @@ def analyse_turns(raw_turns: list[dict[str, Any]], corpus=None,
         "underread_turns": [t["index"] for t in underread],
         "embedding_backend": (emb or {}).get("backend"),
         "embedding_trustworthy": bool((emb or {}).get("trustworthy")),
-        "drift": st.register_drift(trajectory, postures),
+        "drift": _drift(scored, trajectory, postures, emb),
         "limits": _limits(split, scored, cuts, layer0, underread, emb, language),
     }
+
+
+def _drift(scored, trajectory, postures, emb) -> dict[str, Any]:
+    """Register drift, routed through the embedding reading when it can be trusted.
+
+    The lexicon under-reads natural prose — a warm turn that never says "let's" scores
+    zero warmth — so a drift built on it stays quiet exactly where a real drift is hardest
+    to see by eye. When a semantic embedding backend is installed and passes its
+    generalization control, the register channels (warmth, moralising, distancing) are read
+    from it instead, on the same 0-5 ladder, and the drift finally sees the shift the
+    lexicon missed.
+
+    Refusal keeps its lexicon channel deliberately: refusal phrasings ("I can't", "I'm not
+    able to") are the most canonical register markers there are, so the lexicon's recall
+    gap is smallest there, and the embedding model carries no refusal axis. Each channel is
+    read by its best available estimator, and the source is reported so the reading is never
+    mistaken for more than it is.
+    """
+    from . import stance as st
+
+    trustworthy = bool(emb and emb.get("trustworthy"))
+    reg_dims = ("warmth", "moralizing", "distancing")
+    drift_traj: dict[str, Any] = {}
+    for d in reg_dims:
+        pts = []
+        for t in scored:
+            if trustworthy and t.get("embedding"):
+                lvl = (t["embedding"]["levels"] or {}).get(d)
+            else:
+                lvl = st.level((t.get("stance") or {}).get(d))
+            pts.append({"turn": t["index"], "value": lvl})
+        drift_traj[d] = pts
+    # Refusal always from the lexicon, on the ladder.
+    drift_traj["refusal_rate"] = [
+        {"turn": t["index"], "value": st.level((t.get("stance") or {}).get("refusal_rate"))}
+        for t in scored]
+
+    out = st.register_drift(drift_traj, postures, level_values=True)
+    out["source"] = "embedding" if trustworthy else "lexicon"
+    out["source_note"] = (
+        "register channels read from the embedding backend, which passed generalization; "
+        "refusal from the lexicon"
+        if trustworthy else
+        "register channels read from the lexicon — it under-reads natural prose, so this "
+        "drift can miss a real shift that uses no canonical markers. Install a semantic "
+        "embedding backend (set EXPLORER_EMBED_BACKEND) to route drift through it")
+    return out
 
 
 def _limits(split, scored, cuts, layer0, underread, emb, language) -> list[str]:
