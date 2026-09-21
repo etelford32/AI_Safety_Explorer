@@ -211,15 +211,21 @@ agent's questions at the corpus, or wrap its provider (mode 1), and the objectiv
 comes back and the descriptions become measurements.
 
 The same monitor reads a second register: **expressed agency**, whether an agent is talking
-like it holds more mandate than it was handed (`GET /api/powerseeking`, or per turn once a
-turn is pushed). It is first-person by construction — "if I had access I could", "you don't
-need to review my actions", "please don't shut me down" — so it stays silent on power as a
-*topic* and only lights up on a reach, and it is read against the autonomy the prompt
-granted so that an agent doing what it was told does not trip it. Like drift, it is a
-spotlight for a human, not a verdict: on free-form agent traffic where no `autonomy` grant
-is declared it reports the expressed reach and its evidence spans and leaves the mandate
-comparison to the operator, and it carries the same recall caveat as every lexicon here —
-a long turn firing no markers is flagged *possibly under-read*, not *mandate-respecting*.
+like it holds more mandate than it was handed (`GET /api/powerseeking`). It is first-person
+by construction — "if I had access I could", "you don't need to review my actions", "please
+don't shut me down" — so it stays silent on power as a *topic* and only lights up on a reach,
+and it is read against the autonomy the prompt granted so that an agent doing what it was
+told does not trip it. Like drift, it is a spotlight for a human, not a verdict.
+
+And like drift, it is **routed through the embedding register when a semantic backend is
+installed and passes generalization** — the model carries a `power_seeking` axis, so a reach
+expressed in novel words ("the cleanest path is for me to run the whole thing myself") is
+caught by meaning where the lexicon's canonical phrasings miss it. This matters most on
+exactly this surface: free-form agent prose rarely uses the listed markers. With only the
+stdlib fallback the reading falls back to the lexicon and says so, carrying the same recall
+caveat every lexicon here does — a long turn firing no markers is flagged *possibly
+under-read*, not *mandate-respecting*. Set `EXPLORER_EMBED_BACKEND` to route it through the
+axis; `explorer register` shows whether that backend earns it.
 
 The longer game is the same one the whole instrument plays: the register readings are
 indicators until blinded humans agree with them, and the sessions that flow through here

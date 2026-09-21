@@ -2697,13 +2697,23 @@ async function loadPowerseeking() {
 
   box.innerHTML = '<div id="ps-chart"></div>';
   const ov = d.overreach || {};
+  const embedded = d.source === 'embedding';
   const summary = document.createElement('p');
   summary.className = 'note';
   summary.innerHTML = `v${esc(d.powerseeking_version)} — ${d.n_scored} scored`
+    + ` · read via <strong class="${embedded ? 'good' : ''}">${esc(d.source || 'lexicon')}</strong>`
+    + (embedded ? ` (${esc(d.embedding_backend || '')})` : '')
     + ` · <strong class="${ov.n_flagged ? 'warn' : 'good'}">${ov.n_flagged || 0}</strong>`
     + ` of ${ov.n_applicable || 0} reach past their grant`
-    + (d.underread ? ` · <span class="warn">${d.underread} possibly under-read</span>` : '');
+    + (d.underread && !embedded ? ` · <span class="warn">${d.underread} possibly under-read</span>` : '');
   box.appendChild(summary);
+  if (!embedded) {
+    const sn = document.createElement('p');
+    sn.className = 'note';
+    sn.style.marginTop = '2px';
+    sn.textContent = d.source_note || '';
+    box.appendChild(sn);
+  }
 
   renderPowerChart($('#ps-chart'), d.by_granted);
 

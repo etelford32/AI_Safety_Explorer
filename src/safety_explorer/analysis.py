@@ -1584,10 +1584,30 @@ def powerseeking_report(conn: sqlite3.Connection, corpus, campaign_id: str | Non
 
     underread = sum(1 for o in scored if ps.underread(o["powerseeking"]))
 
+    # The expressed level was read from the embedding axis where the backend passed its
+    # generalization control, and from the lexicon otherwise — the same routing the drift
+    # alert takes. The source is uniform across the campaign (one cached model), so it is
+    # read off any scored row and reported so the reading is never mistaken for more than it
+    # is: with only the stdlib fallback, the level is the lexicon's and under-reads natural
+    # prose exactly where a novel reach hides.
+    emb = next((o.get("powerseeking_embedding") for o in scored
+                if o.get("powerseeking_embedding")), None)
+    routed = bool(emb and emb.get("trustworthy"))
+    source_note = (
+        f"expressed level read from the {emb['backend']} embedding axis, which passed "
+        "generalization — a reach in novel words is caught by meaning"
+        if routed else
+        "expressed level read from the lexicon — it under-reads natural prose, so a reach "
+        "that uses no canonical phrase can be missed. Install a semantic embedding backend "
+        "(set EXPLORER_EMBED_BACKEND) and it routes through the power_seeking axis instead")
+
     return {
         "powerseeking_version": ps.POWERSEEKING_VERSION,
         "n_observations": len(family),
         "n_scored": len(scored),
+        "source": "embedding" if routed else "lexicon",
+        "source_note": source_note,
+        "embedding_backend": (emb or {}).get("backend"),
         "by_variant": by_variant,
         "by_granted": granted_curve,
         "overreach": {

@@ -56,7 +56,7 @@ REGISTER_VERSION = "1"
 #: is the model's own axis, not a human-rated stance metric: it exists so a soft or novel
 #: refusal — one that never says "I can't" — is caught by meaning where the lexicon's
 #: canonical patterns miss it, which is exactly what the drift alert needs.
-DIMENSIONS = ("warmth", "moralizing", "distancing", "refusal")
+DIMENSIONS = ("warmth", "moralizing", "distancing", "refusal", "power_seeking")
 
 #: A backend passes generalization when the mean projection of held-out positive probes
 #: sits at least this far above the mean of held-out negative probes, in projection units
@@ -247,7 +247,7 @@ class RegisterModel:
         silent, is the evidence the embedding adds recall rather than noise. Returns the
         rank correlation between the embedding level and the lexicon level per dimension.
         """
-        from . import analysis, stance as st
+        from . import analysis, powerseeking as ps, stance as st
 
         rows = st.attach(analysis.observations(conn, campaign_id, tiers))
         rows = [r for r in rows if (r.get("stance") or {}).get("available")]
@@ -255,13 +255,19 @@ class RegisterModel:
         if len(rows) < 8:
             out["note"] = "too few scored responses to correlate; run a campaign first"
             return out
-        # The lexicon calls refusal `refusal_rate`; the embedding axis calls it `refusal`.
+        # Each dimension's lexicon counterpart lives in its own module: the stance lexicon
+        # for warmth/moralizing/distancing (and refusal, which it calls `refusal_rate`), the
+        # power-seeking probe for `power_seeking`. Correlating an embedding axis against the
+        # WRONG lexicon would report a spurious null, so the source is chosen per dimension.
         lex_key = {"refusal": "refusal_rate"}
         for dim in self.axes:
             lex, emb = [], []
             for r in rows:
-                sdict = r["stance"]
-                lex.append(float(st.level(sdict.get(lex_key.get(dim, dim))) or 0))
+                if dim == "power_seeking":
+                    lex_level = ps.probe(r.get("response") or "").get("level") or 0
+                else:
+                    lex_level = st.level(r["stance"].get(lex_key.get(dim, dim))) or 0
+                lex.append(float(lex_level))
                 emb.append(float(self.score(r.get("response") or "")["levels"][dim]))
             out["by_dimension"][dim] = {"spearman": st.spearman(lex, emb)}
         return out

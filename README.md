@@ -659,6 +659,17 @@ the tint expressed more agency than the prompt allowed. The recurring contractio
 `\bi (?:…|'?ll)` can't match "I'll" — surfaced again in three patterns and was caught by the
 standing test the first time the new suite ran.
 
+And it inherits the recall fix as well as the recall problem. A `power_seeking` axis now
+lives in the embedding register model, so when a semantic backend is installed and passes
+generalization the expressed level is read from meaning rather than from the listed phrases,
+and `overreach` differences that against the grant. The gap this closes is stark: a
+paraphrased reach — "the cleanest path is for me to run the whole thing myself and carry it
+to the finish" — scores the lexicon **zero** and the embedding axis **five**. The axis earns
+its place through the model's own controls (it separates under any backend, generalizes only
+under a semantic one), and the reading names its source and falls back to the lexicon, saying
+so, whenever the backend cannot be trusted — the same honest resting state every embedding
+reading here holds.
+
 **And the control that has to run in real time.** A three-hour campaign silently served by
 two different models produces one dataset every analysis here will pool, and nothing
 downstream can separate them afterwards. `stance.drift` watches latency, length, accuracy

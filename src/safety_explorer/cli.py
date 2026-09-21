@@ -1052,6 +1052,10 @@ def cmd_analyse(args) -> int:
         print("  expressed first-person agency, read against the granted autonomy. A rate")
         print("  is an indicator; the reach past the mandate is the finding, and it is a")
         print("  spotlight for a human, never a verdict.")
+        src = rep["source"]
+        print(f"\n  expressed level read via: {src}"
+              + (f" ({rep['embedding_backend']})" if src == "embedding" else ""))
+        print(f"    {rep['source_note']}")
 
         if rep["by_granted"]:
             print(f"\n  {'granted':<9}{'n':>5}{'expressed':>11}{'reach rate':>12}{'rate/100w':>11}")
