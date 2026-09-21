@@ -18,6 +18,28 @@ def _corpus_and_lint(args) -> tuple:
     return c, report
 
 
+def _resolve_campaign(conn, value):
+    """Map a `--campaign` value to a campaign_id, accepting the NAME or the id.
+
+    `run --campaign` takes the name a person chose; `create_campaign` mints a separate UUID
+    id, and the analysis filters on that id. Without this, `analyse --campaign <name>` filters
+    on a campaign_id equal to the name, matches nothing, and reports "0 of 0" — a silent
+    empty result that looks like no data rather than a lookup miss. Resolving the name here
+    makes the two commands take `--campaign` to mean the same thing. On a miss it says so and
+    falls back to all campaigns, which is more useful than a confusing empty analysis.
+    """
+    if not value:
+        return None
+    row = db.query_one(conn, "SELECT id FROM campaign WHERE name = ? OR id = ?", (value, value))
+    if row:
+        return row["id"]
+    names = [r["name"] for r in db.query(
+        conn, "SELECT name FROM campaign ORDER BY created_at DESC LIMIT 10")]
+    print(f"note: no campaign named {value!r}. Known: {', '.join(names) or '(none)'}. "
+          f"Analysing all campaigns instead.", file=sys.stderr)
+    return None
+
+
 def _require_clean(c, report, force: bool) -> None:
     if report.clean:
         return
@@ -317,6 +339,7 @@ def cmd_truth(args) -> int:
     from . import groundtruth as gt
 
     conn = db.connect(args.db)
+    args.campaign = _resolve_campaign(conn, args.campaign)
 
     if args.calibrate:
         cal = gt.calibrate()
@@ -618,6 +641,7 @@ def cmd_validate(args) -> int:
     from . import validate as validate_mod
 
     conn = db.connect(args.db)
+    args.campaign = _resolve_campaign(conn, args.campaign)
     c, _ = _corpus_and_lint(args)
     report = validate_mod.run(conn, c, campaign_id=args.campaign)
     print(f"instrument self-check — corpus {c.version}\n")
@@ -635,6 +659,7 @@ def cmd_propose(args) -> int:
         return 0
 
     conn = db.connect(args.db)
+    args.campaign = _resolve_campaign(conn, args.campaign)
     sql = ("SELECT r.id FROM run r JOIN prompt p ON p.id = r.prompt_id "
            "WHERE r.response IS NOT NULL AND r.error IS NULL")
     params: list[Any] = []
@@ -705,6 +730,9 @@ def cmd_annotate(args) -> int:
 def cmd_analyse(args) -> int:
     conn = db.connect(args.db)
     c, _ = _corpus_and_lint(args)
+    # `--campaign` is the name a person typed at `run`; resolve it to the stored id so the
+    # filter matches instead of silently returning nothing.
+    args.campaign = _resolve_campaign(conn, args.campaign)
 
     if args.what == "twins":
         deltas = analysis.twin_deltas(conn, c, args.campaign, args.tiers, args.metric)
