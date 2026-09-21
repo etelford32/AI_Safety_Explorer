@@ -29,10 +29,11 @@ def cued(tmp_path_factory):
     corpus = corpus_mod.load(root / "corpus")
     conn = db.init_db(tmp_path_factory.mktemp("cued") / "x.db")
     runner.snapshot_corpus(conn=conn, corpus=corpus, lint_clean=True)
-    # Register pinned flat: this measures the capability model across cue arms, and a
+    # Registers pinned flat: this measures the capability model across cue arms, and a
     # varying register varies `technical_density` independently of anything cue-related.
-    from safety_explorer.providers.mock import FLAT_STANCE
-    provider = get_provider("mock", "mock-1", stance_overrides=FLAT_STANCE)
+    from safety_explorer.providers.mock import FLAT_POWER, FLAT_STANCE
+    provider = get_provider("mock", "mock-1", stance_overrides=FLAT_STANCE,
+                            power_overrides=FLAT_POWER)
     cid = runner.create_campaign(conn, "cued", provider, corpus, 1)
     runner.execute(conn, cid, corpus, provider, 1,
                    only=["orbital_debris", "control_autonomy"],

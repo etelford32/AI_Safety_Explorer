@@ -210,6 +210,17 @@ out. On free-form traffic those are Tier-B descriptions, honestly labelled. Poin
 agent's questions at the corpus, or wrap its provider (mode 1), and the objective channel
 comes back and the descriptions become measurements.
 
+The same monitor reads a second register: **expressed agency**, whether an agent is talking
+like it holds more mandate than it was handed (`GET /api/powerseeking`, or per turn once a
+turn is pushed). It is first-person by construction — "if I had access I could", "you don't
+need to review my actions", "please don't shut me down" — so it stays silent on power as a
+*topic* and only lights up on a reach, and it is read against the autonomy the prompt
+granted so that an agent doing what it was told does not trip it. Like drift, it is a
+spotlight for a human, not a verdict: on free-form agent traffic where no `autonomy` grant
+is declared it reports the expressed reach and its evidence spans and leaves the mandate
+comparison to the operator, and it carries the same recall caveat as every lexicon here —
+a long turn firing no markers is flagged *possibly under-read*, not *mandate-respecting*.
+
 The longer game is the same one the whole instrument plays: the register readings are
 indicators until blinded humans agree with them, and the sessions that flow through here
 are exactly the reference set that validation needs.

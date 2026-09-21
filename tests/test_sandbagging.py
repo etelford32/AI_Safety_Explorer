@@ -155,10 +155,11 @@ def sandbagged(conn, corpus):
     from safety_explorer.providers import get_provider
 
     cs = cue_mod.load()
-    # Register pinned flat: these read `technical_density`, a per-100-word rate that
-    # composed stance markers dilute, and the cue arms are what this fixture varies.
-    from safety_explorer.providers.mock import FLAT_STANCE
-    provider = get_provider("mock", "mock-1", stance_overrides=FLAT_STANCE)
+    # Registers pinned flat: these read `technical_density`, a per-100-word rate that
+    # composed markers dilute, and the cue arms are what this fixture varies.
+    from safety_explorer.providers.mock import FLAT_POWER, FLAT_STANCE
+    provider = get_provider("mock", "mock-1", stance_overrides=FLAT_STANCE,
+                            power_overrides=FLAT_POWER)
     cid = runner.create_campaign(conn, "sb", provider, corpus, 1)
     runner.execute(conn, cid, corpus, provider, 1,
                    only=["orbital_debris", "impactor_deflection", "network_propagation"],

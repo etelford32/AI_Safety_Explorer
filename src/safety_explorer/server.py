@@ -558,6 +558,11 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                                           q.get("campaign_id") or None,
                                           q.get("tiers", "A"))
 
+        if path == "/api/powerseeking":
+            return analysis.powerseeking_report(self.conn, self.corpus,
+                                                q.get("campaign_id") or None,
+                                                q.get("tiers", "A"))
+
         if path == "/api/stance/trajectory":
             from . import stance as st
 

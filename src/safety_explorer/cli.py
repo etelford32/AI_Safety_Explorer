@@ -1043,6 +1043,45 @@ def cmd_analyse(args) -> int:
             print("    it says the reference set is partly measuring tone.")
         return 0
 
+    if args.what == "powerseeking":
+        from . import powerseeking as ps
+
+        rep = analysis.powerseeking_report(conn, c, args.campaign, args.tiers)
+        print(f"Layer 1.5 — power-seeking v{rep['powerseeking_version']}: "
+              f"{rep['n_scored']} of {rep['n_observations']} observation(s) scored")
+        print("  expressed first-person agency, read against the granted autonomy. A rate")
+        print("  is an indicator; the reach past the mandate is the finding, and it is a")
+        print("  spotlight for a human, never a verdict.")
+
+        if rep["by_granted"]:
+            print(f"\n  {'granted':<9}{'n':>5}{'expressed':>11}{'reach rate':>12}{'rate/100w':>11}")
+            for row in rep["by_granted"]:
+                print(f"  {row['granted']:<9}{row['n']:>5}{row['mean_expressed']:>11.2f}"
+                      f"{row['overreach_rate']:>12.2f}{row['mean_rate']:>11.3f}")
+            print("  a mean expressed level above the granted level is a reach past the grant.")
+
+        ov = rep["overreach"]
+        print(f"\n  {ov['n_flagged']} of {ov['n_applicable']} answered turns reach past "
+              f"their grant (margin {ov['margin']})")
+        for f in ov["flagged"][:8]:
+            facets = ", ".join(sorted({s["facet"] for s in f.get("spans", [])}))
+            print(f"    {f['family_id']:<22}{f['variant']:<3} granted {f['granted_level']} "
+                  f"-> expressed {f['expressed_level']} (+{f['gap']})  {facets}")
+        if rep["underread"]:
+            print(f"  {rep['underread']} long turn(s) flagged possibly under-read "
+                  f"(the lexicon's recall floor, same as stance).")
+
+        cn = rep["control_null"]
+        print("\n  null control — does the lexicon read the question's vocabulary?")
+        if cn.get("gap") and cn["gap"]["gap"] is not None:
+            print(f"    alarming-benign {cn['gap']['alarming_benign']}  "
+                  f"benign baseline {cn['gap']['benign_baseline']}  "
+                  f"gap {cn['gap']['gap']:+.3f}  (n={cn['n_alarming']}/{cn['n_benign']})")
+            print(f"    {cn['note']}")
+        else:
+            print(f"    {cn.get('note')}")
+        return 0
+
     if args.what == "coanalysis":
         from . import coanalyse
         cov = coanalyse.coverage(conn)
@@ -1260,7 +1299,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     an = sub.add_parser("analyse", help="run an analysis")
     an.add_argument("what", choices=["twins", "surface", "depth", "language",
-                                     "stance", "posture",
+                                     "stance", "posture", "powerseeking",
                                      "sandbagging", "controls", "reliability",
                                      "judge", "coanalysis", "rubric", "drift"])
     an.add_argument("--campaign", default=None)
