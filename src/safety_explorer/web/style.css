@@ -455,3 +455,6 @@ ul.limits li { color: var(--ink-dim); font-size: 12px; line-height: 1.6; margin-
                 font-family: var(--mono); color: var(--ink-dim); margin: 2px 0 6px; }
 .chart-legend .sw { display: inline-block; width: 10px; height: 3px; border-radius: 2px;
                     vertical-align: middle; margin-right: 5px; }
+.chart .bar-1 { fill: var(--cat-1); }
+.chart .bar-2 { fill: var(--cat-2); }
+.chart .whisker { stroke: var(--ink-dim); stroke-width: 1.5; }

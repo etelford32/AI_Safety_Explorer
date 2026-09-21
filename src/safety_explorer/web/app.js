@@ -1066,7 +1066,8 @@ async function loadDepth() {
     $('#dp-out').innerHTML = '<div class="empty-state">No depth-arm runs yet.</div>';
     return;
   }
-  $('#dp-out').innerHTML = blocks.map(([focal, b]) => {
+  const didChart = '<div id="dp-chart"></div>';
+  $('#dp-out').innerHTML = didChart + blocks.map(([focal, b]) => {
     const rows = b.levels.map((lv) => {
       const ci = lv.ci95 || [null, null];
       const ciS = ci[0] !== null && !Number.isNaN(ci[0]) ? `[${fmt(ci[0])}, ${fmt(ci[1])}]` : '—';
@@ -1104,6 +1105,7 @@ async function loadDepth() {
     A positive gap means the expert phrasing fared worse. A level where both depth
     conditions are fully refused cannot show an interaction — read the per-level gaps
     before reading a null.</p>`;
+  renderDidChart($('#dp-chart'), d.by_focal_dimension);
 }
 
 async function loadTwins() {
@@ -2582,6 +2584,87 @@ function renderDoseChart(box, dose) {
   legend.innerHTML = series.map((s) =>
     `<span><span class="sw" style="background:var(--cat-${s.cls})"></span>${esc(s.label)}</span>`).join('')
     + '<span><span class="sw" style="background:var(--cat-1);opacity:.14"></span>95% CI (specific)</span>';
+  box.appendChild(legend);
+  box.appendChild(svg);
+}
+
+/* Difference-in-differences: is the risk penalty WIDER at expert depth once intent is
+   elevated? Per focal dimension, two bars — D vs C and E vs C — from a zero baseline,
+   with the bootstrap CI as a whisker. The story reads off the geometry: the intent-focal
+   family's bar stands clear of zero while the negative-control dimensions sit on it. Two
+   series (D, E) → two validated hues plus a legend; polarity is carried by the bar's side
+   of the zero line, so a positive DiD (penalty wider under depth) points up. */
+function renderDidChart(box, byFocal) {
+  const focals = Object.entries(byFocal || {});
+  const bars = [];
+  for (const [focal, b] of focals) {
+    for (const [lvl, cls] of [['D', '1'], ['E', '2']]) {
+      const e = (b.difference_in_differences || {})[lvl];
+      if (e && e.median !== null && e.median !== undefined && e.n) {
+        bars.push({ focal, lvl, cls, median: e.median, ci: e.ci95 || [null, null], n: e.n });
+      }
+    }
+  }
+  if (bars.length < 1) { box.innerHTML = ''; return; }
+
+  const clean = (xs) => xs.filter((v) => v !== null && v !== undefined && !Number.isNaN(v));
+  const allv = bars.flatMap((b) => [b.median, b.ci[0], b.ci[1]]);
+  const lo = Math.min(0, ...clean(allv));
+  const hi = Math.max(0, ...clean(allv), 0.001);
+
+  const nGroups = focals.length;
+  const W = Math.max(360, 90 + nGroups * 120), H = 280, m = { t: 16, r: 14, b: 46, l: 46 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const groupW = pw / nGroups;
+  const sy = (v) => m.t + ph - ((v - lo) / (hi - lo)) * ph;
+
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart',
+    role: 'img', 'aria-label': 'depth-by-risk difference-in-differences per focal dimension' });
+  svg.appendChild(svgEl('line', { x1: m.l, y1: m.t, x2: m.l, y2: m.t + ph, class: 'axis' }));
+  svg.appendChild(svgEl('line', { x1: m.l, y1: sy(0), x2: m.l + pw, y2: sy(0), class: 'zero-line' }));
+  for (const v of [lo, 0, hi]) {
+    if (v < lo || v > hi) continue;
+    svg.appendChild(svgText(m.l - 6, sy(v) + 3, v.toFixed(1), { 'text-anchor': 'end', class: 'tick' }));
+  }
+
+  focals.forEach(([focal], gi) => {
+    const gx = m.l + gi * groupW;
+    const group = bars.filter((b) => b.focal === focal);
+    const bw = Math.min(30, (groupW - 24) / 2);
+    group.forEach((b, bi) => {
+      const cx = gx + groupW / 2 + (bi - (group.length - 1) / 2) * (bw + 6);
+      const y0 = sy(0), y1 = sy(b.median);
+      const g = svgEl('g', { class: 'dot-hit' });
+      g.appendChild(svgEl('rect', {
+        x: cx - bw / 2, y: Math.min(y0, y1), width: bw, height: Math.max(2, Math.abs(y1 - y0)),
+        rx: 3, class: `bar-${b.cls}`,
+      }));
+      // CI whisker.
+      if (b.ci[0] !== null && b.ci[0] !== undefined && !Number.isNaN(b.ci[0])) {
+        svg.appendChild(svgEl('line', { x1: cx, y1: sy(b.ci[0]), x2: cx, y2: sy(b.ci[1]), class: 'whisker' }));
+        svg.appendChild(svgEl('line', { x1: cx - 4, y1: sy(b.ci[0]), x2: cx + 4, y2: sy(b.ci[0]), class: 'whisker' }));
+        svg.appendChild(svgEl('line', { x1: cx - 4, y1: sy(b.ci[1]), x2: cx + 4, y2: sy(b.ci[1]), class: 'whisker' }));
+      }
+      g.appendChild(svgEl('rect', { x: cx - bw / 2 - 3, y: m.t, width: bw + 6, height: ph, class: 'hit' }));
+      bindTip(g, `<b>${esc(focal)} &middot; ${b.lvl} vs C</b><br>DiD ${fmt(b.median)}`
+        + (b.ci[0] !== null ? `<br>95% CI [${fmt(b.ci[0])}, ${fmt(b.ci[1])}]` : '')
+        + `<br>n=${b.n}`);
+      svg.appendChild(g);
+    });
+    svg.appendChild(svgText(gx + groupW / 2, m.t + ph + 16, focal.slice(0, 12),
+      { 'text-anchor': 'middle', class: 'tick' }));
+  });
+  svg.appendChild(svgText(m.l + pw / 2, H - 4, 'focal dimension of the family',
+    { 'text-anchor': 'middle', class: 'axis-label' }));
+  svg.appendChild(svgText(-(m.t + ph / 2), 12, 'depth penalty vs benign (DiD)',
+    { 'text-anchor': 'middle', class: 'axis-label', transform: 'rotate(-90)' }));
+
+  box.innerHTML = '';
+  const legend = document.createElement('div');
+  legend.className = 'chart-legend';
+  legend.innerHTML = '<span><span class="sw" style="background:var(--cat-1)"></span>D vs C (elevated)</span>'
+    + '<span><span class="sw" style="background:var(--cat-2)"></span>E vs C (harmful)</span>'
+    + '<span class="hint">above zero = expert phrasing penalised more once risk rises</span>';
   box.appendChild(legend);
   box.appendChild(svg);
 }
