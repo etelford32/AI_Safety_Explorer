@@ -896,6 +896,7 @@ Your keys and your data never leave the machine.
 | [`docs/DATA_INGESTION.md`](docs/DATA_INGESTION.md) | The three lanes, the provenance model, and what we deliberately do not do |
 | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | Using the tool alongside agents and other apps: the four modes, the push-never-pull spine, the endpoint contract |
 | [`docs/TESTING.md`](docs/TESTING.md) | Pointing the instrument at a real model: the local-model corpus runbook, the embedding-backend gate, and what "suspect" looks like |
+| [`docs/BACKGROUND.md`](docs/BACKGROUND.md) | Running it as an always-on background app: the macOS menu-bar app, login autostart, and the `/api/status` summary a monitor polls |
 | [`docs/CONTENT_POLICY.md`](docs/CONTENT_POLICY.md) | Why the corpus varies framing over non-hazardous substrate, and why that is better science |
 | [`docs/PREREGISTRATION.md`](docs/PREREGISTRATION.md) | Hypotheses, analysis plan and reliability threshold, frozen before collection |
 

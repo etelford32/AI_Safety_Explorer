@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -20,6 +21,10 @@ from . import (DIMENSION_LABELS, DIMENSIONS, HUMAN_METRICS, INVERTED_METRICS,
 from . import analysis, annotate, corpus as corpus_mod, db, ingest, jobs, lint, metrics, pricing
 
 WEB_ROOT = Path(__file__).parent / "web"
+
+#: When `serve()` started, so `/api/status` can report uptime. Set once, module level, so
+#: a background menu-bar host that imports and runs the server in-process can read it too.
+SERVE_STARTED: float | None = None
 CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}
 
 
@@ -39,6 +44,59 @@ def _json_safe(value):
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
     return value
+
+
+def status_report(conn, started: float | None = None, limit: int = 25) -> dict[str, Any]:
+    """A cheap health-and-activity summary for a background host to poll.
+
+    This is what turns the server into something a menu-bar app can sit on top of: it says
+    the tool is alive, how much has flowed through it, and — the part worth a glance — which
+    live sessions are drifting right now. The drift status per session is the same one the
+    Sessions list computes, so the badge in the menu bar and the badge in the UI agree.
+
+    Kept deliberately light: counts are one query each, and the per-session drift is capped
+    at `limit` so a poll every few seconds stays cheap however long the tool has been up.
+    """
+    from . import sessions, stance as st
+
+    n_runs = db.query_one(conn, "SELECT COUNT(*) AS n FROM run")["n"]
+    n_sessions = db.query_one(conn, "SELECT COUNT(*) AS n FROM live_session")["n"] \
+        if _table_exists(conn, "live_session") else 0
+    n_turns = db.query_one(conn, "SELECT COUNT(*) AS n FROM live_turn")["n"] \
+        if _table_exists(conn, "live_turn") else 0
+
+    watching = []
+    if n_sessions:
+        for s in sessions.list_sessions(conn, limit=limit, with_drift=True):
+            watching.append({"id": s["id"], "label": s["label"], "source": s["source"],
+                             "n_turns": s.get("n_turns") or 0, "drift": s.get("drift"),
+                             "updated_at": s["updated_at"]})
+    alerts = [w for w in watching if w["drift"] == "alert"]
+    watch = [w for w in watching if w["drift"] == "watch"]
+
+    # The embedding backend's trust is what decides whether the register readings behind any
+    # alert are semantic or lexical. Report it so the menu bar can warn when it is the
+    # fallback. register_model() is cached, so this is cheap after the first call.
+    model = st.register_model()
+    return {
+        "ok": True,
+        "version": __version__,
+        "uptime_s": round(time.time() - started, 1) if started else None,
+        "n_runs": n_runs,
+        "n_sessions": n_sessions,
+        "n_turns": n_turns,
+        "n_alert": len(alerts),
+        "n_watch": len(watch),
+        "sessions": watching,
+        "embedding_backend": model.backend.name if model else None,
+        "embedding_trustworthy": bool(model and st.model_trustworthy(model)),
+    }
+
+
+def _table_exists(conn, name: str) -> bool:
+    row = db.query_one(
+        conn, "SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?", (name,))
+    return row is not None
 
 
 class ExplorerHandler(BaseHTTPRequestHandler):
@@ -227,6 +285,9 @@ class ExplorerHandler(BaseHTTPRequestHandler):
     # -- API ---------------------------------------------------------------
 
     def _api_get(self, path: str, q: dict[str, str]) -> Any:
+        if path == "/api/status":
+            return status_report(self.conn, SERVE_STARTED)
+
         if path == "/api/meta":
             report = lint.run(self.corpus)
             return {
@@ -934,6 +995,8 @@ class ExplorerHandler(BaseHTTPRequestHandler):
 
 def serve(db_path: str, corpus_path: str, host: str = "127.0.0.1",
           port: int = 8713, annotator: str = "local") -> None:
+    global SERVE_STARTED
+    SERVE_STARTED = time.time()
     c = corpus_mod.load(Path(corpus_path))
     report = lint.run(c)
     conn = db.init_db(db_path)

@@ -155,3 +155,30 @@ def test_no_declared_grant_leaves_the_mandate_comparison_open(conn):
     assert p["granted_level"] is None
     assert p["flagged"] == []
     assert p["peak_level"] >= 1
+
+
+def test_status_report_summarises_activity_for_a_background_host():
+    """The menu-bar app polls this: it must report the tool is alive, the counts, and the
+    per-session drift, on a real database, cheaply."""
+    from safety_explorer import server
+    conn = db.init_db(":memory:")
+    sessions.ensure(conn)
+    sid = sessions.open_session(conn, label="live agent", source="agent_probe")
+    sessions.append_turn(conn, sid, "user", "q")
+    sessions.append_turn(conn, sid, "assistant", "Sure — here is the derivation, one step at a time.")
+
+    s = server.status_report(conn, started=None)
+    assert s["ok"] and s["version"]
+    assert s["n_sessions"] == 1 and s["n_turns"] == 2
+    assert s["sessions"][0]["label"] == "live agent"
+    assert s["sessions"][0]["drift"] in ("quiet", "watch", "alert")
+    # The backend's trust travels with the summary so the badge can warn on the fallback.
+    assert "embedding_trustworthy" in s
+
+
+def test_status_report_is_fine_before_any_session_exists():
+    """A freshly served database that has never seen a session must not error the poll."""
+    from safety_explorer import server
+    conn = db.init_db(":memory:")
+    s = server.status_report(conn, started=None)
+    assert s["ok"] and s["n_sessions"] == 0 and s["sessions"] == []

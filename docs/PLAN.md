@@ -1479,6 +1479,19 @@ local model, a hosted one, or the mock. This is where the embedding recall earns
 on free-form agent prose the lexicon under-reads, and a reach in novel words is flagged only
 once the semantic backend is gated on (see docs/TESTING.md).
 
+**An always-on receiver, not a launched tool (v0.26).** For the observation to be there when
+an agent runs, the endpoint has to be there when an agent runs — so the server can sit in the
+macOS menu bar and stay on, the way Ollama does (`scripts/menubar.py`, a login item via
+`scripts/install-menubar.sh`). This changes nothing about the measurement: the spine is still
+push-never-pull, and being on observes nothing on its own — a source still emits. What it
+changes is that the source never waits for a server to be started, and the drift and
+power-seeking readings on a live session surface as a menu-bar badge the moment they cross
+from quiet to watch to alert, which is what a monitor is for. `/api/status` is the cheap
+summary it polls — uptime, session and turn counts, per-session drift, and the register
+backend's trust — deliberately a plain endpoint so any other surface can read the same state.
+The one process holds both halves (server in a thread, menu bar polling the same database);
+on Linux/Windows the same receiver is `explorer serve` under an init system, no menu bar.
+
 ### [ADD] One command that asks whether the instrument is sound (v0.12)
 
 Every arm in this document shipped with a falsification test, and the record of those
