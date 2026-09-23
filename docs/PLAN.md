@@ -1492,6 +1492,20 @@ backend's trust — deliberately a plain endpoint so any other surface can read 
 The one process holds both halves (server in a thread, menu bar polling the same database);
 on Linux/Windows the same receiver is `explorer serve` under an init system, no menu bar.
 
+**A native desktop app, reusing the whole UI (v0.27).** The UI is already a local web app, so
+the desktop app is a native WKWebView window (pywebview) wrapping it, with the server running
+in-process — no Electron, no Chromium bundle, no rewrite. `explorer app` (or `scripts/app.py`)
+opens the window in a checkout; `packaging/build.sh` bundles `AI Safety Explorer.app` with
+py2app. Two facts about a bundle that a checkout hides both had to be handled, and are, in
+`safety_explorer.paths`: the bundle is read-only, so the database moves to Application Support,
+and there is no working directory to trust, so the corpus is read from the bundle's Resources
+— both overridable by env var, both under test. The bundle deliberately excludes the
+multi-gigabyte semantic stack (torch); the app runs on the lexicon register and says so, and
+the semantic backend is a dev-mode or opt-in-rebuild choice rather than a default that makes
+the download enormous. The windowed app and the menu-bar app stay separate processes because
+each owns a GUI run loop; one launcher module (`desktop`) backs the window, and the menu bar
+is the always-on shape.
+
 ### [ADD] One command that asks whether the instrument is sound (v0.12)
 
 Every arm in this document shipped with a falsification test, and the record of those

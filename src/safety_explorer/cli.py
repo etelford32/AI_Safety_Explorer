@@ -1158,6 +1158,12 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_app(args) -> int:
+    """Open the Explorer in a native desktop window (macOS/Linux/Windows via pywebview)."""
+    from . import desktop
+    return desktop.run()
+
+
 def cmd_export(args) -> int:
     conn = db.connect(args.db)
     obs = analysis.observations(conn, args.campaign, args.tiers)
@@ -1357,6 +1363,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--port", type=int, default=8713)
     s.add_argument("--annotator", default="local")
     s.set_defaults(func=cmd_serve)
+
+    ap = sub.add_parser("app", help="open the Explorer in a native desktop window")
+    ap.set_defaults(func=cmd_app)
 
     e = sub.add_parser("export", help="export observations as JSONL")
     e.add_argument("--out", default="data/exports/observations.jsonl")

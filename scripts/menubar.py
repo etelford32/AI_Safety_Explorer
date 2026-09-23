@@ -30,8 +30,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-DB_PATH = str(ROOT / "data" / "explorer.db")
-CORPUS_PATH = str(ROOT / "corpus")
+from safety_explorer import paths  # noqa: E402
+
+DB_PATH = str(paths.default_db())
+CORPUS_PATH = str(paths.corpus_dir())
 PORT = 8713
 BASE = f"http://127.0.0.1:{PORT}"
 POLL_SECONDS = 20

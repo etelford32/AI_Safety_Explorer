@@ -29,6 +29,9 @@ openai = ["openai>=1.40"]
 embeddings = ["sentence-transformers>=2.2"]
 # The macOS menu-bar app (scripts/menubar.py). AppKit under the hood, so macOS only.
 menubar = ["rumps>=0.4"]
+# The native desktop window + .app packaging. pywebview runs on macOS/Linux/Windows;
+# py2app and the icon renderer are for building the macOS .app.
+desktop = ["pywebview>=5.0", "py2app>=0.28", "cairosvg>=2.7"]
 dev = ["pytest>=8.0"]
 all = ["anthropic>=0.40", "openai>=1.40", "sentence-transformers>=2.2", "pytest>=8.0"]
 

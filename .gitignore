@@ -26,3 +26,7 @@ build/
 .DS_Store
 .idea/
 .vscode/
+
+# Desktop app build artifacts (py2app) — build/ and dist/ are covered above
+packaging/icon.icns
+packaging/icon.iconset/
