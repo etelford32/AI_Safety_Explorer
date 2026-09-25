@@ -2,10 +2,18 @@ name: macOS app
 
 # Builds "AI Safety Explorer.app" — the self-updating loader — and smoke-tests it.
 # On a version tag (v1.2.3) it also publishes the zipped app to that GitHub Release, which
-# is the file testers download. Run it by hand from the Actions tab at any time.
+# is the file testers download. It also runs on any push that changes the loader or its
+# packaging (GitHub does not apply path filters to tag pushes, so tags always build), and
+# by hand from the Actions tab.
 on:
   push:
     tags: ["v*"]
+    branches: ["**"]
+    paths:
+      - "src/explorer_loader/**"
+      - "packaging/**"
+      - "scripts/loader_app.py"
+      - ".github/workflows/app.yml"
   workflow_dispatch:
 
 permissions:
