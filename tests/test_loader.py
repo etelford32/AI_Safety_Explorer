@@ -344,3 +344,37 @@ def test_the_loader_page_renders_progress_and_errors():
         assert "skip" in pg.evaluate("window.__calls")
         b.close()
     assert errors == []
+
+
+def test_it_starts_under_an_ascii_locale(tmp_path):
+    """An embedded Python in an app bundle starts in the "C" locale with no UTF-8 coercion,
+    so the default text encoding is ASCII. The first macOS build crashed on its first file
+    with an em dash in it. Reproduced here by turning coercion and UTF-8 mode off."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src"), "LC_ALL": "C", "LANG": "C",
+           "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}
+    env.pop("PYTHONIOENCODING", None)
+    proc = subprocess.Popen(
+        [sys.executable, "-X", "utf8=0", "-m", "explorer_loader", "--headless", "--no-update",
+         "--data-dir", str(tmp_path / "app"), "--bundled", str(ROOT)],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=str(ROOT))
+    try:
+        running, lines = None, []
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            raw = proc.stdout.readline()
+            if not raw:
+                break
+            line = raw.decode("utf-8", "replace")
+            lines.append(line.rstrip())
+            if line.startswith('{"running"'):
+                running = json.loads(line)["running"]
+                break
+        assert running, "\n".join(lines[-30:])
+        status = json.loads(urllib.request.urlopen(running["url"] + "/api/status", timeout=5).read())
+        assert status["ok"]
+        # The server really reads non-ASCII files: the capture script carries em dashes.
+        script = urllib.request.urlopen(running["url"] + "/explorer-capture.user.js", timeout=5).read()
+        assert "—".encode() in script
+    finally:
+        proc.kill()
+        proc.wait()

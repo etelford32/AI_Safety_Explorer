@@ -184,7 +184,7 @@ def run_window(store: Store, bundled: Path | None, api: str = github.API) -> int
         return 2
 
     ctl = Controller(store, bundled, api=api)
-    html = (Path(__file__).parent / "loader.html").read_text()
+    html = (Path(__file__).parent / "loader.html").read_text(encoding="utf-8")
     ctl.window = webview.create_window("AI Safety Explorer", html=html, js_api=PageApi(ctl),
                                        width=1280, height=860, min_size=(900, 600))
     menu = [

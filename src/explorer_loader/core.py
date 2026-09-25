@@ -52,7 +52,7 @@ class Loader:
         if env:
             return env.strip()
         try:
-            return (self.store.dir / "token").read_text().strip() or None
+            return (self.store.dir / "token").read_text(encoding="utf-8").strip() or None
         except OSError:
             return None
 
@@ -61,7 +61,7 @@ class Loader:
         if not token:
             f.unlink(missing_ok=True)
             return
-        f.write_text(token.strip())
+        f.write_text(token.strip(), encoding="utf-8")
         f.chmod(stat.S_IRUSR | stat.S_IWUSR)      # 0600: readable by this user only
 
     # -- the sequence ----------------------------------------------------------------------

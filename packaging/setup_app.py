@@ -77,6 +77,9 @@ OPTIONS = {
         "NSHighResolutionCapable": True,
         "LSUIElement": False,
         "NSHumanReadableCopyright": "MIT licensed. © 2026 Elliot Telford.",
+        # Belt and braces for the UTF-8 fix in explorer_loader.ensure_utf8: Launch Services
+        # applies this environment when the app is opened from Finder, the Dock or `open`.
+        "LSEnvironment": {"LANG": "en_US.UTF-8", "PYTHONUTF8": "1"},
     },
 }
 if ICON.exists():

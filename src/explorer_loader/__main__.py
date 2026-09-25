@@ -22,6 +22,32 @@ from .core import Loader
 from .store import Store
 
 
+def ensure_utf8() -> None:
+    """Make this process read and write text as UTF-8, whatever it was launched with.
+
+    A Python embedded in an app bundle starts in the plain "C" locale — the UTF-8 coercion
+    the `python` command applies (PEP 538) happens only for the command, not an embedded
+    interpreter — so the default text encoding is ASCII, and the first file with an em dash in
+    it fails to read. The Explorer reads many. Setting LC_CTYPE here fixes every later
+    open()/read_text() in the process (they consult the current locale), stdout and stderr are
+    re-encoded, and the environment is set for any child process.
+    """
+    import locale
+    for name in ("en_US.UTF-8", "C.UTF-8", "UTF-8"):
+        try:
+            locale.setlocale(locale.LC_CTYPE, name)
+            break
+        except locale.Error:
+            continue
+    os.environ.setdefault("LANG", "en_US.UTF-8")
+    os.environ.setdefault("PYTHONUTF8", "1")
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def bundled_dir() -> Path | None:
     """The Explorer copy baked into the app (offline fallback), or the checkout in dev."""
     res = os.environ.get("RESOURCEPATH")                     # set by py2app
@@ -45,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-update", action="store_true", help="start what is installed")
     p.add_argument("--version", action="version", version=f"explorer-loader {LOADER_VERSION}")
     a = p.parse_args(argv)
+    ensure_utf8()
 
     store = Store(Path(a.data_dir) if a.data_dir else None)
     if a.channel:

@@ -72,14 +72,14 @@ class Store:
                    "auto_update": True, "db_path": None, "versions": {}, "bad": [],
                    "last_check": None}
         try:
-            data = json.loads(self.state_file.read_text())
+            data = json.loads(self.state_file.read_text(encoding="utf-8"))
             return {**default, **data}
         except (OSError, ValueError):
             return default
 
     def save(self) -> None:
         tmp = self.state_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.state, indent=2))
+        tmp.write_text(json.dumps(self.state, indent=2), encoding="utf-8")
         os.replace(tmp, self.state_file)          # atomic: a crash never leaves half a file
 
     def path_of(self, vid: str, bundled_dir: Path | None = None) -> Path | None:
@@ -183,7 +183,7 @@ def _safe_extract(tf: tarfile.TarFile, dest: Path) -> None:
 
 
 def read_version(tree: Path) -> str:
-    text = (tree / "src" / "safety_explorer" / "__init__.py").read_text()
+    text = (tree / "src" / "safety_explorer" / "__init__.py").read_text(encoding="utf-8")
     m = re.search(r'__version__\s*=\s*"([^"]+)"', text)
     if not m:
         raise VerifyError("no __version__ in safety_explorer/__init__.py")
@@ -199,7 +199,7 @@ def verify(tree: Path) -> dict[str, Any]:
     version = read_version(tree)
 
     try:
-        project = tomllib.loads((tree / "pyproject.toml").read_text())
+        project = tomllib.loads((tree / "pyproject.toml").read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise VerifyError(f"unreadable pyproject.toml: {e}") from e
     api = (project.get("tool", {}).get("explorer-loader", {}) or {}).get("api", 1)
