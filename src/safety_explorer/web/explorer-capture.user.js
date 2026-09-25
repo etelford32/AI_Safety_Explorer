@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Safety Explorer — chat capture
-// @namespace    https://github.com/etelford32/ai_satefy_explorer
-// @version      0.30.1
+// @namespace    https://github.com/etelford32/AI_Safety_Explorer
+// @version      0.31.0
 // @description  Send a Claude.ai or ChatGPT conversation you are having to your local Safety Explorer — only when you click, or while you have Follow turned on for that chat.
 // @match        https://claude.ai/*
 // @match        https://chatgpt.com/*
@@ -38,7 +38,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.30.1';
+  const VERSION = '0.31.0';
   const DEFAULT_SERVER = 'http://127.0.0.1:8713';
   const STABLE_MS = 1200;      // a reply must stop changing this long before it is "done"
   const SCAN_DEBOUNCE_MS = 700;

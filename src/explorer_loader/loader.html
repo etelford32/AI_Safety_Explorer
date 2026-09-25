@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AI Safety Explorer</title>
+<style>
+  :root {
+    --bg: #0e1013; --panel: #14171c; --panel-2: #1a1e24; --line: #262b33;
+    --ink: #d6dae0; --ink-dim: #838b97; --ink-faint: #555c68;
+    --accent: #6fb3d2; --good: #7fc08a; --warn: #d2a46f; --bad: #d2786f;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.5 var(--sans); }
+  body { display: flex; align-items: center; justify-content: center; }
+  .card { width: min(560px, 92vw); background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+          padding: 26px 28px 20px; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+  .head { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+  .mark { width: 42px; height: 42px; border-radius: 10px; background: linear-gradient(135deg, #184f95, #3987e5);
+          display: flex; align-items: center; justify-content: center; }
+  .mark svg { width: 26px; height: 26px; stroke: #fff; fill: none; stroke-width: 1.8; stroke-linecap: round; }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .01em; }
+  .sub { color: var(--ink-faint); font: 11px var(--mono); }
+  ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; padding: 8px 10px; border-radius: 8px;
+       transition: background .2s; }
+  li.active { background: var(--panel-2); }
+  .ic { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--line); margin-top: 1px;
+        display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--bg); }
+  li.active .ic { border-color: var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; }
+  li.done .ic { background: var(--good); border-color: var(--good); }
+  li.warn .ic { background: var(--warn); border-color: var(--warn); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .t { font-weight: 500; }
+  li.pending .t { color: var(--ink-faint); }
+  .d { color: var(--ink-dim); font-size: 12px; word-break: break-word; }
+  .bar { height: 3px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; display: none; }
+  .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+  li.active .bar.show { display: block; }
+  .row { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+  button { font: 12px var(--sans); padding: 6px 12px; border-radius: 7px; border: 1px solid var(--line);
+           background: var(--panel-2); color: var(--ink); cursor: pointer; }
+  button:hover { border-color: var(--ink-faint); }
+  button.primary { background: var(--accent); color: #0b0d10; border-color: var(--accent); font-weight: 600; }
+  button[hidden] { display: none; }
+  .err { display: none; margin-top: 14px; border-left: 3px solid var(--bad); background: rgba(210,120,111,.08);
+         padding: 10px 12px; border-radius: 0 8px 8px 0; }
+  .err.show { display: block; }
+  .err pre { white-space: pre-wrap; font: 11px/1.45 var(--mono); color: var(--ink-dim); max-height: 160px; overflow: auto; margin: 6px 0 0; }
+  details { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+  summary { cursor: pointer; color: var(--ink-dim); font-size: 12px; }
+  .set { display: grid; grid-template-columns: 110px 1fr; gap: 10px 12px; margin-top: 10px; align-items: center; font-size: 12px; }
+  .set label { color: var(--ink-dim); }
+  .opts { display: flex; flex-direction: column; gap: 4px; }
+  .opts label { color: var(--ink); display: flex; gap: 6px; align-items: center; }
+  input[type=text], input[type=password] { width: 100%; background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+         border-radius: 6px; padding: 5px 8px; font: 12px var(--mono); }
+  .hint { color: var(--ink-faint); font-size: 11px; }
+  .foot { margin-top: 14px; color: var(--ink-faint); font-size: 11px; }
+  .foot code { font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head">
+    <div class="mark"><svg viewBox="0 0 24 24"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg></div>
+    <div>
+      <h1>AI Safety Explorer</h1>
+      <div class="sub" id="sub">loader · starting</div>
+    </div>
+  </div>
+
+  <ol id="steps">
+    <li data-step="check" class="pending"><span class="ic"></span><div><div class="t">Check for updates</div><div class="d"></div></div></li>
+    <li data-step="download" class="pending"><span class="ic"></span><div><div class="t">Download</div><div class="d"></div><div class="bar"><div></div></div></div></li>
+    <li data-step="verify" class="pending"><span class="ic"></span><div><div class="t">Verify it runs on this app</div><div class="d"></div></div></li>
+    <li data-step="start" class="pending"><span class="ic"></span><div><div class="t">Start the Explorer</div><div class="d"></div></div></li>
+  </ol>
+
+  <div class="err" id="err"><b>The Explorer did not start.</b><pre id="err-text"></pre></div>
+
+  <div class="row">
+    <button id="skip" hidden>Skip this update</button>
+    <button id="retry" class="primary" hidden>Try again</button>
+  </div>
+
+  <details id="settings">
+    <summary>Settings</summary>
+    <div class="set">
+      <label>Updates from</label>
+      <div class="opts">
+        <label><input type="radio" name="ch" value="stable"> Stable releases <span class="hint">— tagged versions; what testers and papers use</span></label>
+        <label><input type="radio" name="ch" value="dev"> Latest development code</label>
+        <label><input type="radio" name="ch" value="branch"> Branch <input type="text" id="branch" placeholder="branch name" style="width:180px"></label>
+      </div>
+      <label>Check at launch</label>
+      <div><label style="color:var(--ink)"><input type="checkbox" id="auto"> download and verify new versions automatically</label></div>
+      <label>GitHub token</label>
+      <div><input type="password" id="token" placeholder="only needed while the repository is private">
+        <div class="hint">A read-only token. Stored in this app's data folder, readable only by you.
+          <button id="clear-token" hidden style="padding:1px 6px;font-size:11px">Remove saved token</button></div></div>
+      <label>Database</label>
+      <div><span id="db" class="hint"></span> <button id="choose-db">Choose…</button></div>
+    </div>
+    <div class="row"><button id="save" class="primary">Save and restart</button><span class="hint" id="saved"></span></div>
+  </details>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<script>
+  const $ = (s) => document.querySelector(s);
+  let S = null;
+
+  function render(s) {
+    S = s;
+    $('#sub').textContent = `loader ${s.loader_version} · ${s.channel} channel`
+      + (s.current_label ? ` · installed ${s.current_label}` : '');
+    for (const li of document.querySelectorAll('#steps li')) {
+      const st = s.steps[li.dataset.step];
+      li.className = st.state;
+      li.querySelector('.d').textContent = st.detail || '';
+      const bar = li.querySelector('.bar');
+      if (bar) {
+        const m = /(\d+)%/.exec(st.detail || '');
+        bar.classList.toggle('show', !!m);
+        if (m) bar.firstElementChild.style.width = `${m[1]}%`;
+      }
+    }
+    $('#skip').hidden = s.steps.download.state !== 'active';
+    $('#retry').hidden = !s.error;
+    $('#err').classList.toggle('show', !!s.error);
+    $('#err-text').textContent = s.error || '';
+    $('#db').textContent = s.db_path || 'the app’s own (default)';
+    $('#foot').innerHTML = `Updates come from <code>github.com/${s.repo}</code>. Your data stays on this computer, in <code>${s.data_dir}</code>.`;
+    if (!render.settingsLoaded) {
+      render.settingsLoaded = true;
+      const ch = s.channel.startsWith('branch:') ? 'branch' : s.channel;
+      const r = document.querySelector(`input[name=ch][value="${ch}"]`);
+      if (r) r.checked = true;
+      if (ch === 'branch') $('#branch').value = s.channel.slice(7);
+      $('#auto').checked = s.auto_update;
+      if (s.token_set) $('#token').placeholder = '•••••••• saved — type to replace';
+      $('#clear-token').hidden = !s.token_set;
+    }
+  }
+
+  async function poll() {
+    try { render(await window.pywebview.api.state()); } catch (e) { /* window is closing */ }
+    setTimeout(poll, 250);
+  }
+
+  // The bridge may be ready before this script runs (then the event has already fired) or
+  // after it: start on whichever comes first, exactly once.
+  let started = false;
+  function ready() {
+    if (started) return;
+    started = true;
+    poll();
+    $('#skip').onclick = () => window.pywebview.api.skip();
+    $('#retry').onclick = () => window.pywebview.api.retry();
+    $('#choose-db').onclick = async () => { await window.pywebview.api.choose_db(); };
+    $('#clear-token').onclick = async () => {
+      await window.pywebview.api.clear_token();
+      $('#clear-token').hidden = true;
+      $('#token').placeholder = 'only needed while the repository is private';
+    };
+    $('#save').onclick = async () => {
+      const ch = (document.querySelector('input[name=ch]:checked') || {}).value || 'stable';
+      const channel = ch === 'branch' ? `branch:${$('#branch').value.trim()}` : ch;
+      const token = $('#token').value;
+      $('#saved').textContent = 'saving…';
+      await window.pywebview.api.save_settings(channel, $('#auto').checked, token);
+      $('#saved').textContent = 'restarting…';
+      await window.pywebview.api.relaunch();
+    };
+  }
+  if (window.pywebview && window.pywebview.api) ready();
+  window.addEventListener('pywebviewready', ready);
+</script>
+</body>
+</html>

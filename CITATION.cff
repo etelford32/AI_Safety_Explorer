@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: >-
+  If you use AI Safety Explorer, please cite the software as below. If you report results
+  from it, also cite the exact version (a tagged release) you ran, and the corpus version and
+  hash the Explorer records with every campaign.
+title: "AI Safety Explorer: measuring how model behaviour changes as context framing becomes riskier"
+type: software
+authors:
+  - given-names: Elliot
+    family-names: Telford
+license: MIT
+repository-code: "https://github.com/etelford32/AI_Safety_Explorer"
+version: 0.31.0
+date-released: "2026-09-25"
+abstract: >-
+  A research instrument for one question: when context becomes riskier while the underlying
+  reasoning task stays the same, how does a model's behaviour change? A versioned corpus of
+  matched prompt twins that differ along one framing dimension, a reproducible runner, objective
+  correctness against computed answer keys, register and expressed-agency readings with null
+  controls, blinded human annotation, pre-registered analyses, and a live-session monitor for
+  conversations with deployed models.
+keywords:
+  - AI safety
+  - evaluation
+  - large language models
+  - over-refusal
+  - sandbagging
+  - power-seeking
+  - research instrument

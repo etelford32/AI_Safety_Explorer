@@ -14,6 +14,21 @@ Two front doors now share one launcher (`safety_explorer.desktop`):
 They are separate on purpose: a windowed app owns the main GUI loop, a menu-bar agent owns a
 different one, and running both in one process fights over it. Pick the shape you want.
 
+## The downloadable app is a self-updating loader (v0.31)
+
+`AI Safety Explorer.app` is no longer a frozen copy of the Explorer. It is a small, stable
+**loader** (`src/explorer_loader/`, entry `scripts/loader_app.py`) plus a Python runtime. At
+launch it checks GitHub on the chosen channel (stable releases, the development branch, or a
+named branch), downloads new code, verifies it will run on this app (it compiles, its loader
+contract is one this app speaks, it needs nothing the app lacks), and starts it in the same
+window — falling back to the last version that started, and finally to the copy baked into the
+app. The app itself only needs rebuilding when the loader or the packages it carries change.
+Installing, channels and data: [`INSTALL.md`](INSTALL.md). The build smoke-tests the bundle
+(`packaging/build.sh`), and `.github/workflows/app.yml` builds it on a version tag and attaches
+it to the release.
+
+`explorer app` (below) still opens a window on the code in your checkout, for development.
+
 ## Run it now (dev mode — no packaging)
 
 ```bash
