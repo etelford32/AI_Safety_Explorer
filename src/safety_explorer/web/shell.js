@@ -120,7 +120,10 @@ function route() {
   document.title = `${meta.title} · Safety Explorer`;
   if (changed && typeof showView === 'function') showView(view);
   if (changed) window.scrollTo(0, 0);
-  if (section) {
+  if (view === 'sessions' && section) {
+    // #/sessions/<id> opens that session — the capture panel's "open" link lands here.
+    if (typeof openSession === 'function') openSession(decodeURIComponent(section));
+  } else if (section) {
     // The view may still be rendering; retry briefly until the anchor exists.
     let tries = 0;
     const seek = () => {
@@ -569,7 +572,7 @@ function openPalette() {
   inp.value = '';
   PAL.items = paletteItems();
   renderPalette('');
-  setTimeout(() => inp.focus(), 0);
+  inp.focus();
 }
 
 function closePalette() { $('#palette').classList.remove('show'); }
@@ -672,6 +675,22 @@ function initKeys() {
     const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); return; }
     if (e.key === 'Escape') { closePalette(); closeModal(); hideTip(); return; }
+    // While the palette is open every keystroke belongs to it, even one that arrived before
+    // the search box took focus — otherwise a fast "⌘K then type" loses letters to the page,
+    // and a "g" among them fires a navigation chord.
+    const inp = $('#pal-input');
+    if ($('#palette').classList.contains('show') && e.target !== inp) {
+      if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        inp.value += e.key;
+        inp.dispatchEvent(new Event('input'));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        runPal(PAL.sel);
+      }
+      inp.focus();
+      return;
+    }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (chord === 'g') {
       chord = null;

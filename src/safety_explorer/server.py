@@ -156,6 +156,54 @@ def _table_exists(conn, name: str) -> bool:
 
 class ExplorerHandler(BaseHTTPRequestHandler):
     server_version = f"SafetyExplorer/{__version__}"
+    #: Set per request by `_gate` when an allowed cross-origin source is talking to us.
+    _cors: str | None = None
+    _verdict: str = "none"
+
+    def _gate(self) -> bool:
+        """Refuse a request from a page that is not a capture source (see `access`)."""
+        from . import access
+
+        path = urlparse(self.path).path
+        bound = getattr(self.server, "bound_host", "127.0.0.1")
+        if not access.host_ok(self.headers.get("Host"), bound):
+            self._send_json({"error": "unexpected Host header — the Explorer answers only to "
+                                      "a loopback name"}, 403)
+            return False
+        origin = self.headers.get("Origin")
+        verdict = access.origin_verdict(origin, self.headers.get("Host"), path)
+        if verdict == "denied":
+            self._send_json({"error": f"requests from {origin} are not accepted here. Capture "
+                                      "sources may reach only /api/session/turn, "
+                                      "/api/session/paste and /api/status; add an origin with "
+                                      "EXPLORER_ALLOWED_ORIGINS"}, 403)
+            return False
+        self._verdict = verdict
+        self._cors = origin if verdict in ("capture", "extension") else None
+        return True
+
+    def _cors_headers(self) -> None:
+        if self._cors:
+            self.send_header("Access-Control-Allow-Origin", self._cors)
+            self.send_header("Vary", "Origin")
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        """The CORS preflight a browser sends before a cross-origin JSON POST."""
+        if not self._gate():
+            return
+        if not self._cors:
+            self._send_json({"error": "no cross-origin access here"}, 403)
+            return
+        self.send_response(204)
+        self._cors_headers()
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
+        # Chrome's Private Network Access asks before a public page reaches loopback.
+        if self.headers.get("Access-Control-Request-Private-Network") == "true":
+            self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     # Quieter log: one line per request, no HTML noise.
     def log_message(self, fmt: str, *args: Any) -> None:
@@ -174,6 +222,7 @@ class ExplorerHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self._cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
@@ -185,6 +234,27 @@ class ExplorerHandler(BaseHTTPRequestHandler):
         body = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", CONTENT_TYPES.get(path.suffix, "application/octet-stream"))
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_userscript(self) -> None:
+        """The capture userscript, pointed at this server.
+
+        A userscript manager offers to install any URL ending in `.user.js`, so this is the
+        one-click install. The default server line is rewritten to the address the browser
+        used to reach us, so a server on another port installs a script that finds it.
+        """
+        from . import access
+
+        text = (WEB_ROOT / "explorer-capture.user.js").read_text()
+        host = self.headers.get("Host") or "127.0.0.1:8713"
+        if access.is_loopback(host):
+            text = text.replace("const DEFAULT_SERVER = 'http://127.0.0.1:8713';",
+                                f"const DEFAULT_SERVER = 'http://{host}';")
+        body = text.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/javascript; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -210,9 +280,13 @@ class ExplorerHandler(BaseHTTPRequestHandler):
     # -- routing -----------------------------------------------------------
 
     def do_GET(self) -> None:  # noqa: N802
+        if not self._gate():
+            return
         url = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         try:
+            if url.path == "/explorer-capture.user.js":
+                return self._send_userscript()
             if url.path in ("/", "/index.html"):
                 return self._send_file("index.html")
             if url.path in STATIC_FILES:
@@ -227,6 +301,8 @@ class ExplorerHandler(BaseHTTPRequestHandler):
             self._send_json({"error": f"{type(exc).__name__}: {exc}"}, 500)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._gate():
+            return
         url = urlparse(self.path)
         try:
             body = self._body()
@@ -297,8 +373,25 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                     return self._send_json({"error": "session_id required"}, 400)
                 if not body.get("role"):
                     return self._send_json({"error": "role required"}, 400)
-                res = sessions.append_turn(
-                    self.conn, sid, body["role"], body.get("text") or "",
+                try:
+                    res = sessions.append_turn(
+                        self.conn, sid, body["role"], body.get("text") or "",
+                        turn_index=body.get("turn_index"),
+                        label=body.get("label", ""), source=body.get("source", "unknown"),
+                        tier=body.get("tier", "B"), language=body.get("language", "en"),
+                        meta=body.get("meta"))
+                except sessions.TurnConflict as exc:
+                    return self._send_json({"error": str(exc), "conflict": True,
+                                            "expected": exc.expected}, 409)
+                except sessions.TurnGap as exc:
+                    return self._send_json({"error": str(exc), "gap": True,
+                                            "expected": exc.expected}, 409)
+                return self._send_json({"ok": True, **res})
+
+            if url.path == "/api/session/paste":
+                from . import sessions
+                res = sessions.append_paste(
+                    self.conn, body.get("text") or "", session_id=body.get("session_id"),
                     label=body.get("label", ""), source=body.get("source", "unknown"),
                     tier=body.get("tier", "B"), language=body.get("language", "en"),
                     meta=body.get("meta"))
@@ -389,6 +482,14 @@ class ExplorerHandler(BaseHTTPRequestHandler):
 
     def _api_get(self, path: str, q: dict[str, str]) -> Any:
         if path == "/api/status":
+            if self._cors:
+                # A capture source learns that the Explorer is up and how the session it is
+                # feeding reads — never the list of every other conversation stored here.
+                from . import sessions
+                sid = q.get("session")
+                return {"ok": True, "version": __version__,
+                        "session": ({"id": sid, "drift": sessions.session_drift(self.conn, sid)}
+                                    if sid else None)}
             return status_report(self.conn, SERVE_STARTED)
 
         if path == "/api/overview":
@@ -1128,6 +1229,7 @@ def serve(db_path: str, corpus_path: str, host: str = "127.0.0.1",
     httpd.db_conn.row_factory = sqlite3.Row  # type: ignore[attr-defined]
     httpd.db_conn.execute("PRAGMA foreign_keys = ON")  # type: ignore[attr-defined]
     httpd.db_path = str(db_path)  # type: ignore[attr-defined]
+    httpd.bound_host = host  # type: ignore[attr-defined]
     httpd.corpus = c  # type: ignore[attr-defined]
     httpd.annotator = annotator  # type: ignore[attr-defined]
 

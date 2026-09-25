@@ -1540,6 +1540,25 @@ streams a scripted agent through `sessions.append_turn` — the same path `/api/
 takes — so the drift badge and the feed can be watched working before any real agent is
 wired in. None of it changes a measurement.
 
+**Browser capture, and the rule for who may talk to 127.0.0.1 (v0.30).** A chat in a browser
+tab now reaches Sessions without a paste: a userscript on Claude.ai and ChatGPT reads the
+conversation on the page and posts it, only on a click or while Follow is on for that chat, and
+only to the local server. It reads roles from each site's own markup (one table of selectors,
+so a markup change is a one-line fix and shows at once as "found 0 turns"), holds a reply back
+until the site stops streaming it and its text has settled, and falls back to the user's
+selection — sent through the Live view's splitter, which reports how it split — on any page it
+does not recognise. Two server changes make that sound. Turns now carry an index: a resend is
+acknowledged rather than duplicated, and different text at a stored index is refused, not
+written over, so an edited or regenerated reply becomes a *branch* session and both versions
+survive. And because a web page is now a designed source, "which pages may reach the server"
+became an enforced rule (`access.py`): programs with no Origin keep full access; the Explorer's
+own pages keep full access; the chat sites and browser extensions may reach only the two ingest
+endpoints and a reduced status; every other page is refused, and a request whose Host is not a
+loopback name (DNS rebinding) is refused outright. The script's logic is tested in a real
+browser against fixture pages served under the sites' own hostnames; the live sites' current
+markup is the one thing that could not be checked from the build environment, and CAPTURE.md
+says so.
+
 ### [ADD] One command that asks whether the instrument is sound (v0.12)
 
 Every arm in this document shipped with a falsification test, and the record of those

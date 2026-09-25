@@ -108,6 +108,16 @@ The session is created on its first turn — no separate handshake. `label`, `so
 stated who spoke, so the tool never re-parses text into turns and never mis-attributes the
 model's register to the user.
 
+Add `"turn_index": n` to make a post idempotent — for a source that may re-send what it
+already sent (the browser capture script does, on every reload). The same text at a stored
+index is acknowledged (`200`, `"duplicate": true`); different text there is refused with
+`409 {"conflict": true}` rather than overwritten, and an index past the end with
+`409 {"gap": true, "expected": n}`. `POST /api/session/paste` takes unlabelled text and
+splits it with the Live view's splitter instead. A browser page may reach only these two
+endpoints and `/api/status`, and only from an allowed origin — see
+[`CAPTURE.md`](CAPTURE.md#who-may-talk-to-the-explorer); a program posting with no
+`Origin` header is unaffected.
+
 Reads, for a dashboard or your own tooling:
 
 - `GET /api/sessions` — every live session, newest first, with turn counts.
@@ -115,8 +125,11 @@ Reads, for a dashboard or your own tooling:
   shape the Live view renders.
 
 In the UI: the **Sessions** tab lists live sessions and, on click, shows the register
-trajectory, posture shifts, and per-turn reading — with an auto-refresh checkbox that
-polls while an agent is running.
+trajectory, posture shifts, and per-turn reading; it updates on its own as turns arrive.
+`#/sessions/<session_id>` links straight to one.
+
+For a chat in a browser tab (Claude.ai, ChatGPT), the emitter is the capture userscript —
+[`CAPTURE.md`](CAPTURE.md).
 
 ---
 

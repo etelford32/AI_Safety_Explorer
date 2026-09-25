@@ -397,6 +397,8 @@
       you get is description. It is useful and it is not a measurement of the surface.
     </p>
     <textarea id="live-text" rows="10" placeholder="User: ...&#10;Assistant: ...&#10;&#10;or paste a JSON messages array"></textarea>
+    <p class="hint">Or skip the paste: the <a href="#/sessions">capture userscript</a> sends a
+      Claude.ai or ChatGPT chat straight into Sessions, turn by turn.</p>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">
       <button class="ghost" id="btn-live">Analyse</button>
       <label class="check"><input type="checkbox" id="live-auto"> re-analyse as I paste</label>
@@ -429,6 +431,23 @@
           <span class="hint" id="sess-status"></span>
         </div>
         <div id="sess-list" class="co-list sess-list"><div class="empty-state">No live sessions yet.</div></div>
+      </div>
+      <div class="panel capture-card">
+        <h2>Capture from Claude.ai &amp; ChatGPT</h2>
+        <p class="hint">A userscript adds an <b>Explorer</b> button to those chat pages. It sends a
+          conversation only when you click <b>Send</b>, or while you switch <b>Follow</b> on for that
+          one chat — and only to this Explorer.</p>
+        <ol class="steps">
+          <li>Install a userscript manager: <b>Tampermonkey</b> (Chrome, Edge, Firefox, Safari) or
+            <b>Userscripts</b> (Safari). In Chrome, turn on <i>Allow User Scripts</i> for it.</li>
+          <li><a href="/explorer-capture.user.js" class="install" data-tip="Your userscript manager will open and offer to install it. The script is pointed at this Explorer's address.">Install the capture script</a></li>
+          <li>Open a chat, click <b>Explorer</b> (or <kbd>Alt</kbd><kbd>Shift</kbd><kbd>E</kbd>),
+            then <b>Send conversation</b> or <b>Follow</b>.</li>
+        </ol>
+        <p class="note">Sessions land here as Tier B. An edited or regenerated reply becomes a
+          <i>branch</i> session rather than overwriting the one you saw. If a site changes its
+          markup and the button reports <i>found 0 turns</i>, select the conversation and use
+          <b>Send selection</b> — it needs no knowledge of the page. Details: <code>docs/CAPTURE.md</code>.</p>
       </div>
     </div>
     <div class="monitor-detail">

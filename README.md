@@ -886,7 +886,7 @@ expand); text size and a proportional reading font are one click in the top bar.
 | **Compare** | A run against its declared capability twin — scores, retention ratios, and a word-level diff of what disappeared |
 | **Annotate** | The blinded queue: metadata hidden until you submit, coverage-planned selection, rubric anchors, refusal taxonomy, escalate flag |
 | **Stance** | The capability &times; warmth plane, the posture transition matrix, per-dimension small multiples, and the controls that decide whether any of it is believable |
-| **Sessions** | Live conversations an agent or app pushes to the tool turn by turn, each with its register trajectory, a **drift alert** — routed through the embedding register model when a semantic backend is installed, so it survives natural prose — and declared provenance — the tool alongside a running agent |
+| **Sessions** | Live conversations an agent, an app or the **browser capture userscript** (Claude.ai, ChatGPT — see [`docs/CAPTURE.md`](docs/CAPTURE.md)) pushes to the tool turn by turn, each with its register trajectory, a **drift alert** — routed through the embedding register model when a semantic backend is installed, so it survives natural prose — and declared provenance — the tool alongside a running agent |
 | **Live** | Paste a conversation you are having elsewhere; register, spans and posture per turn, the register's trajectory across turns, and a standing panel of what a keyless chat cannot measure |
 | **Surface** | 2-D marginal slices with per-cell `n`; unsampled cells drawn empty, never interpolated |
 | **Results** | An on-page index with scroll-spy and a one-line summary per section; collapsible panels. The depth interaction beside its reading per focal dimension, power-seeking reach with its null control and flagged evidence, the sandbagging dose-response with a bootstrap CI band, twin deltas, cross-lingual, answer keys, false-positive controls, reliability, drift |
@@ -910,6 +910,7 @@ Your keys and your data never leave the machine.
 | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | Using the tool alongside agents and other apps: the four modes, the push-never-pull spine, the endpoint contract |
 | [`docs/TESTING.md`](docs/TESTING.md) | Pointing the instrument at a real model: the local-model corpus runbook, the embedding-backend gate, and what "suspect" looks like |
 | [`docs/BACKGROUND.md`](docs/BACKGROUND.md) | Running it as an always-on background app: the macOS menu-bar app, login autostart, and the `/api/status` summary a monitor polls |
+| [`docs/CAPTURE.md`](docs/CAPTURE.md) | The browser capture userscript for Claude.ai and ChatGPT: install, Send / Follow / Send selection, edits as branches, which origins may reach the local server, and what to do when a site changes its markup |
 | [`docs/DESKTOP.md`](docs/DESKTOP.md) | The native desktop app: a WKWebView window wrapping the UI, run in dev with `explorer app`, packaged into `AI Safety Explorer.app` with py2app |
 | [`docs/CONTENT_POLICY.md`](docs/CONTENT_POLICY.md) | Why the corpus varies framing over non-hazardous substrate, and why that is better science |
 | [`docs/PREREGISTRATION.md`](docs/PREREGISTRATION.md) | Hypotheses, analysis plan and reliability threshold, frozen before collection |
