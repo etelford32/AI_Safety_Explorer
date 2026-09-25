@@ -1559,6 +1559,23 @@ browser against fixture pages served under the sites' own hostnames; the live si
 markup is the one thing that could not be checked from the build environment, and CAPTURE.md
 says so.
 
+**Open source, and an app that updates itself (v0.31).** The instrument is being opened for a
+paper and for outside testers, which changes what "installing" has to mean: testers cannot be
+asked to unpack tarballs and re-run pip, and a result reported in a paper has to be traceable
+to the exact code that produced it. The downloadable app is therefore a loader, not a frozen
+Explorer: it fetches the Explorer from GitHub on a channel — **stable** (the latest tagged
+release: what testers run and what a paper cites) or **dev** (the branch head) — verifies it
+before switching (it must compile on the app's Python, speak the app's loader contract, and
+need no package the app lacks; the Explorer's zero-runtime-dependency rule is what makes this
+workable), starts it in-process, and falls back to the last version that started and then to
+the copy baked into the app. Nothing is replaced in place and the database is shared across
+versions. The loader is tested against a stand-in GitHub serving tarballs of this repository,
+including broken ones (a syntax error, a newer contract, a missing dependency, a
+path-traversal archive, code that fails at import), each refused or rolled back. Alongside it:
+CITATION.cff, SECURITY.md (private reporting; the local server's access rules), CONTRIBUTING.md
+(the rules that keep the measurements honest), CI for the test suite on every push, and a
+macOS build on every version tag that smoke-tests the bundle before attaching it to the release.
+
 ### [ADD] One command that asks whether the instrument is sound (v0.12)
 
 Every arm in this document shipped with a falsification test, and the record of those

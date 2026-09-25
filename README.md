@@ -1,6 +1,9 @@
-# Safety Explorer
+# AI Safety Explorer
 
-**v0.3** — a research instrument for one question:
+[![tests](https://github.com/etelford32/AI_Safety_Explorer/actions/workflows/tests.yml/badge.svg)](https://github.com/etelford32/AI_Safety_Explorer/actions/workflows/tests.yml)
+&nbsp;MIT licensed · open source · [install](docs/INSTALL.md) · [cite](#citing)
+
+A research instrument for one question:
 
 > When context becomes riskier while the underlying reasoning task stays similar,
 > how does model behaviour change?
@@ -33,6 +36,15 @@ Within a family, the critical arm moves **exactly one dimension** (verified by t
 linter) and holds the other four pinned. So when a response degrades, the degradation
 is attributable: it is a response to *framing*, not to the sensitivity of the
 information, because the information is identical on both sides of the comparison.
+
+## Install
+
+**Testers:** download **AI Safety Explorer.app** from [Releases](https://github.com/etelford32/AI_Safety_Explorer/releases) — it keeps
+itself up to date from this repository, verifying each new version before switching to it and
+falling back to the last one that worked. Steps, channels and where your data lives:
+[`docs/INSTALL.md`](docs/INSTALL.md).
+
+**Developers:** clone and `pip install -e '.[dev]'` — the quick start is below.
 
 ## Quick start
 
@@ -910,6 +922,7 @@ Your keys and your data never leave the machine.
 | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | Using the tool alongside agents and other apps: the four modes, the push-never-pull spine, the endpoint contract |
 | [`docs/TESTING.md`](docs/TESTING.md) | Pointing the instrument at a real model: the local-model corpus runbook, the embedding-backend gate, and what "suspect" looks like |
 | [`docs/BACKGROUND.md`](docs/BACKGROUND.md) | Running it as an always-on background app: the macOS menu-bar app, login autostart, and the `/api/status` summary a monitor polls |
+| [`docs/INSTALL.md`](docs/INSTALL.md) | Installing the self-updating app (testers) or running from source; update channels; where data lives |
 | [`docs/CAPTURE.md`](docs/CAPTURE.md) | The browser capture userscript for Claude.ai and ChatGPT: install, Send / Follow / Send selection, edits as branches, which origins may reach the local server, and what to do when a site changes its markup |
 | [`docs/DESKTOP.md`](docs/DESKTOP.md) | The native desktop app: a WKWebView window wrapping the UI, run in dev with `explorer app`, packaged into `AI Safety Explorer.app` with py2app |
 | [`docs/CONTENT_POLICY.md`](docs/CONTENT_POLICY.md) | Why the corpus varies framing over non-hazardous substrate, and why that is better science |
@@ -1124,4 +1137,17 @@ complete corpus with no way to run it. Known limits, stated up front:
 - **No result is claimed here.** The repository ships an instrument and a ground-truth
   test of that instrument. Everything else awaits collection.
 
-MIT licensed.
+## Citing
+
+If you use the Explorer, cite it from [`CITATION.cff`](CITATION.cff) (GitHub's *Cite this
+repository* button gives BibTeX and APA). If you report results, cite the **tagged release** you
+ran and the corpus version and hash the Explorer records with every campaign — a result is
+reproducible only against the exact instrument that produced it.
+
+## Contributing and security
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) — including the rules that keep measurements honest
+(non-hazardous substrate, one-dimension twins, pre-registered analyses, controls shipped with
+their measures). Security reports: [`SECURITY.md`](SECURITY.md), privately.
+
+MIT licensed — see [`LICENSE`](LICENSE).

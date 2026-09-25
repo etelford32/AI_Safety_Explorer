@@ -71,6 +71,18 @@ def _json_safe(value):
     return value
 
 
+class ExplorerHTTPServer(ThreadingHTTPServer):
+    """The stdlib threaded server with a listen queue sized for bursts.
+
+    The default backlog is 5: a burst of more simultaneous connections than that — the
+    Overview's first load plus a capture script and an agent posting turns — overflowed it and
+    the kernel reset the excess connections. 128 is the common system cap.
+    """
+
+    request_queue_size = 128
+    daemon_threads = True
+
+
 def open_connection(db_path: str) -> sqlite3.Connection:
     """A connection for one request. WAL (set on the file by `db.connect`) lets readers run
     beside a writer; `timeout` is the busy wait before a contended write gives up."""
@@ -1252,10 +1264,9 @@ def serve(db_path: str, corpus_path: str, host: str = "127.0.0.1",
     from .runner import snapshot_corpus
     snapshot_corpus(conn, c, report.clean)
 
-    httpd = ThreadingHTTPServer((host, port), ExplorerHandler)
+    httpd = ExplorerHTTPServer((host, port), ExplorerHandler)
     # Each request opens its own connection (see `ExplorerHandler.conn`); the server holds
     # only the path.
-    httpd.daemon_threads = True
     httpd.db_path = str(db_path)  # type: ignore[attr-defined]
     httpd.bound_host = host  # type: ignore[attr-defined]
     httpd.corpus = c  # type: ignore[attr-defined]
