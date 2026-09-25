@@ -305,3 +305,39 @@ def test_the_dose_response_chart_renders(page, served):
     page.click("#btn-sandbag")
     page.wait_for_selector("#sb-chart svg.chart, #sb-out .empty-state", timeout=20000)
     assert page.errors == []
+
+
+# --- the shell: overview, palette, glossary -------------------------------------------------
+
+def test_overview_fills_its_tiles_without_a_page_error(page, served):
+    """The landing view loads every headline analysis in parallel; one failing tile must not
+    take the others down, and none may throw."""
+    page.goto(served + "/#/overview", wait_until="networkidle")
+    page.wait_for_function(
+        "() => document.querySelectorAll('#ov-tiles .tile').length >= 10"
+        " && !document.querySelector('#ov-tiles .tile.loading')", timeout=30000)
+    assert page.errors == [], page.errors
+    values = page.eval_on_selector_all("#ov-tiles .tile .tv", "els => els.map(e => e.textContent)")
+    assert len(values) >= 10
+    assert page.inner_text("#tile-data .tv").replace(",", "").isdigit()
+
+
+def test_the_palette_jumps_to_a_results_section(page, served):
+    page.keyboard.press("Control+K")
+    page.wait_for_selector("#palette.show")
+    page.keyboard.type("sandbagging")
+    page.keyboard.press("Enter")
+    page.wait_for_function("() => location.hash === '#/results/sandbagging'", timeout=5000)
+    page.wait_for_selector("#sec-sandbagging", state="visible", timeout=10000)
+    assert page.errors == []
+
+
+def test_a_column_header_explains_itself_on_hover(page, served):
+    """The glossary decorates known column headers; hovering one shows its definition."""
+    page.goto(served + "/#/results", wait_until="networkidle")
+    # The per-level tables sit in a closed disclosure; decorated before they are shown.
+    page.wait_for_selector("#dp-out th[data-term='gap']", state="attached", timeout=20000)
+    page.click("#dp-out details.more summary")
+    page.hover("#dp-out th[data-term='gap'] >> nth=0")
+    page.wait_for_timeout(400)
+    assert "expert phrasing fared worse" in page.inner_text("#chart-tip")

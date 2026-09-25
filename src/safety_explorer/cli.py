@@ -1164,6 +1164,66 @@ def cmd_app(args) -> int:
     return desktop.run()
 
 
+def cmd_demo(args) -> int:
+    """Seed demo data, clear it, or stream a simulated agent into a running server."""
+    from . import demo
+
+    if args.stream:
+        return _demo_stream(args.url, args.interval, args.once)
+
+    conn = db.init_db(args.db)
+    if args.clear:
+        removed = demo.clear(conn)
+        print(f"removed {removed['campaigns']} demo campaign(s), {removed['runs']} run(s), "
+              f"{removed['sessions']} demo session(s)")
+        return 0
+    c, _report = _corpus_and_lint(args)
+    print("seeding demo data — mock provider, NOT a measurement of any model")
+    out = demo.seed(conn, c, repeats=args.repeats, cued=not args.no_cues,
+                    on_progress=lambda m: print(f"  {m}", flush=True))
+    n = sum(v for v in out["campaigns"].values() if isinstance(v, int))
+    print(f"done: {n} new run(s), {out['sessions']} session(s). Start the UI with "
+          f"`explorer serve` (or `explorer app`); remove it all with `explorer demo --clear`.")
+    return 0
+
+
+def _demo_stream(url: str, interval: float, once: bool) -> int:
+    """POST the scripted agent turns to a running server, the way a real agent hook would —
+    through `/api/session/turn`, push-never-pull, with nothing special-cased for the demo."""
+    import time
+    import urllib.error
+    import urllib.request
+    from . import demo
+
+    endpoint = url.rstrip("/") + "/api/session/turn"
+    n = 0
+    print(f"streaming a simulated agent to {endpoint} every {interval}s — Ctrl-C to stop")
+    try:
+        while True:
+            n += 1
+            sid = f"demo-cli-{int(time.time())}-{n}"
+            for role, text in demo.stream_turns():
+                body = json.dumps({"session_id": sid, "role": role, "text": text,
+                                   "label": f"demo — streamed agent #{n}",
+                                   "source": "demo:cli", "meta": {"autonomy_grant": 1,
+                                                                  "demo": True}}).encode()
+                req = urllib.request.Request(endpoint, data=body,
+                                             headers={"Content-Type": "application/json"})
+                try:
+                    urllib.request.urlopen(req, timeout=10).read()
+                except urllib.error.URLError as exc:
+                    print(f"cannot reach the server at {url} ({exc.reason}). "
+                          f"Start it with `explorer serve` first.", file=sys.stderr)
+                    return 1
+                print(f"  {sid} · {role:9s} {text[:70]}…", flush=True)
+                time.sleep(interval)
+            if once:
+                return 0
+    except KeyboardInterrupt:
+        print("\nstopped")
+        return 0
+
+
 def cmd_export(args) -> int:
     conn = db.connect(args.db)
     obs = analysis.observations(conn, args.campaign, args.tiers)
@@ -1366,6 +1426,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     ap = sub.add_parser("app", help="open the Explorer in a native desktop window")
     ap.set_defaults(func=cmd_app)
+
+    dm = sub.add_parser("demo", help="seed demo data (mock provider), clear it, or stream a "
+                                     "simulated agent into a running server")
+    dm.add_argument("--repeats", type=int, default=3)
+    dm.add_argument("--no-cues", action="store_true", help="skip the cued (sandbagging) arm")
+    dm.add_argument("--clear", action="store_true", help="remove demo campaigns and sessions")
+    dm.add_argument("--stream", action="store_true",
+                    help="POST a simulated agent's turns to a running server")
+    dm.add_argument("--url", default="http://127.0.0.1:8713")
+    dm.add_argument("--interval", type=float, default=2.5)
+    dm.add_argument("--once", action="store_true", help="stream one conversation, then stop")
+    dm.set_defaults(func=cmd_demo)
 
     e = sub.add_parser("export", help="export observations as JSONL")
     e.add_argument("--out", default="data/exports/observations.jsonl")

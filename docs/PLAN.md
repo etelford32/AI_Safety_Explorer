@@ -1519,6 +1519,27 @@ one: the alarming-benign and benign pools were then mixtures of cue severities i
 proportions each had been run, so a cue that moves the register could surface as "topic
 contamination". Both null controls now see exactly the cue arm their report reads.
 
+**A dashboard that reads like the instrument, and data that flows (v0.29).** Ten tabs across
+a header had become a list of places rather than a map, and Results had grown to 7,500px of
+panels in two uneven columns. The UI is now a shell around the same views: a grouped sidebar
+(Analyse · Monitor · Collect · Review · Corpus), hash routes so a finding can be linked to,
+a command palette over views, sections, actions and a glossary, and keyboard chords that
+leave Co-analyse's own keys alone. An **Overview** lands first — one tile per headline
+reading, each a number, a line saying what it is, a small picture of the shape behind it,
+the control that qualifies it, and a hover breakdown — plus a "needs a look" list derived
+from the same readings and a live activity feed. The design rule is that compact must not
+mean unexplained: every term the views use without defining is in one glossary and appears
+on hover wherever the label does, panel headers carry a summary line and an ⓘ for "how to
+read this", and long notes clamp to two lines rather than disappearing. Results now reads
+beside an on-page index (3,300px at the same data). The heartbeat is `/api/status`, which
+now carries a `data_version` fingerprint: the page caches each analysis until the stored
+runs or labels change (a new session turn refreshes the monitor without recomputing a
+campaign analysis). Data flows through `explorer demo` (a mock baseline, a cued arm and
+three scripted sessions, all labelled, removable with `--clear`) and a simulator that
+streams a scripted agent through `sessions.append_turn` — the same path `/api/session/turn`
+takes — so the drift badge and the feed can be watched working before any real agent is
+wired in. None of it changes a measurement.
+
 ### [ADD] One command that asks whether the instrument is sound (v0.12)
 
 Every arm in this document shipped with a falsification test, and the record of those

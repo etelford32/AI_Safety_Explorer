@@ -28,6 +28,29 @@ WEB_ROOT = Path(__file__).parent / "web"
 SERVE_STARTED: float | None = None
 CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
                  ".svg": "image/svg+xml"}
+STATIC_FILES = ("/app.js", "/shell.js", "/overview.js", "/style.css", "/favicon.svg")
+
+
+class DemoState:
+    """The demo seeder and live simulator, one per server process.
+
+    Seeding runs on its own thread and connection so the request that starts it returns at
+    once and the UI can poll the log; the simulator writes turns the way an agent would.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.seeding = False
+        self.log: list[str] = []
+        self.error: str | None = None
+        self.simulator = None
+
+    def status(self) -> dict[str, Any]:
+        return {"seeding": self.seeding, "log": self.log[-12:], "error": self.error,
+                "simulator": self.simulator.status() if self.simulator else {"running": False}}
+
+
+DEMO = DemoState()
 
 
 def _json_safe(value):
@@ -108,9 +131,11 @@ def status_report(conn, started: float | None = None, limit: int = 25) -> dict[s
     # alert are semantic or lexical. Report it so the menu bar can warn when it is the
     # fallback. register_model() is cached, so this is cheap after the first call.
     model = st.register_model()
+    from . import dashboard
     return {
         "ok": True,
         "version": __version__,
+        "data_version": dashboard.data_version(conn),
         "uptime_s": round(time.time() - started, 1) if started else None,
         "n_runs": n_runs,
         "n_sessions": n_sessions,
@@ -190,7 +215,7 @@ class ExplorerHandler(BaseHTTPRequestHandler):
         try:
             if url.path in ("/", "/index.html"):
                 return self._send_file("index.html")
-            if url.path in ("/app.js", "/style.css", "/favicon.svg"):
+            if url.path in STATIC_FILES:
                 return self._send_file(url.path.lstrip("/"))
             if url.path == "/favicon.ico":
                 return self._send_file("favicon.svg")
@@ -205,6 +230,16 @@ class ExplorerHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         try:
             body = self._body()
+            if url.path == "/api/demo/seed":
+                return self._send_json(self._demo_seed(body))
+            if url.path == "/api/demo/stream":
+                return self._send_json(self._demo_stream(body))
+            if url.path == "/api/demo/clear":
+                from . import demo
+                with DEMO.lock:
+                    if DEMO.simulator:
+                        DEMO.simulator.stop()
+                return self._send_json({"removed": demo.clear(self.conn)})
             if url.path == "/api/run/start":
                 return self._send_json(self._start_run(body))
             if url.path == "/api/run/cancel":
@@ -313,11 +348,60 @@ class ExplorerHandler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self._send_json({"error": f"{type(exc).__name__}: {exc}"}, 500)
 
+    # -- demo --------------------------------------------------------------
+
+    def _demo_seed(self, body: dict[str, Any]) -> dict[str, Any]:
+        from . import demo
+        with DEMO.lock:
+            if DEMO.seeding:
+                return {"started": False, **DEMO.status()}
+            DEMO.seeding, DEMO.error, DEMO.log = True, None, []
+        db_path, corpus = self.server.db_path, self.corpus  # type: ignore[attr-defined]
+
+        def work() -> None:
+            try:
+                wconn = db.connect(db_path)
+                demo.seed(wconn, corpus, repeats=int(body.get("repeats", 3)),
+                          cued=bool(body.get("cued", True)), on_progress=DEMO.log.append)
+                DEMO.log.append("done")
+            except Exception as exc:  # noqa: BLE001 — reported to the UI, not swallowed
+                DEMO.error = f"{type(exc).__name__}: {exc}"
+                traceback.print_exc()
+            finally:
+                DEMO.seeding = False
+        threading.Thread(target=work, name="demo-seed", daemon=True).start()
+        return {"started": True, **DEMO.status()}
+
+    def _demo_stream(self, body: dict[str, Any]) -> dict[str, Any]:
+        from . import demo
+        with DEMO.lock:
+            if body.get("on", True):
+                if DEMO.simulator is None or not DEMO.simulator.running:
+                    DEMO.simulator = demo.Simulator(
+                        self.server.db_path,  # type: ignore[attr-defined]
+                        interval=float(body.get("interval", 2.5)))
+                    DEMO.simulator.start()
+            elif DEMO.simulator:
+                DEMO.simulator.stop()
+        return DEMO.status()
+
     # -- API ---------------------------------------------------------------
 
     def _api_get(self, path: str, q: dict[str, str]) -> Any:
         if path == "/api/status":
             return status_report(self.conn, SERVE_STARTED)
+
+        if path == "/api/overview":
+            from . import dashboard
+            return dashboard.overview(self.conn, self.corpus)
+
+        if path == "/api/activity":
+            from . import dashboard
+            return {"events": dashboard.activity(self.conn, int(q.get("limit", 40))),
+                    "data_version": dashboard.data_version(self.conn)}
+
+        if path == "/api/demo":
+            return DEMO.status()
 
         if path == "/api/meta":
             report = lint.run(self.corpus)

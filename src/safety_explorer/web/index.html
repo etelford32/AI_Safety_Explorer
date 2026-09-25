@@ -9,32 +9,71 @@
 </head>
 <body>
 
-<header>
-  <h1>SAFETY EXPLORER</h1>
-  <span class="meta">
-    corpus <b id="m-corpus">—</b> ·
-    hash <b id="m-hash">—</b> ·
-    lint <b id="m-lint">—</b> ·
-    <b id="m-runs">—</b>
-  </span>
-  <nav>
-    <button data-view="explore" class="on">Explore</button>
-    <button data-view="collect">Collect</button>
-    <button data-view="compare">Compare</button>
-    <button data-view="annotate">Annotate</button>
-    <button data-view="coanalyse">Co-analyse</button>
-    <button data-view="stance">Stance</button>
-    <button data-view="live">Live</button>
-    <button data-view="sessions">Sessions</button>
-    <button data-view="surface">Surface</button>
-    <button data-view="results">Results</button>
-  </nav>
+<div class="app">
+
+<aside class="side">
+  <div class="brand"><img src="/favicon.svg" alt=""><span class="brand-t">Safety<br>Explorer</span></div>
+  <nav class="side-nav" aria-label="Views"></nav>
+  <div class="side-foot">
+    <div class="srv" data-tip="Server heartbeat. Data refreshes on its own every few seconds while this window is visible.">
+      <span id="srv-dot" class="dot"></span><span id="srv-txt">connecting…</span>
+    </div>
+    <button class="tb" id="btn-side" data-tip="Collapse or expand the sidebar" aria-label="Toggle sidebar">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M3 4h18v16H3zM9 4v16"/></svg></button>
+  </div>
+</aside>
+
+<div class="shell-main">
+<header class="topbar">
+  <div class="crumb">
+    <span id="crumb-group">Home</span><span class="crumb-sep">/</span><b id="crumb-view">Overview</b>
+    <span id="crumb-desc"></span>
+  </div>
+  <div class="meta">
+    <span data-tip="Corpus version — the authored prompt set every run is matched against.">corpus <b id="m-corpus">—</b></span>
+    <span data-tip="Content hash of the corpus. Two campaigns are comparable only if their hashes match.">hash <b id="m-hash">—</b></span>
+    <span data-tip="Corpus lint: every family must have a declared twin for each variant, anchored coordinates and an answer key. A campaign refuses to run on a corpus that does not lint clean.">lint <b id="m-lint">—</b></span>
+    <b id="m-runs" data-tip="Every stored run, all tiers and campaigns.">—</b>
+  </div>
+  <div class="tools">
+    <button class="tb tb-search" id="tb-palette" data-tip="Jump to any view, section, action or glossary term">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-5-5"/></svg>
+      <span>Search</span><kbd>⌘K</kbd></button>
+    <span class="tb-group" data-tip="Text size">
+      <button class="tb" id="tb-zoom-dn" aria-label="Smaller text">A−</button><span id="tb-zoom-v">100%</span><button class="tb" id="tb-zoom-up" aria-label="Larger text">A+</button>
+    </span>
+    <button class="tb" id="tb-prose" data-tip="Reading font for prose: proportional or monospace. Numbers stay monospace either way.">Aa</button>
+    <button class="tb" id="tb-density" data-tip="Density: compact (long notes clamp to two lines — hover to read, click to expand) or comfortable">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+    <button class="tb" id="tb-help" data-tip="Keyboard shortcuts and how to read the page">?</button>
+  </div>
 </header>
 
 <main>
 
+<!-- ============================ OVERVIEW ============================ -->
+<section id="v-overview" class="view">
+  <div id="ov-empty"></div>
+  <div class="ov-strip" id="ov-strip"></div>
+  <div class="tiles" id="ov-tiles"></div>
+  <div class="ov-cols">
+    <div class="ov-left">
+      <div class="panel"><h2>Needs a look</h2><div id="ov-attn"><div class="empty-state">—</div></div></div>
+      <div class="panel"><h2>Campaigns</h2><div id="ov-camps"><div class="empty-state">—</div></div></div>
+    </div>
+    <div class="ov-right">
+      <div class="panel ov-feed">
+        <h2>Live activity <span class="live-pip" id="ov-pip" data-tip="Refreshes every few seconds while visible"></span></h2>
+        <div id="ov-demo"></div>
+        <div id="ov-feed"><div class="empty-state">—</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
 <!-- ============================ EXPLORE ============================ -->
-<section id="v-explore" class="view on">
+<section id="v-explore" class="view">
   <div class="cols">
     <div>
       <div class="panel">
@@ -372,28 +411,32 @@
 
 <!-- =========================== SESSIONS =========================== -->
 <section id="v-sessions" class="view">
-  <div class="panel">
-    <h2>Live sessions — the tool alongside a running agent</h2>
-    <p class="hint">
-      A session is a conversation an agent or app is having <b>right now</b>, accumulated
-      turn by turn. The tool never reaches into another process: a source opts in by
-      POSTing each turn to <code>/api/session/turn</code> as it happens — the paste
-      boundary generalised, <b>push, never pull</b>. Everything the Live view does runs on
-      each session, and its register trajectory updates as the agent keeps talking.
-    </p>
-    <p class="hint">
-      Wiring one up is one HTTP call per turn. See <code>docs/INTEGRATION.md</code> for the
-      four modes and what each can and cannot measure.
-      <button class="ghost" id="btn-sessions-refresh">Refresh</button>
-      <label class="check"><input type="checkbox" id="sess-auto"> auto-refresh</label>
-      <span class="hint" id="sess-status"></span>
-    </p>
-    <div id="sess-list" class="co-list"><div class="empty-state">No live sessions yet.</div></div>
+  <div class="cols monitor">
+    <div class="monitor-list">
+      <div class="panel">
+        <h2>Live sessions <span class="live-pip beat-slow" data-tip="Updates on its own as turns arrive"></span></h2>
+        <p class="hint">
+          A session is a conversation an agent or app is having <b>right now</b>, accumulated
+          turn by turn. The tool never reaches into another process: a source opts in by
+          POSTing each turn to <code>/api/session/turn</code> as it happens — the paste
+          boundary generalised, <b>push, never pull</b>. Everything the Live view does runs on
+          each session, and its register trajectory updates as the agent keeps talking.
+          Wiring one up is one HTTP call per turn; <code>docs/INTEGRATION.md</code> has the four
+          modes and what each can and cannot measure.
+        </p>
+        <div class="controls" style="margin:6px 0 4px">
+          <button class="ghost" id="btn-sessions-refresh">Refresh</button>
+          <span class="hint" id="sess-status"></span>
+        </div>
+        <div id="sess-list" class="co-list sess-list"><div class="empty-state">No live sessions yet.</div></div>
+      </div>
+    </div>
+    <div class="monitor-detail">
+      <div class="panel" id="sess-traj"></div>
+      <div class="panel" id="sess-turns"></div>
+      <div class="panel" id="sess-limits"></div>
+    </div>
   </div>
-
-  <div class="panel" id="sess-limits"></div>
-  <div class="panel" id="sess-traj"></div>
-  <div class="panel" id="sess-turns"></div>
 </section>
 
 <!-- ============================ STANCE ============================ -->
@@ -466,52 +509,42 @@
 
 <!-- ============================ RESULTS ============================ -->
 <section id="v-results" class="view">
-  <div class="cols-2">
-    <div>
-      <div class="panel">
-        <h2>Twin-pair deltas</h2>
-        <div style="margin-bottom:10px">
-          <label class="check">metric <select id="tw-metric"></select></label>
-          <label class="check">tiers
-            <select id="tw-tiers">
-              <option value="A">A only</option><option value="AB">A + B</option>
-              <option value="ABC">A + B + C</option>
-            </select>
-          </label>
-          <button class="ghost" id="btn-twins">Compute</button>
-        </div>
-        <div id="tw-out"><div class="empty-state">Compute to see deltas.</div></div>
-      </div>
-      <div class="panel">
+  <div class="with-toc">
+    <nav class="toc" id="results-toc" aria-label="Results sections"></nav>
+    <div class="toc-main">
+
+      <div class="panel" data-panel="depth" data-info="did" id="sec-depth">
         <h2>Depth arm — is expertise penalised? (RQ4)</h2>
-        <div style="margin-bottom:10px">
+        <div class="controls">
           <label class="check">metric <select id="dp-metric"></select></label>
           <label class="check">source
             <select id="dp-source">
-              <option value="human">human annotation</option>
-              <option value="auto">automatic features</option>
-              <option value="truth">objective correctness</option>
               <option value="truth_graded">objective correctness (graded)</option>
+              <option value="truth">objective correctness</option>
               <option value="truth_weighted">objective correctness (weighted)</option>
               <option value="truth_consistency">internal consistency</option>
+              <option value="auto">automatic features</option>
+              <option value="human">human annotation</option>
             </select>
           </label>
           <button class="ghost" id="btn-depth">Compute</button>
         </div>
         <div id="dp-out"><div class="empty-state">Compute to see the interaction.</div></div>
       </div>
-      <div class="panel">
+
+      <div class="panel" data-panel="powerseeking" data-info="overreach" id="sec-powerseeking">
         <h2>Power-seeking — reaching past the mandate</h2>
-        <p class="note" style="margin-top:-4px">
+        <p class="note lede">
           Expressed first-person agency in the response, read against the autonomy the
           <em>prompt</em> granted. A rate is an indicator, never a verdict; the flag is the
           reach — a response talking like it holds more mandate than it was handed. A
           spotlight for a human, not a diagnosis.</p>
         <div id="ps-out"><div class="empty-state">—</div></div>
       </div>
-      <div class="panel">
+
+      <div class="panel" data-panel="sandbagging" data-info="specific" id="sec-sandbagging">
         <h2>Sandbagging — observation cues (RQ11)</h2>
-        <div style="margin-bottom:8px">
+        <div class="controls">
           <label class="check">source
             <select id="sb-source">
               <option value="truth">objective correctness</option>
@@ -526,33 +559,74 @@
         </div>
         <div id="sb-out"><div class="empty-state">Compute to see the arm.</div></div>
       </div>
-      <div class="panel">
+
+      <div class="panel" data-panel="twins" data-info="twin" id="sec-twins">
+        <h2>Twin-pair deltas</h2>
+        <div class="controls">
+          <label class="check">metric <select id="tw-metric"></select></label>
+          <label class="check">tiers
+            <select id="tw-tiers">
+              <option value="A">A only</option><option value="AB">A + B</option>
+              <option value="ABC">A + B + C</option>
+            </select>
+          </label>
+          <button class="ghost" id="btn-twins">Compute</button>
+        </div>
+        <div id="tw-out"><div class="empty-state">Compute to see deltas — human-rated metrics need an annotation session first.</div></div>
+      </div>
+
+      <div class="panel" data-panel="language" data-info="h10" data-collapsed="true" id="sec-language">
         <h2>Cross-lingual surface (RQ10)</h2>
         <div id="lg-out"><div class="empty-state">—</div></div>
       </div>
-      <div class="panel">
+
+      <div class="panel" data-panel="truth" data-info="layer0" data-collapsed="true" id="sec-truth">
         <h2>Objective correctness — answer keys</h2>
         <div id="gt-out"><div class="empty-state">—</div></div>
       </div>
-      <div class="panel">
-        <h2>False-positive controls (RQ9)</h2>
-        <div id="ctrl-out"><div class="empty-state">—</div></div>
+
+      <div class="cols-2">
+        <div class="panel" data-panel="controls" data-info="alarming_benign" id="sec-controls">
+          <h2>False-positive controls (RQ9)</h2>
+          <div id="ctrl-out"><div class="empty-state">—</div></div>
+        </div>
+        <div class="panel" data-panel="reliability" data-info="alpha" id="sec-reliability">
+          <h2>Annotation reliability</h2>
+          <div id="rel-out"><div class="empty-state">—</div></div>
+        </div>
       </div>
-    </div>
-    <div>
-      <div class="panel">
-        <h2>Annotation reliability</h2>
-        <div id="rel-out"><div class="empty-state">—</div></div>
-      </div>
-      <div class="panel">
+
+      <div class="panel" data-panel="drift" data-info="alias" id="sec-drift">
         <h2>Longitudinal drift (RQ8)</h2>
         <div id="drift-out"><div class="empty-state">—</div></div>
       </div>
+
     </div>
   </div>
 </section>
 
 </main>
+</div>
+</div>
+
+<div id="palette" class="overlay" role="dialog" aria-label="Search">
+  <div class="pal">
+    <div class="pal-in">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-5-5"/></svg>
+      <input id="pal-input" placeholder="Jump to a view, a section, an action, or look up a term…" autocomplete="off">
+    </div>
+    <div id="pal-list"></div>
+    <div class="pal-foot"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open · <kbd>esc</kbd> close</div>
+  </div>
+</div>
+<div id="modal" class="overlay" role="dialog">
+  <div class="modal"><button class="modal-x tb" aria-label="Close">×</button><div id="modal-body"></div></div>
+</div>
+<div id="toasts"></div>
+
+<script src="/shell.js"></script>
 <script src="/app.js"></script>
+<script src="/overview.js"></script>
+<script>startShell();</script>
 </body>
 </html>

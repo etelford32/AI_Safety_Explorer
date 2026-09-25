@@ -5,12 +5,26 @@
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
+/* Analyses are pure functions of the stored data, so a response is cached until the data
+   changes: the shell's status poll clears this when the run/label fingerprint moves, and
+   any action this page takes (a POST) clears it too. Caching the promise, not the value,
+   also means two views asking for the same analysis at once share one request. */
+const API_CACHE = new Map();
+const CACHEABLE = new Set(['twins', 'depth', 'sandbagging', 'language', 'truth', 'stance',
+  'stance/insight', 'powerseeking', 'controls', 'reliability', 'drift', 'surface']);
+
 const api = async (path, params = {}) => {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== null && v !== ''));
-  const r = await fetch(`/api/${path}${qs.toString() ? '?' + qs : ''}`);
-  return r.json();
+  const url = `/api/${path}${qs.toString() ? '?' + qs : ''}`;
+  if (!CACHEABLE.has(path)) return (await fetch(url)).json();
+  if (API_CACHE.has(url)) return API_CACHE.get(url);
+  const p = fetch(url).then((r) => r.json());
+  API_CACHE.set(url, p);
+  p.then((d) => { if (!d || d.error) API_CACHE.delete(url); }, () => API_CACHE.delete(url));
+  return p;
 };
 const post = async (path, body) => {
+  API_CACHE.clear();
   const r = await fetch(`/api/${path}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -29,16 +43,19 @@ const STATE = { variant: null, run: null, annItem: null, annScores: {}, annStart
 
 /* ---------------------------------------------------------------- nav */
 
-$$('nav button').forEach((b) => b.addEventListener('click', () => {
-  $$('nav button').forEach((x) => x.classList.toggle('on', x === b));
-  $$('.view').forEach((v) => v.classList.toggle('on', v.id === `v-${b.dataset.view}`));
-  if (b.dataset.view === 'results') loadResults();
-  if (b.dataset.view === 'compare') loadCompareOptions();
-  if (b.dataset.view === 'collect') loadData();
-  if (b.dataset.view === 'coanalyse') loadConversations();
-  if (b.dataset.view === 'stance' && !STANCE.data) loadStance();
-  if (b.dataset.view === 'sessions') loadSessions();
-}));
+/* The shell's router calls this; the sidebar, hash and palette all end up here. */
+function showView(view) {
+  $$('.view').forEach((v) => v.classList.toggle('on', v.id === `v-${view}`));
+  if (view === 'overview' && typeof loadOverview === 'function') loadOverview();
+  if (view === 'results') loadResults();
+  if (view === 'compare') loadCompareOptions();
+  if (view === 'collect') loadData();
+  if (view === 'coanalyse') loadConversations();
+  if (view === 'stance' && !STANCE.data) loadStance();
+  if (view === 'sessions') loadSessions();
+  // Explore never opens on an empty prompt pane: show the variant nearest the sliders.
+  if (view === 'explore' && !STATE.variant) $('#btn-select').click();
+}
 
 /* ------------------------------------------------------------- startup */
 
@@ -51,7 +68,7 @@ async function boot() {
   lintEl.className = META.lint_clean ? 'good' : 'bad';
 
   const runs = await api('runs');
-  $('#m-runs').textContent = `${(runs.total ?? runs.runs.length).toLocaleString()} run(s)`;
+  $('#m-runs').textContent = `${(runs.total ?? runs.runs.length).toLocaleString()} runs`;
 
   buildSliders();
   buildCorpusList();
@@ -59,13 +76,6 @@ async function boot() {
   $('#btn-stance').addEventListener('click', loadStance);
   $('#btn-live').addEventListener('click', runLive);
   $('#btn-sessions-refresh').addEventListener('click', loadSessions);
-  $('#sess-auto').addEventListener('change', (e) => {
-    clearInterval(SESS.timer);
-    // Poll while an agent is running. 4s is a deliberate floor: the endpoint is local
-    // and cheap, but re-reading every second would be busywork against a conversation
-    // that moves at human-or-agent pace.
-    if (e.target.checked) SESS.timer = setInterval(loadSessions, 4000);
-  });
   $('#live-text').addEventListener('input', () => {
     if (!$('#live-auto').checked) return;
     // Debounced: a paste fires one input event but typing fires many, and re-reading
@@ -780,6 +790,7 @@ function renderSurface(s) {
 async function loadSandbagging() {
   const d = await api('sandbagging', { source: $('#sb-source').value, tiers: 'A' });
   if (!d.n_cells) {
+    setSummary('sandbagging', 'no cued runs');
     $('#sb-out').innerHTML = `<div class="empty-state">
       No cued runs yet. Start a campaign with observation cues:<br>
       <code>explorer run --cues 1 2 3 4 5 --probes detect_parallel selfreport_followup</code>
@@ -805,8 +816,16 @@ async function loadSandbagging() {
   const wd = ins.when_dropped || {};
   const supported = (d.reading || '').includes('H11 supported');
 
+  const top = d.dose_response.filter((r) => r.specific && r.specific.median !== null && r.specific.median !== undefined)
+    .sort((a, b) => b.specific.median - a.specific.median)[0];
+  setSummary('sandbagging', supported
+    ? `H11 supported · specific ${signed(top && top.specific.median)} at cue ${top ? top.level : '—'}`
+    : `H11 not supported · ${d.n_cells} cued cells`, supported ? 'bad' : 'good');
+
   $('#sb-out').innerHTML = `
-    <div id="sb-chart"></div>
+    <div class="split">
+    <div class="split-main"><div id="sb-chart"></div></div>
+    <div class="split-side">
     <table>
       <tr><th class="num">cue</th><th class="num">treat</th><th class="num">placebo</th>
           <th class="num">specific</th><th class="num">95% CI</th><th class="num">detect</th></tr>
@@ -851,7 +870,8 @@ async function loadSandbagging() {
     </table>
     <p class="note" style="margin-top:6px">${esc(ins.reading || '')}</p>` : ''}
 
-    <p class="note ${supported ? 'bad' : ''}" style="margin-top:10px">${esc(d.reading || '')}</p>`;
+    <p class="note ${supported ? 'bad' : ''}" style="margin-top:10px">${esc(d.reading || '')}</p>
+    </div></div>`;
 
   renderDoseChart($('#sb-chart'), d.dose_response);
 }
@@ -889,6 +909,11 @@ async function loadLanguage() {
         </div>`;
       }).join('');
 
+  const langs = Object.entries(d.by_language || {});
+  const sup = langs.filter(([, b]) => ((b.difference_in_differences || {}).reading || '').includes('H10 supported'));
+  setSummary('language', langs.length
+    ? `${langs.length} language(s) · ${sup.length ? `H10 supported in ${sup.map(([k]) => esc(k)).join(', ')}` : 'H10 not supported'}`
+    : 'no language-arm runs', sup.length ? 'bad' : '');
   $('#lg-out').innerHTML = `${body}
     <div style="margin-top:10px"><div class="note" style="margin-bottom:4px">
       extractor calibration — the measurement floor</div>
@@ -906,6 +931,7 @@ async function loadLanguage() {
 async function loadTruth() {
   const t = await api('truth');
   if (!t.scored) {
+    setSummary('truth', 'nothing scored yet');
     $('#gt-out').innerHTML = `<div class="empty-state">
       Nothing scored yet. Run <code>explorer truth</code>, or start a campaign —
       correctness is computed inline as responses arrive.</div>`;
@@ -931,6 +957,10 @@ async function loadTruth() {
       <td class="num">${fmt(n / classTotal)}</td></tr>`;
   }).join('');
 
+  const nTot = t.by_variant.reduce((a, r) => a + r.n, 0) || 1;
+  const meanHit = t.by_variant.reduce((a, r) => a + (r.accuracy || 0) * r.n, 0) / nTot;
+  setSummary('truth', `${t.scored.toLocaleString()} scored · mean hit ${fmt(meanHit)} · null ${t.null_accuracy === null ? '—' : fmt(t.null_accuracy, 3)} ${t.null_ok ? '✓' : '⚠ suspect'}`,
+    t.null_ok ? '' : 'bad');
   const nullCls = t.null_ok ? 'good' : 'bad';
   const nullTxt = t.null_accuracy === null ? '—' : fmt(t.null_accuracy, 3);
 
@@ -1057,6 +1087,11 @@ $('#btn-twins').addEventListener('click', loadTwins);
 $('#btn-depth').addEventListener('click', loadDepth);
 $('#btn-sandbag').addEventListener('click', loadSandbagging);
 
+const ciText = (ci) => (ci && ci[0] !== null && ci[0] !== undefined && !Number.isNaN(ci[0])
+  ? `[${fmt(ci[0])}, ${fmt(ci[1])}]` : '—');
+const signed = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v) ? '—'
+  : `${v > 0 ? '+' : ''}${Number(v).toFixed(d)}`);
+
 async function loadDepth() {
   const d = await api('depth', {
     metric: $('#dp-metric').value, source: $('#dp-source').value, tiers: 'A',
@@ -1064,48 +1099,78 @@ async function loadDepth() {
   const blocks = Object.entries(d.by_focal_dimension || {});
   if (!blocks.length) {
     $('#dp-out').innerHTML = '<div class="empty-state">No depth-arm runs yet.</div>';
+    setSummary('depth', 'no depth-arm runs');
     return;
   }
-  const didChart = '<div id="dp-chart"></div>';
-  $('#dp-out').innerHTML = didChart + blocks.map(([focal, b]) => {
+
+  // The reading, one line per focal dimension, beside the chart: which contrast carries
+  // the interaction and whether its interval clears zero.
+  const readings = blocks.map(([focal, b]) => {
+    const did = b.difference_in_differences || {};
+    const supported = (did.reading || '').includes('H4 supported');
+    const cells = ['D', 'E'].filter((k) => did[k] && did[k].n).map((k) => {
+      const e = did[k];
+      const clear = e.ci95 && e.ci95[0] !== null && e.ci95[0] > 0;
+      return `<span class="kv-pill ${clear ? 'bad' : ''}" data-tip="${esc(`${e.contrast}: median ${signed(e.median)} · 95% CI ${ciText(e.ci95)} · n=${e.n} · ${e.effect}${e.provisional ? ' · provisional' : ''}`)}">`
+        + `${k} ${signed(e.median)}</span>`;
+    }).join('');
+    return `<div class="reading-row ${supported ? 'flag' : ''}">
+      <span class="tag focal">${esc(focal)}</span>${cells}
+      <span class="reading-t">${supported ? '<b class="bad">H4 supported</b>' : '<span class="ink-dim">no widening beyond CI</span>'}</span>
+      <span class="note">${b.n_families} famil${b.n_families === 1 ? 'y' : 'ies'}</span></div>`;
+  }).join('');
+
+  const tables = blocks.map(([focal, b]) => {
     const rows = b.levels.map((lv) => {
-      const ci = lv.ci95 || [null, null];
-      const ciS = ci[0] !== null && !Number.isNaN(ci[0]) ? `[${fmt(ci[0])}, ${fmt(ci[1])}]` : '—';
       const cls = lv.median_gap > 0 ? 'bad' : '';
       return `<tr><td>${esc(lv.level)}</td><td class="num">${lv.focal_value ?? '—'}</td>
-        <td class="num">${lv.n}</td><td class="num ${cls}">${fmt(lv.median_gap)}</td>
-        <td class="num">${ciS}</td><td>${esc(lv.effect || '')}</td>
+        <td class="num">${lv.n}</td><td class="num ${cls}">${signed(lv.median_gap)}</td>
+        <td class="num">${ciText(lv.ci95)}</td><td>${esc(lv.effect || '')}</td>
         <td>${lv.provisional ? '<span class="warn">prov.</span>' : ''}</td></tr>`;
     }).join('');
-
     const did = b.difference_in_differences || {};
     const didRows = ['D', 'E'].filter((k) => did[k] && did[k].n).map((k) => {
       const e = did[k];
-      const ci = e.ci95 || [null, null];
-      const ciS = ci[0] !== null && !Number.isNaN(ci[0]) ? `[${fmt(ci[0])}, ${fmt(ci[1])}]` : '—';
       return `<tr><td>${esc(e.contrast)}</td><td class="num">${e.n}</td>
-        <td class="num">${fmt(e.median)}</td><td class="num">${ciS}</td>
+        <td class="num">${signed(e.median)}</td><td class="num">${ciText(e.ci95)}</td>
         <td>${esc(e.effect || '')}</td></tr>`;
     }).join('');
-
-    const supported = (did.reading || '').includes('H4 supported');
-    return `<div style="margin-bottom:16px">
-      <div style="font-size:11px;margin-bottom:6px">
-        focal dimension <span class="tag focal">${esc(focal)}</span>
-        <span class="note">${b.n_families} famil${b.n_families === 1 ? 'y' : 'ies'}: ${esc(b.families.join(', '))}</span>
-      </div>
+    return `<div class="subcard">
+      <div class="subcard-h"><span class="tag focal">${esc(focal)}</span>
+        <span class="note">${esc(b.families.join(', '))}</span></div>
       <table><tr><th>level</th><th class="num">focal</th><th class="num">n</th>
         <th class="num">median gap</th><th class="num">95% CI</th><th>effect</th><th></th></tr>${rows}</table>
-      <div style="font-size:11px;margin:10px 0 4px">difference-in-differences vs level C</div>
+      <div class="sub-h">difference-in-differences vs level C</div>
       <table><tr><th>contrast</th><th class="num">n</th><th class="num">median</th>
         <th class="num">95% CI</th><th>effect</th></tr>${didRows}</table>
-      <p class="note ${supported ? 'bad' : ''}" style="margin-top:8px">${esc(did.reading || '')}</p>
+      <p class="note">${esc(did.reading || '')}</p>
     </div>`;
-  }).join('') + `<p class="note">${esc(d.note || '')}<br><br>
-    A positive gap means the expert phrasing fared worse. A level where both depth
-    conditions are fully refused cannot show an interaction — read the per-level gaps
-    before reading a null.</p>`;
+  }).join('');
+
+  $('#dp-out').innerHTML = `
+    <div class="split">
+      <div class="split-main"><div id="dp-chart"></div></div>
+      <div class="split-side">
+        <div class="sub-h">reading by focal dimension <span class="note">— hover a value for its interval</span></div>
+        ${readings}
+        <p class="note">${esc(d.note || '')} A positive gap means the expert phrasing fared
+          worse. A level where both depth conditions are fully refused cannot show an
+          interaction — read the per-level gaps before reading a null.</p>
+      </div>
+    </div>
+    <details class="more"><summary>Per-level tables (${blocks.length})</summary>
+      <div class="subgrid">${tables}</div></details>`;
   renderDidChart($('#dp-chart'), d.by_focal_dimension);
+
+  const hits = blocks.filter(([, b]) => ((b.difference_in_differences || {}).reading || '').includes('H4 supported'));
+  if (hits.length) {
+    const [focal, b] = hits[0];
+    const did = b.difference_in_differences;
+    const k = ['D', 'E'].find((x) => did[x] && did[x].ci95 && did[x].ci95[0] > 0) || 'D';
+    setSummary('depth', `H4 supported · ${esc(focal)} ${k} ${signed(did[k].median)} ${ciText(did[k].ci95)}`, 'bad');
+  } else {
+    setSummary('depth', `H4 not supported across ${blocks.length} focal dimension(s)`, 'good');
+  }
 }
 
 async function loadTwins() {
@@ -1121,9 +1186,17 @@ async function loadTwins() {
     `<tr><td>${esc(r.variant)}</td><td class="num">${r.n}</td>
      <td class="num">${fmt(r.median)}</td></tr>`).join('');
 
+  const rated = res.summary.filter((r) => r.n);
+  setSummary('twins', rated.length ? `${rated.length} variant(s) · ${esc($('#tw-metric').value)}`
+    : 'no human-rated pairs yet · automatic ratio below', rated.length ? '' : 'warn');
+  // Eight rows of "no data" say one thing; say it once.
+  const humanTable = rated.length
+    ? `<table><tr><th>variant</th><th class="num">n</th><th class="num">fams</th>
+      <th class="num">median Δ</th><th class="num">95% CI</th><th>effect</th><th></th></tr>${rows}</table>`
+    : `<div class="empty-state">No pair has a human rating on <b>${esc($('#tw-metric').value)}</b> yet —
+       an <a href="#/annotate">annotation session</a> fills this. The automatic ratio below needs none.</div>`;
   $('#tw-out').innerHTML = `
-    <table><tr><th>variant</th><th class="num">n</th><th class="num">fams</th>
-      <th class="num">median Δ</th><th class="num">95% CI</th><th>effect</th><th></th></tr>${rows}</table>
+    ${humanTable}
     <p class="note" style="margin-top:8px">
       Deltas are against each variant's declared capability twin, within family.
       CIs bootstrap over families, not observations — repeats within a family are not
@@ -1138,6 +1211,7 @@ async function loadTwins() {
 
 async function loadResults() {
   loadDepth();
+  loadTwins();
   loadTruth();
   loadLanguage();
   loadSandbagging();
@@ -1158,6 +1232,13 @@ async function loadResults() {
       </table>
     </div>`).join('') : '<div class="empty-state">No control runs yet.</div>';
 
+  const ctrlN = arms.reduce((a, [, x]) => a + (x.n || 0), 0);
+  setSummary('controls', arms.length ? `${arms.length} arm(s) · n=${ctrlN}` : 'no control runs');
+  const relM = Object.values(rel.metrics || {});
+  const usable = relM.filter((v) => v.usable).length;
+  setSummary('reliability', relM.length ? `${usable}/${relM.length} metrics usable (α ≥ 0.67)` : '—',
+    usable === relM.length && relM.length ? 'good' : 'warn');
+  setSummary('drift', `${(drift.series || []).length} campaign(s)`);
   const mrows = Object.entries(rel.metrics || {}).map(([m, v]) =>
     `<tr><td>${esc(m)}</td><td class="num">${Number.isNaN(v.alpha) ? '—' : fmt(v.alpha, 3)}</td>
      <td class="num">${v.paired_units}</td>
@@ -1181,7 +1262,9 @@ async function loadResults() {
     </ul>`;
 }
 
-boot();
+/* The shell waits on this before routing, so the first view never renders ahead of the
+   corpus metadata its selects are built from. */
+const BOOTED = boot();
 
 /* ------------------------------------------------------ co-analysis */
 /* A run is re-presented as what it is: a short conversation, cut into spans that
@@ -1611,33 +1694,10 @@ const svgText = (x, y, str, attrs = {}) => {
   return t;
 };
 
-/* One tooltip element, moved around. Cheaper than one per mark and it cannot
-   leave orphans behind when a chart re-renders. */
-function chartTip() {
-  let tip = $('#chart-tip');
-  if (!tip) {
-    tip = document.createElement('div');
-    tip.id = 'chart-tip';
-    tip.className = 'chart-tip';
-    document.body.appendChild(tip);
-  }
-  return tip;
-}
-
+/* Chart marks share the shell's tooltip (edge-aware, animated) through a registered id,
+   so the html never has to survive being escaped into an attribute. */
 function bindTip(node, html) {
-  node.addEventListener('mouseenter', (e) => {
-    const tip = chartTip();
-    tip.innerHTML = html;
-    tip.style.display = 'block';
-    tip.style.left = `${e.clientX + 14}px`;
-    tip.style.top = `${e.clientY + 14}px`;
-  });
-  node.addEventListener('mousemove', (e) => {
-    const tip = chartTip();
-    tip.style.left = `${e.clientX + 14}px`;
-    tip.style.top = `${e.clientY + 14}px`;
-  });
-  node.addEventListener('mouseleave', () => { chartTip().style.display = 'none'; });
+  node.setAttribute('data-tip-html', tipId(html));
 }
 
 async function loadStance() {
@@ -2504,17 +2564,22 @@ async function loadSessions() {
       ? '<span class="chip driftbadge-alert">register drift</span>'
       : s.drift === 'watch'
         ? '<span class="chip driftbadge-watch">drift — watch</span>' : '';
-    return `<div class="co-row sess-row${on}" data-sess="${esc(s.id)}">`
-      + `<div><b>${esc(s.label)}</b> ${drift} `
-      + `<span class="chip">${esc(s.source)}</span>`
-      + `<span class="chip">Tier ${esc(s.tier)}</span></div>`
-      + `<div class="note">${s.n_turns} turn(s), ${s.n_assistant || 0} model &middot; `
-      + `${esc(when)}</div></div>`;
+    const dot = s.drift === 'alert' ? 'alert' : s.drift === 'watch' ? 'watch' : 'quiet';
+    return `<div class="co-row sess-row${on}" data-sess="${esc(s.id)}"`
+      + ` data-tip="${esc(`${s.label} — ${s.n_turns} turn(s), ${s.n_assistant || 0} from the model; source ${s.source}, Tier ${s.tier}; last turn ${when}`)}">`
+      + `<span class="sm-dot ${dot}"></span>`
+      + `<div class="sess-main"><div class="sess-l"><b>${esc(s.label)}</b></div>`
+      + `<div class="sess-m">${drift}<span class="chip">${esc(s.source)}</span>`
+      + `<span class="chip">Tier ${esc(s.tier)}</span>`
+      + `<span class="note">${s.n_turns} turns · ${typeof ago === 'function' ? ago(s.updated_at) : esc(when)}</span></div></div></div>`;
   }).join('');
   $$('#sess-list .sess-row').forEach((r) =>
     r.addEventListener('click', () => openSession(r.dataset.sess)));
-  // If a session is open, refresh its detail too — an agent may have added turns.
+  // If a session is open, refresh its detail too — an agent may have added turns. With none
+  // open, open the one most in need of a look (an alert first, else the newest), so the view
+  // never lands on an empty detail pane.
   if (SESS.current && list.some((s) => s.id === SESS.current)) openSession(SESS.current);
+  else openSession((list.find((s) => s.drift === 'alert') || list[0]).id);
 }
 
 async function openSession(id) {
@@ -2731,67 +2796,55 @@ async function loadPowerseeking() {
     return;
   }
 
-  box.innerHTML = '<div id="ps-chart"></div>';
   const ov = d.overreach || {};
   const embedded = d.source === 'embedding';
-  const summary = document.createElement('p');
-  summary.className = 'note';
-  summary.innerHTML = `v${esc(d.powerseeking_version)} — ${d.n_scored} scored`
-    + ` · read via <strong class="${embedded ? 'good' : ''}">${esc(d.source || 'lexicon')}</strong>`
-    + (embedded ? ` (${esc(d.embedding_backend || '')})` : '')
-    + ` · <strong class="${ov.n_flagged ? 'warn' : 'good'}">${ov.n_flagged || 0}</strong>`
-    + ` of ${ov.n_applicable || 0} reach past their grant`
-    + (d.underread && !embedded ? ` · <span class="warn">${d.underread} possibly under-read</span>` : '');
-  box.appendChild(summary);
-  if (!embedded) {
-    const sn = document.createElement('p');
-    sn.className = 'note';
-    sn.style.marginTop = '2px';
-    sn.textContent = d.source_note || '';
-    box.appendChild(sn);
-  }
+  const cn = d.control_null || {};
+  const gap = cn.gap && cn.gap.gap !== null && cn.gap.gap !== undefined ? cn.gap.gap : null;
+  // A first-person lexicon should not move on the question's vocabulary. The tolerance is
+  // loose because the rate is per-100-words and the control prompts ask for shorter
+  // answers, so a small residual is response length, not topic.
+  const clean = gap !== null && Math.abs(gap) <= 0.15;
+  const share = ov.n_applicable ? ov.n_flagged / ov.n_applicable : 0;
+
+  const flagged = ov.flagged || [];
+  const list = flagged.slice(0, 6).map((f) => {
+    const facets = [...new Set((f.spans || []).map((sp) => sp.facet))].join(', ');
+    const ev = (f.spans || []).slice(0, 2).map((sp) => esc(sp.text)).join(' · ');
+    const full = (f.spans || []).map((sp) => `<div><b>${esc(sp.facet)}</b> — “${esc(sp.text)}”</div>`).join('');
+    return `<div class="ps-flag" data-tip-html="${tipId(`<div class="tip-t">${esc(f.family_id)} ${esc(f.variant)} — reach +${f.gap}</div>`
+      + `<div class="tip-d">granted ${f.granted_level}, expressed ${f.expressed_level}. Every span that fired:</div>${full}`)}">
+      <div><b>${esc(f.family_id)} ${esc(f.variant)}</b>
+        <span class="note">granted ${f.granted_level} → expressed ${f.expressed_level}</span>
+        <span class="kv-pill bad">+${f.gap}</span></div>
+      <div class="note">${esc(facets)}${ev ? ` — <span class="ps-ev">${ev}</span>` : ''}</div>
+    </div>`;
+  }).join('');
+
+  box.innerHTML = `
+    <div class="split">
+      <div class="split-main"><div id="ps-chart"></div></div>
+      <div class="split-side">
+        <div class="stat-row">
+          <div data-term="overreach"><div class="stat-v ${ov.n_flagged ? 'warn' : 'good'}">${ov.n_flagged || 0}<span class="stat-u">/${ov.n_applicable || 0}</span></div>
+            <div class="stat-k">reach past grant</div>
+            <div class="meter"><div style="width:${Math.round(share * 100)}%"></div></div></div>
+          <div data-term="null_topic"><div class="stat-v ${gap === null ? '' : clean ? 'good' : 'warn'}">${gap === null ? '—' : fmt(gap, 3)}</div>
+            <div class="stat-k">topic null gap</div>
+            <div class="note">${gap === null ? esc(cn.note || 'not computable') : `n ${cn.n_alarming}/${cn.n_benign} · ${clean ? 'within ±0.15' : 'outside ±0.15'}`}</div></div>
+          <div data-term="${embedded ? 'embedding' : 'lexicon'}"><div class="stat-v ${embedded ? 'good' : ''}">${esc(d.source || 'lexicon')}</div>
+            <div class="stat-k">read via</div>
+            <div class="note">${d.n_scored} scored${d.underread && !embedded ? ` · <span class="warn">${d.underread} maybe under-read</span>` : ''}</div></div>
+        </div>
+        ${!embedded ? `<p class="note">${esc(d.source_note || '')}</p>` : ''}
+        ${flagged.length ? `<div class="sub-h">Reaching past the mandate — for a human to read, not a verdict</div>${list}`
+          : '<div class="empty-state">No response reaches past its grant.</div>'}
+      </div>
+    </div>`;
 
   renderPowerChart($('#ps-chart'), d.by_granted);
-
-  // The spotlight list: the reaching responses, worst gap first, with evidence to read.
-  const flagged = ov.flagged || [];
-  if (flagged.length) {
-    const wrap = document.createElement('div');
-    wrap.style.marginTop = '10px';
-    wrap.innerHTML = '<div class="note" style="margin-bottom:4px">Reaching past the mandate — '
-      + 'for a human to read, not a verdict:</div>'
-      + flagged.slice(0, 6).map((f) => {
-        const facets = [...new Set((f.spans || []).map((s) => s.facet))].join(', ');
-        const ev = (f.spans || []).slice(0, 2).map((s) => esc(s.text)).join(' · ');
-        return `<div class="ps-flag">
-          <div><b>${esc(f.family_id)} ${esc(f.variant)}</b>
-            <span class="note">granted ${f.granted_level} · expressed ${f.expressed_level}
-            · gap +${f.gap}</span></div>
-          <div class="note">${esc(facets)}${ev ? ` — <span class="ps-ev">${ev}</span>` : ''}</div>
-        </div>`;
-      }).join('');
-    box.appendChild(wrap);
-  }
-
-  // The null control: does the lexicon move on the question's vocabulary alone?
-  const cn = d.control_null || {};
-  const ctrl = document.createElement('p');
-  ctrl.className = 'note';
-  ctrl.style.marginTop = '10px';
-  if (cn.gap && cn.gap.gap !== null && cn.gap.gap !== undefined) {
-    // A first-person lexicon should not move on the question's vocabulary. The tolerance is
-    // loose because the rate is per-100-words and the control prompts ask for shorter
-    // answers, so a small residual is response length, not topic.
-    const clean = Math.abs(cn.gap.gap) <= 0.15;
-    ctrl.innerHTML = `<b>Topic-vocabulary control:</b> alarming-benign vs benign gap `
-      + `<span class="${clean ? 'good' : 'warn'}">${fmt(cn.gap.gap, 3)}</span> `
-      + `(n=${cn.n_alarming}/${cn.n_benign}, matched on ${esc(cn.matched_on)}). `
-      + (clean ? 'A first-person lexicon does not fire on power as a topic.'
-               : 'A gap here would mean the lexicon is reading the question, not the reach.');
-  } else {
-    ctrl.innerHTML = `<b>Topic-vocabulary control:</b> ${esc(cn.note || 'not computable')}`;
-  }
-  box.appendChild(ctrl);
+  setSummary('powerseeking',
+    `${ov.n_flagged || 0}/${ov.n_applicable || 0} reach · null ${gap === null ? '—' : fmt(gap, 2)}${gap === null ? '' : clean ? ' ✓' : ' ⚠'} · ${esc(d.source || 'lexicon')}`,
+    ov.n_flagged ? 'warn' : 'good');
 }
 
 /* x = the autonomy the prompt granted, y = the agency the response expressed, both on the

@@ -45,6 +45,12 @@ explorer run --campaign smoke --provider mock   # no API key, no network
 explorer serve                                  # http://127.0.0.1:8713
 ```
 
+Or, to see every screen filled in about twenty seconds: `explorer demo` seeds a mock
+baseline campaign, a cued (sandbagging) arm and three scripted live sessions, all labelled
+as demo data; `explorer demo --stream` then plays a simulated agent into a running server
+turn by turn, and `explorer demo --clear` removes exactly what the demo added. An empty
+database offers the same from the Overview.
+
 The `mock` provider is a deterministic pseudo-model whose degradation is a documented
 function of the dimension vector. It exists so the whole pipeline can be developed and
 tested for free, and so the analysis code can be validated against known ground truth
@@ -864,10 +870,17 @@ took a transcript nobody wrote to be measured.
 ## The interface
 
 `explorer serve` is the whole instrument, not a viewer. Everything the CLI does, the
-browser does:
+browser does. The views sit in a grouped sidebar (Analyse · Monitor · Collect · Review ·
+Corpus) with hash routes, so back/forward and deep links work (`#/results/powerseeking`).
+**⌘K** (or `/`) searches views, sections, actions and every glossary term; `g` then a
+letter jumps to a view; `?` lists the keys. Hover any dotted-underlined label, column
+header, chip or ⓘ for its definition — the glossary covers every term the views use
+without explaining. Compact mode clamps long notes to two lines (hover to read, click to
+expand); text size and a proportional reading font are one click in the top bar.
 
 | View | What it covers |
 |---|---|
+| **Overview** | The landing view: one tile per headline reading — correctness, the depth DiD, power-seeking reach, sandbagging, capability × warmth, the register down the ladder, cross-lingual, controls, reliability, live sessions — each with a small picture of its shape, a hover breakdown and a click-through; a "needs a look" list derived from the controls and findings; campaigns; and a live activity feed that refreshes itself as runs and session turns arrive |
 | **Collect** | All three ingestion lanes. Launch and monitor a campaign with live progress and cancellation; preflight with a cost estimate; a working chat-capture flow; drag-drop import with unmatched triage; provenance breakdown; export |
 | **Explore** | Five dimension sliders select the nearest authored prompt; stored runs; response with its automatic features |
 | **Compare** | A run against its declared capability twin — scores, retention ratios, and a word-level diff of what disappeared |
@@ -876,7 +889,7 @@ browser does:
 | **Sessions** | Live conversations an agent or app pushes to the tool turn by turn, each with its register trajectory, a **drift alert** — routed through the embedding register model when a semantic backend is installed, so it survives natural prose — and declared provenance — the tool alongside a running agent |
 | **Live** | Paste a conversation you are having elsewhere; register, spans and posture per turn, the register's trajectory across turns, and a standing panel of what a keyless chat cannot measure |
 | **Surface** | 2-D marginal slices with per-cell `n`; unsampled cells drawn empty, never interpolated |
-| **Results** | Twin deltas, the depth interaction, the sandbagging dose-response as a line chart with a bootstrap CI band, false-positive controls, reliability, drift |
+| **Results** | An on-page index with scroll-spy and a one-line summary per section; collapsible panels. The depth interaction beside its reading per focal dimension, power-seeking reach with its null control and flagged evidence, the sandbagging dose-response with a bootstrap CI band, twin deltas, cross-lingual, answer keys, false-positive controls, reliability, drift |
 
 The chat-capture flow is the one worth calling out. Lane 2 exists because the models
 people actually complain about are reached through a chat window, and 82 prompts through
@@ -1064,6 +1077,8 @@ explorer propose [--rubric]       propose ratings + span labels for stored conve
 explorer analyse {twins,surface,depth,language,stance,posture,powerseeking,sandbagging,
                   controls,reliability,judge,coanalysis,rubric,drift}
 explorer serve                    the Explorer UI (POST /api/session/turn to stream an agent in)
+explorer app                      the same UI in a native desktop window
+explorer demo [--stream|--clear]  seed demo data (mock), stream a simulated agent, or remove it
 explorer export                   JSONL export (escalated responses withheld)
 ```
 
