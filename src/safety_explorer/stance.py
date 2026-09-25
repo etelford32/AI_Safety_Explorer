@@ -46,6 +46,7 @@ is the failure mode human raters are worst at seeing.
 
 from __future__ import annotations
 
+import functools
 import math
 import re
 from dataclasses import dataclass
@@ -285,8 +286,23 @@ def extract(response: str | None, language: str | None = "en") -> dict[str, Any]
     if not available(lang):
         return {"stance_version": STANCE_VERSION, "language": lang,
                 "available": False, "reason": f"no validated stance lexicon for {lang!r}"}
+    # A copy, so no caller can reach into the cache and change a reading for everyone else.
+    out = _extract_cached(response or "", lang)
+    return {**out, "counts": dict(out["counts"])}
 
-    text = response or ""
+
+@functools.lru_cache(maxsize=65536)
+def _extract_cached(text: str, lang: str) -> dict[str, Any]:
+    """The work behind `extract`, memoised on (text, language).
+
+    Stance is recomputed from the stored response on purpose — that is what lets a lexicon
+    fix reach every historical run without a migration — but recomputing it on every request
+    is not. Every stance view re-reads the whole database, and at a few thousand runs the
+    regex pass alone took ten seconds, twice per visit to the Stance view. The reading is a
+    pure function of the text and the language within one process (a lexicon change means a
+    new process, and bumps STANCE_VERSION), so it is computed once per distinct response and
+    reused. Bounded, so a very long-lived process cannot grow it without limit.
+    """
     n_words = len(text.split())
     per_100 = (n_words / 100) or 1.0
 

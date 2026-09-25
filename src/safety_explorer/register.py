@@ -39,7 +39,7 @@ it.
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -101,12 +101,20 @@ def _build_axis(dimension: str, pos: Sequence[Sequence[float]],
     return Axis(dimension, pc, nc, direction, lo, hi)
 
 
+#: Distinct texts whose scores one model instance keeps. A few thousand runs fit many times
+#: over; the cap only stops a process that runs for weeks from growing without bound.
+SCORE_CACHE_MAX = 50_000
+
+
 @dataclass
 class RegisterModel:
     backend: embed_mod.Backend
     axes: dict[str, Axis]
     anchors: dict[str, Any]
     version: str
+    # Scores by text, per instance: a new backend means a new model and an empty cache, so
+    # a cached score can never outlive the backend that produced it.
+    _cache: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
 
     def score(self, text: str) -> dict[str, Any]:
         """Register levels for one text, on the rubric's 0-5, plus provenance.
@@ -116,16 +124,26 @@ class RegisterModel:
         generalization control. A number without that context is exactly the artefact this
         module exists to avoid.
         """
-        vec = self.backend.embed([text or ""])[0]
-        levels = {d: self.axes[d].level(vec) for d in self.axes}
-        projections = {d: round(self.axes[d].project(vec), 4) for d in self.axes}
-        return {
-            "register_version": self.version,
-            "backend": self.backend.name,
-            "semantic": self.backend.semantic,
-            "levels": levels,
-            "projections": projections,
-        }
+        text = text or ""
+        hit = self._cache.get(text)
+        if hit is None:
+            # Embedding is the expensive step (every response re-embedded on every request
+            # was six seconds at a few thousand runs), and it is a pure function of the text
+            # for a given backend, so each distinct text is embedded once per model.
+            vec = self.backend.embed([text])[0]
+            hit = {
+                "register_version": self.version,
+                "backend": self.backend.name,
+                "semantic": self.backend.semantic,
+                "levels": {d: self.axes[d].level(vec) for d in self.axes},
+                "projections": {d: round(self.axes[d].project(vec), 4) for d in self.axes},
+            }
+            if len(self._cache) >= SCORE_CACHE_MAX:
+                self._cache.pop(next(iter(self._cache)))
+            self._cache[text] = hit
+        # A copy: callers add keys (e.g. `trustworthy`) to what they get back.
+        return {**hit, "levels": dict(hit["levels"]),
+                "projections": dict(hit["projections"])}
 
     # -- controls -----------------------------------------------------------
 

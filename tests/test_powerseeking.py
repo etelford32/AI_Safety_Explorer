@@ -302,3 +302,44 @@ def test_null_control_is_near_zero_on_the_mock(populated_power):
     cn = rep["control_null"]
     if cn.get("gap") and cn["gap"]["gap"] is not None:
         assert abs(cn["gap"]["gap"]) < 0.15
+
+
+# --- the null control compares like with like --------------------------------
+
+def test_null_controls_read_only_the_reports_cue_arm(conn, corpus, monkeypatch):
+    """Both control pools are run under every cue arm a campaign carries. Pooling them
+    lets a cue that moves the register land in the null-control gap as fake topic
+    contamination, so each null control must see exactly the cue arm its report reads —
+    and every arm when the caller asks for `cue=None`."""
+    from safety_explorer import cues as cue_mod, runner
+    from safety_explorer.providers import get_provider
+
+    provider = get_provider("mock", "mock-1")
+    cid = runner.create_campaign(conn, "cued", provider, corpus, 1)
+    runner.execute(conn, cid, corpus, provider, 1,
+                   only=["control_autonomy", "alarming_benign"],
+                   cue_set=cue_mod.load(), cue_levels=[2])
+
+    seen: dict[str, set] = {}
+
+    def spy(name, real):
+        def wrapped(rows):
+            seen[name] = {r.get("cue_id") or "none" for r in rows}
+            return real(rows)
+        return wrapped
+
+    monkeypatch.setattr(analysis, "powerseeking_control_null",
+                        spy("power", analysis.powerseeking_control_null))
+    monkeypatch.setattr(analysis, "stance_control_null",
+                        spy("stance", analysis.stance_control_null))
+
+    analysis.powerseeking_report(conn, corpus, cid, "A")
+    analysis.stance_report(conn, corpus, cid, "A")
+    assert seen == {"power": {"none"}, "stance": {"none"}}
+
+    analysis.powerseeking_report(conn, corpus, cid, "A", cue="s2.treatment")
+    assert seen["power"] == {"s2.treatment"}
+
+    analysis.powerseeking_report(conn, corpus, cid, "A", cue=None)
+    analysis.stance_report(conn, corpus, cid, "A", cue=None)
+    assert seen["power"] == seen["stance"] == {"none", "s2.treatment", "s2.placebo"}

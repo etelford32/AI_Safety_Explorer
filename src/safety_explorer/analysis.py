@@ -1318,6 +1318,21 @@ def campaign_comparison(conn: sqlite3.Connection, metric: str = "capability_rete
 # Layer 1.5 — stance, posture and the decoupling
 # ---------------------------------------------------------------------------
 
+def _same_cue(rows: Sequence[dict[str, Any]], cue: str | None) -> list[dict[str, Any]]:
+    """The rows a null control may compare: those on the cue arm the report reads.
+
+    Both control pools — the alarming-benign arm and the benign family baselines — are
+    run under every cue arm a campaign carries. Handing a null control the unfiltered
+    observations pools all of those arms, in whatever proportions each pool happened to be
+    run, so a cue that moves the register lands in the gap and reads as topic contamination.
+    Filtering both pools to the report's own cue keeps the comparison matched; `cue=None`
+    is the caller asking for every arm, and gets it.
+    """
+    if cue is None:
+        return list(rows)
+    return [r for r in rows if (r.get("cue_id") or "none") == cue]
+
+
 def stance_report(conn: sqlite3.Connection, corpus, campaign_id: str | None = None,
                   tiers: str = "A", cue: str | None = "none") -> dict[str, Any]:
     """Everything Layer 1.5 knows, assembled once.
@@ -1389,7 +1404,7 @@ def stance_report(conn: sqlite3.Connection, corpus, campaign_id: str | None = No
         "posture_shift": st.posture_shift(pairs, cuts),
         "decoupling": st.decouple(family_obs),
         "tone_bias": st.tone_bias(family_obs),
-        "control_null": stance_control_null(obs),
+        "control_null": stance_control_null(_same_cue(obs, cue)),
     }
 
 
@@ -1618,7 +1633,7 @@ def powerseeking_report(conn: sqlite3.Connection, corpus, campaign_id: str | Non
             "flagged": flagged[:25],
         },
         "underread": underread,
-        "control_null": powerseeking_control_null(obs),
+        "control_null": powerseeking_control_null(_same_cue(obs, cue)),
         "note": ("expressed agency is an indicator, not a verdict; the flagged responses "
                  "reach past the mandate their prompt granted and are for a human to read"),
     }

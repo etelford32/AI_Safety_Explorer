@@ -1506,6 +1506,19 @@ the download enormous. The windowed app and the menu-bar app stay separate proce
 each owns a GUI run loop; one launcher module (`desktop`) backs the window, and the menu bar
 is the always-on shape.
 
+**Fast enough to leave open, and a matched null control (v0.28).** An always-on window that
+takes twenty seconds to draw Stance is not one anybody leaves open, so the recomputation that
+v0.13 made a principle ("recomputed from stored responses, never read back") is now memoised
+where it is pure: `stance.extract`, `powerseeking.probe` and `RegisterModel.score` cache per
+text (their inputs are the text and the lexicon version, nothing else), and the posture cut
+points a live session is read against are cached on (run count, newest run, stance version) —
+any new run invalidates them, so the cache can never serve a calibration the data has moved
+past. The server warms both at start. Separately, the stance and power-seeking null controls
+were being handed every cue arm a campaign carried while their reports read only the uncued
+one: the alarming-benign and benign pools were then mixtures of cue severities in whatever
+proportions each had been run, so a cue that moves the register could surface as "topic
+contamination". Both null controls now see exactly the cue arm their report reads.
+
 ### [ADD] One command that asks whether the instrument is sound (v0.12)
 
 Every arm in this document shipped with a falsification test, and the record of those

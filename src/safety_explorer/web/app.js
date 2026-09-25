@@ -51,7 +51,7 @@ async function boot() {
   lintEl.className = META.lint_clean ? 'good' : 'bad';
 
   const runs = await api('runs');
-  $('#m-runs').textContent = `${runs.runs.length} run(s)`;
+  $('#m-runs').textContent = `${(runs.total ?? runs.runs.length).toLocaleString()} run(s)`;
 
   buildSliders();
   buildCorpusList();
@@ -2688,7 +2688,7 @@ function renderDidChart(box, byFocal) {
         + `<br>n=${b.n}`);
       svg.appendChild(g);
     });
-    svg.appendChild(svgText(gx + groupW / 2, m.t + ph + 16, focal.slice(0, 12),
+    svg.appendChild(svgText(gx + groupW / 2, m.t + ph + 16, focal,
       { 'text-anchor': 'middle', class: 'tick' }));
   });
   svg.appendChild(svgText(m.l + pw / 2, H - 4, 'focal dimension of the family',

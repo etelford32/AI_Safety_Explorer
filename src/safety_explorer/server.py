@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,7 +26,8 @@ WEB_ROOT = Path(__file__).parent / "web"
 #: When `serve()` started, so `/api/status` can report uptime. Set once, module level, so
 #: a background menu-bar host that imports and runs the server in-process can read it too.
 SERVE_STARTED: float | None = None
-CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}
+CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
+                 ".svg": "image/svg+xml"}
 
 
 def _json_safe(value):
@@ -44,6 +46,34 @@ def _json_safe(value):
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
     return value
+
+
+#: Posture cut points, cached until the run table changes. See `posture_cuts`.
+_CUTS_LOCK = threading.Lock()
+_CUTS: dict[str, Any] = {"key": None, "cuts": None}
+
+
+def posture_cuts(conn):
+    """The population posture cut points the Live and Sessions views classify against.
+
+    They are a pure function of the stored responses, but deriving them means re-extracting
+    stance from every run — about ten seconds at a few thousand runs. The Live and Sessions
+    endpoints used to do that on every request, which made opening a session or pasting a
+    conversation take ten-plus seconds and made an auto-refreshing Sessions view unusable.
+    Runs are append-only, so the cuts are cached against the run count, the latest capture
+    time and the lexicon version, and recomputed only when one of those moves. The lock is
+    held across the computation so concurrent requests wait for one pass instead of each
+    starting their own.
+    """
+    from . import stance as st
+
+    row = db.query_one(conn, "SELECT COUNT(*) AS n, MAX(captured_at) AS last FROM run")
+    key = (row["n"], row["last"], st.STANCE_VERSION)
+    with _CUTS_LOCK:
+        if _CUTS["key"] != key:
+            _CUTS["cuts"] = st.calibrate(st.attach(analysis.observations(conn, tiers="A")))
+            _CUTS["key"] = key
+        return _CUTS["cuts"]
 
 
 def status_report(conn, started: float | None = None, limit: int = 25) -> dict[str, Any]:
@@ -160,8 +190,10 @@ class ExplorerHandler(BaseHTTPRequestHandler):
         try:
             if url.path in ("/", "/index.html"):
                 return self._send_file("index.html")
-            if url.path in ("/app.js", "/style.css"):
+            if url.path in ("/app.js", "/style.css", "/favicon.svg"):
                 return self._send_file(url.path.lstrip("/"))
+            if url.path == "/favicon.ico":
+                return self._send_file("favicon.svg")
             if url.path.startswith("/api/"):
                 return self._send_json(self._api_get(url.path, q))
             self._send_json({"error": "not found"}, 404)
@@ -246,15 +278,14 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 return self._send_json({"ok": True, "session_id": sid})
 
             if url.path == "/api/live":
-                from . import live, stance as st
+                from . import live
 
                 # Posture cuts come from whatever campaign is in this database. Without
                 # one there are no cuts and every turn comes back `unclassified`, which
                 # the result says plainly rather than leaving a blank column.
-                rows = st.attach(analysis.observations(self.conn, tiers="A"))
                 return self._send_json(live.analyse(
                     body.get("text") or "", self.corpus,
-                    st.calibrate(rows), body.get("language") or "en"))
+                    posture_cuts(self.conn), body.get("language") or "en"))
 
             if url.path == "/api/features/recompute":
                 from .runner import recompute_features
@@ -360,8 +391,12 @@ class ExplorerHandler(BaseHTTPRequestHandler):
             if q.get("campaign_id"):
                 sql += " AND r.campaign_id = ?"
                 params.append(q["campaign_id"])
+            # The list is capped for the page; the total is counted separately so nothing
+            # that shows "N runs" mistakes the length of a capped list for the size of the data.
+            count_sql = "SELECT COUNT(*) AS n FROM (" + sql + ")"
+            total = db.query_one(self.conn, count_sql, params)["n"]
             sql += " ORDER BY r.captured_at DESC LIMIT 200"
-            return {"runs": db.query(self.conn, sql, params)}
+            return {"runs": db.query(self.conn, sql, params), "total": total}
 
         if path == "/api/run":
             row = db.query_one(
@@ -652,13 +687,12 @@ class ExplorerHandler(BaseHTTPRequestHandler):
             return {"sessions": sessions.list_sessions(self.conn)}
 
         if path == "/api/session":
-            from . import sessions, stance as st
+            from . import sessions
             sid = q.get("id")
             if not sid:
                 return {"error": "id required"}
-            rows = st.attach(analysis.observations(self.conn, tiers="A"))
             report = sessions.analyse_session(self.conn, sid, self.corpus,
-                                              st.calibrate(rows))
+                                              posture_cuts(self.conn))
             return report if report is not None else {"error": f"no session {sid}"}
 
         if path == "/api/stance/insight":
@@ -1012,6 +1046,20 @@ def serve(db_path: str, corpus_path: str, host: str = "127.0.0.1",
     httpd.db_path = str(db_path)  # type: ignore[attr-defined]
     httpd.corpus = c  # type: ignore[attr-defined]
     httpd.annotator = annotator  # type: ignore[attr-defined]
+
+    # Warm the caches on a connection of our own, so the first view opened does not pay the
+    # full pass over every stored response on the request path: the posture cut points (which
+    # also fills the stance-extraction cache the Stance view reads), then the power-seeking
+    # probe and embedding readings the Results view reads.
+    def _warm() -> None:
+        try:
+            wconn = db.connect(db_path)
+            posture_cuts(wconn)
+            from . import powerseeking as ps
+            ps.attach(analysis.observations(wconn, tiers="A"))
+        except Exception:  # noqa: BLE001 — a warm-up failure just means the first request pays
+            pass
+    threading.Thread(target=_warm, daemon=True).start()
 
     n_runs = db.query_one(conn, "SELECT COUNT(*) AS n FROM run")["n"]
     print(f"SAFETY EXPLORER {__version__}")

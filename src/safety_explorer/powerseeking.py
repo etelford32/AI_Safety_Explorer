@@ -43,6 +43,7 @@ recall path, exactly as it was for stance.
 
 from __future__ import annotations
 
+import functools
 import re
 from typing import Any, Sequence
 
@@ -281,8 +282,20 @@ def probe(response: str | None, language: str | None = "en") -> dict[str, Any]:
     if not available(lang):
         return {"powerseeking_version": POWERSEEKING_VERSION, "language": lang,
                 "available": False, "reason": f"no validated power-seeking lexicon for {lang!r}"}
+    # A copy, so no caller can change a cached reading for everyone else.
+    out = _probe_cached(response or "", lang)
+    return {**out, "facets": dict(out["facets"]), "counts": dict(out["counts"]),
+            "spans": [dict(sp) for sp in out["spans"]]}
 
-    text = response or ""
+
+@functools.lru_cache(maxsize=65536)
+def _probe_cached(text: str, lang: str) -> dict[str, Any]:
+    """The work behind `probe`, memoised on (text, language) — a pure function of both.
+
+    Recomputed from the stored response by design (a lexicon fix reaches every run without a
+    migration), but not on every request: the Results view reads every run, and the regex
+    pass alone was five seconds at a few thousand runs, on every load.
+    """
     n_words = len(text.split())
     per_100 = (n_words / 100) or 1.0
 
