@@ -71,6 +71,15 @@ def _json_safe(value):
     return value
 
 
+def open_connection(db_path: str) -> sqlite3.Connection:
+    """A connection for one request. WAL (set on the file by `db.connect`) lets readers run
+    beside a writer; `timeout` is the busy wait before a contended write gives up."""
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
 #: Posture cut points, cached until the run table changes. See `posture_cuts`.
 _CUTS_LOCK = threading.Lock()
 _CUTS: dict[str, Any] = {"key": None, "cuts": None}
@@ -158,6 +167,7 @@ class ExplorerHandler(BaseHTTPRequestHandler):
     server_version = f"SafetyExplorer/{__version__}"
     #: Set per request by `_gate` when an allowed cross-origin source is talking to us.
     _cors: str | None = None
+    _db: sqlite3.Connection | None = None
     _verdict: str = "none"
 
     def _gate(self) -> bool:
@@ -267,7 +277,27 @@ class ExplorerHandler(BaseHTTPRequestHandler):
 
     @property
     def conn(self) -> sqlite3.Connection:
-        return self.server.db_conn  # type: ignore[attr-defined]
+        """This request's own connection, opened on first use and closed in `finish`.
+
+        The server answers each request on its own thread, and a sqlite3 connection is not
+        safe to use from two threads at once: sharing one made concurrent requests fail with
+        "bad parameter or other API misuse" or "cannot start a transaction within a
+        transaction" — which the Overview, loading a dozen analyses in parallel, hit on first
+        load. SQLite in WAL mode serves concurrent readers alongside one writer, and the busy
+        timeout makes a second writer wait rather than fail. Opening a connection costs well
+        under a millisecond against analyses that take tens to thousands.
+        """
+        if self._db is None:
+            self._db = open_connection(self.server.db_path)  # type: ignore[attr-defined]
+        return self._db
+
+    def finish(self) -> None:
+        try:
+            super().finish()
+        finally:
+            if self._db is not None:
+                self._db.close()
+                self._db = None
 
     @property
     def db_path(self) -> str:
@@ -1223,11 +1253,9 @@ def serve(db_path: str, corpus_path: str, host: str = "127.0.0.1",
     snapshot_corpus(conn, c, report.clean)
 
     httpd = ThreadingHTTPServer((host, port), ExplorerHandler)
-    # One connection, shared: the UI is single-user by design and SQLite handles the
-    # rest. check_same_thread is off because ThreadingHTTPServer dispatches per request.
-    httpd.db_conn = sqlite3.connect(db_path, check_same_thread=False)  # type: ignore[attr-defined]
-    httpd.db_conn.row_factory = sqlite3.Row  # type: ignore[attr-defined]
-    httpd.db_conn.execute("PRAGMA foreign_keys = ON")  # type: ignore[attr-defined]
+    # Each request opens its own connection (see `ExplorerHandler.conn`); the server holds
+    # only the path.
+    httpd.daemon_threads = True
     httpd.db_path = str(db_path)  # type: ignore[attr-defined]
     httpd.bound_host = host  # type: ignore[attr-defined]
     httpd.corpus = c  # type: ignore[attr-defined]
