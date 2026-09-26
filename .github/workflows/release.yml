@@ -1,0 +1,56 @@
+name: release
+
+# Releasing is merging a pull request. When main gains docs/releases/v<version>.md and that
+# version is the one in src/safety_explorer/__init__.py and has no release yet, this workflow
+# builds and smoke-tests the macOS app, creates the tag and the GitHub Release (notes from that
+# file, titled "AI Safety Explorer v<version>"), and attaches the app. Testers' apps on the
+# stable channel pick it up at their next launch.
+#
+# The version check is the guard: a notes file for a version the code does not carry — a draft
+# for the next release — waits until the version bump lands with it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/releases/**"
+      - "src/safety_explorer/__init__.py"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/safety_explorer/__init__.py)
+          if [ -z "$VERSION" ]; then
+            echo "::error::no __version__ = \"...\" line in src/safety_explorer/__init__.py"
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          if [ ! -f "docs/releases/${TAG}.md" ]; then
+            echo "no docs/releases/${TAG}.md — nothing to release for ${VERSION}"
+          elif gh release view "$TAG" >/dev/null 2>&1; then
+            echo "${TAG} is already released"
+          else
+            echo "releasing ${TAG}"
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: plan
+    if: needs.plan.outputs.tag != ''
+    uses: ./.github/workflows/app.yml
+    with:
+      tag: ${{ needs.plan.outputs.tag }}
+    secrets: inherit

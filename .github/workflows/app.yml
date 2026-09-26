@@ -1,10 +1,11 @@
 name: macOS app
 
 # Builds "AI Safety Explorer.app" — the self-updating loader — and smoke-tests it.
-# On a version tag (v1.2.3) it also publishes the zipped app to that GitHub Release, which
-# is the file testers download. It also runs on any push that changes the loader or its
-# packaging (GitHub does not apply path filters to tag pushes, so tags always build), and
-# by hand from the Actions tab.
+# When release.yml calls it with a tag (the usual way to release: merge a PR carrying
+# docs/releases/v<version>.md), or on a pushed version tag (v1.2.3), it also publishes the
+# zipped app to that GitHub Release, which is the file testers download. It also runs on any
+# push that changes the loader or its packaging (GitHub does not apply path filters to tag
+# pushes, so tags always build), and by hand from the Actions tab.
 on:
   push:
     tags: ["v*"]
@@ -15,6 +16,14 @@ on:
       - "scripts/loader_app.py"
       - ".github/workflows/app.yml"
   workflow_dispatch:
+  # Called by release.yml with the tag to publish (a tag CI creates itself does not trigger
+  # other workflows, so the release workflow calls this one directly).
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to create (at the built commit) and attach the app to"
+        type: string
+        required: true
 
 permissions:
   contents: write
@@ -45,21 +54,24 @@ jobs:
             dist/AI-Safety-Explorer-macOS.zip
             dist/AI-Safety-Explorer-macOS.zip.sha256
       - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: inputs.tag != '' || startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           # Written release notes live in docs/releases/<tag>.md; without one, GitHub's
-          # generated notes are used.
-          NOTES="docs/releases/${GITHUB_REF_NAME}.md"
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          # generated notes are used. Creating the release creates the tag at the commit
+          # that was just built and smoke-tested, so the download and the tag always match.
+          NOTES="docs/releases/${TAG}.md"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
             if [ -f "$NOTES" ]; then
-              gh release create "$GITHUB_REF_NAME" --title "AI Safety Explorer $GITHUB_REF_NAME" \
+              gh release create "$TAG" --target "$GITHUB_SHA" --title "AI Safety Explorer $TAG" \
                 --notes-file "$NOTES" --latest
             else
-              gh release create "$GITHUB_REF_NAME" --title "AI Safety Explorer $GITHUB_REF_NAME" \
+              gh release create "$TAG" --target "$GITHUB_SHA" --title "AI Safety Explorer $TAG" \
                 --generate-notes --latest
             fi
           fi
-          gh release upload "$GITHUB_REF_NAME" dist/AI-Safety-Explorer-macOS.zip \
+          gh release upload "$TAG" dist/AI-Safety-Explorer-macOS.zip \
             dist/AI-Safety-Explorer-macOS.zip.sha256 --clobber
