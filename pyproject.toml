@@ -14,11 +14,26 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Elliot Telford" }]
 keywords = ["ai-safety", "evaluation", "llm", "research-instrument"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
 
 # No runtime dependencies. The corpus is TOML (stdlib tomllib), storage is SQLite,
 # the server is http.server and the UI is vanilla JS. A research instrument should
 # still start in five years without a toolchain being resurrected first.
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/etelford32/AI_Safety_Explorer"
+Documentation = "https://github.com/etelford32/AI_Safety_Explorer/blob/main/docs/INSTALL.md"
+Source = "https://github.com/etelford32/AI_Safety_Explorer"
+Issues = "https://github.com/etelford32/AI_Safety_Explorer/issues"
+Releases = "https://github.com/etelford32/AI_Safety_Explorer/releases"
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40"]

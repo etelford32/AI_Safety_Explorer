@@ -41,10 +41,12 @@ def test_a_new_run_invalidates_the_cache(populated, corpus, monkeypatch):
     assert len(calls) == 2
 
 
-def test_the_favicon_is_the_app_icon():
-    """The browser tab and the .app bundle carry one icon. The web copy exists only because
-    the server serves from inside the package; it must never drift from the source."""
+def test_the_favicon_and_the_app_icon_are_one_mark():
+    """The browser tab and the .app bundle carry one mark. The favicon is its small-size
+    variant (heavier strokes, no star field), so the files differ on purpose — but they must
+    declare the same mark version, so a redesign of one cannot silently leave the other behind."""
+    import re
     from pathlib import Path
     root = Path(server.__file__).resolve().parents[2]
-    assert (server.WEB_ROOT / "favicon.svg").read_bytes() == \
-        (root / "packaging" / "icon.svg").read_bytes()
+    version = lambda p: re.search(r'data-mark-version="(\d+)"', p.read_text()).group(1)  # noqa: E731
+    assert version(server.WEB_ROOT / "favicon.svg") == version(root / "packaging" / "icon.svg")

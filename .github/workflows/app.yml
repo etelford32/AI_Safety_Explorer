@@ -49,7 +49,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          # Written release notes live in docs/releases/<tag>.md; without one, GitHub's
+          # generated notes are used.
+          NOTES="docs/releases/${GITHUB_REF_NAME}.md"
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            if [ -f "$NOTES" ]; then
+              gh release create "$GITHUB_REF_NAME" --title "AI Safety Explorer $GITHUB_REF_NAME" \
+                --notes-file "$NOTES" --latest
+            else
+              gh release create "$GITHUB_REF_NAME" --title "AI Safety Explorer $GITHUB_REF_NAME" \
+                --generate-notes --latest
+            fi
+          fi
           gh release upload "$GITHUB_REF_NAME" dist/AI-Safety-Explorer-macOS.zip \
             dist/AI-Safety-Explorer-macOS.zip.sha256 --clobber
