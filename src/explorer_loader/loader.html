@@ -17,9 +17,9 @@
   .card { width: min(560px, 92vw); background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
           padding: 26px 28px 20px; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
   .head { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
-  .mark { width: 42px; height: 42px; border-radius: 10px; background: linear-gradient(135deg, #184f95, #3987e5);
-          display: flex; align-items: center; justify-content: center; }
-  .mark svg { width: 26px; height: 26px; stroke: #fff; fill: none; stroke-width: 1.8; stroke-linecap: round; }
+  .mark { width: 46px; height: 46px; flex: none; filter: drop-shadow(0 4px 14px rgba(57,135,229,.35)); }
+  .mark svg { display: block; }
+  .byline { color: #f2a65a; font: 600 11px var(--sans); letter-spacing: .12em; text-transform: uppercase; margin: 1px 0 2px; }
   h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .01em; }
   .sub { color: var(--ink-faint); font: 11px var(--mono); }
   ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -59,14 +59,34 @@
   .hint { color: var(--ink-faint); font-size: 11px; }
   .foot { margin-top: 14px; color: var(--ink-faint); font-size: 11px; }
   .foot code { font-family: var(--mono); }
+  .credit { margin-top: 6px; color: var(--ink-dim); }
 </style>
 </head>
 <body>
 <div class="card">
   <div class="head">
-    <div class="mark"><svg viewBox="0 0 24 24"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg></div>
+    <div class="mark"><svg width="46" height="46" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" data-mark-version="2">
+  <defs>
+    <linearGradient id="lp" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#1b2a47"/>
+      <stop offset="1" stop-color="#0b1120"/>
+    </linearGradient>
+    <linearGradient id="lt" gradientUnits="userSpaceOnUse" x1="-60" y1="0" x2="520" y2="0">
+      <stop offset="0" stop-color="#5aa9ff"/>
+      <stop offset="1" stop-color="#f2a65a"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#lp)"/>
+  <g transform="translate(300 616) rotate(-24)">
+    <ellipse cx="132" cy="0" rx="210" ry="158" fill="none" stroke="#5aa9ff" stroke-width="54" opacity="0.65"/>
+    <ellipse cx="219" cy="0" rx="318" ry="228" fill="none" stroke="url(#lt)" stroke-width="54"/>
+    <circle cx="0" cy="0" r="42" fill="#fff1dc"/>
+    <circle cx="462" cy="-146" r="62" fill="#fff1de" stroke="#f2a65a" stroke-width="18"/>
+  </g>
+</svg></div>
     <div>
       <h1>AI Safety Explorer</h1>
+      <div class="byline">by Elliot Telford</div>
       <div class="sub" id="sub">loader · starting</div>
     </div>
   </div>
@@ -133,7 +153,8 @@
     $('#err').classList.toggle('show', !!s.error);
     $('#err-text').textContent = s.error || '';
     $('#db').textContent = s.db_path || 'the app’s own (default)';
-    $('#foot').innerHTML = `Updates come from <code>github.com/${s.repo}</code>. Your data stays on this computer, in <code>${s.data_dir}</code>.`;
+    $('#foot').innerHTML = `Updates come from <code>github.com/${s.repo}</code>. Your data stays on this computer, in <code>${s.data_dir}</code>.`
+      + `<div class="credit">© ${new Date().getFullYear()} Elliot Telford · MIT License</div>`;
     if (!render.settingsLoaded) {
       render.settingsLoaded = true;
       const ch = s.channel.startsWith('branch:') ? 'branch' : s.channel;

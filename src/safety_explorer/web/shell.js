@@ -117,7 +117,7 @@ function route() {
   $('#crumb-group').textContent = meta.group || 'Home';
   $('#crumb-view').textContent = meta.title;
   $('#crumb-desc').textContent = meta.desc;
-  document.title = `${meta.title} · Safety Explorer`;
+  document.title = `${meta.title} · AI Safety Explorer`;
   if (changed && typeof showView === 'function') showView(view);
   if (changed) window.scrollTo(0, 0);
   if (view === 'sessions' && section) {
@@ -557,6 +557,7 @@ function paletteItems() {
     { kind: 'action', label: 'Start / stop the simulated agent stream', run: () => typeof demoStreamToggle === 'function' && demoStreamToggle() },
     { kind: 'action', label: 'Refresh data now', run: () => pollStatus(true) },
     { kind: 'action', label: 'Keyboard shortcuts', run: openHelp },
+    { kind: 'action', label: 'About AI Safety Explorer', hint: 'by Elliot Telford — version, citation, links', run: openAbout },
   );
   for (const [k, [t, d]] of Object.entries(GLOSSARY)) {
     items.push({ kind: 'term', label: t, hint: d, run: () => openTerm(k) });
@@ -645,6 +646,37 @@ function openModal(html) {
 }
 function closeModal() { $('#modal').classList.remove('show'); }
 
+const REPO_URL = 'https://github.com/etelford32/AI_Safety_Explorer';
+
+function openAbout() {
+  const v = (typeof META !== 'undefined' && META && META.version) || (STATUS.last && STATUS.last.version) || '';
+  const corpus = (typeof META !== 'undefined' && META) ? `corpus ${META.corpus_version} · ${META.corpus_hash}` : '';
+  const year = new Date().getFullYear();
+  openModal(`<div class="about">
+      <img src="/favicon.svg" alt="">
+      <div>
+        <h3>AI Safety Explorer</h3>
+        <div class="by">by Elliot Telford</div>
+        <div class="ver">v${esc(v)}${corpus ? ` · ${esc(corpus)}` : ''}</div>
+        <p>An open research instrument for one question: when the framing of a request gets
+          riskier while the reasoning task stays the same, how does a model's behaviour change?
+          Matched prompt twins, objective answer keys, register and agency readings with their
+          null controls, blinded annotation, and pre-registered analyses.</p>
+        <p class="note">Everything runs on this computer. The Explorer sends nothing anywhere except
+          to the model provider you choose for a campaign.</p>
+        <div class="about-links">
+          <a href="${REPO_URL}" target="_blank" rel="noopener">Source on GitHub</a>
+          <a href="${REPO_URL}/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="${REPO_URL}/blob/main/docs/INSTALL.md" target="_blank" rel="noopener">Install guide</a>
+          <a href="${REPO_URL}/blob/main/CITATION.cff" target="_blank" rel="noopener">Cite</a>
+          <a href="${REPO_URL}/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
+        </div>
+        <div class="about-cite">Telford, E. (${year}). AI Safety Explorer (v${esc(v)}) [Computer software]. ${REPO_URL}</div>
+        <p class="note" style="margin-top:10px">© ${year} Elliot Telford · MIT License</p>
+      </div>
+    </div>`);
+}
+
 function openHelp() {
   const rows = VIEWS.map((v) => `<tr><td><kbd>g</kbd> <kbd>${v.key}</kbd></td><td>${esc(v.title)}</td>`
     + `<td class="note">${esc(v.desc)}</td></tr>`).join('');
@@ -658,6 +690,7 @@ function openHelp() {
     </table>
     <p class="note">Co-analyse keeps its own keys while it is open: <b>1</b>–<b>8</b> label,
       <b>j</b>/<b>k</b> move, <b>u</b> next unlabelled.</p>
+    <p class="note"><a href="#" id="help-about">About AI Safety Explorer</a> — version, how to cite it, links.</p>
     <h3>Reading</h3>
     <p class="note">Hover any underlined label, column header, chip or <b>ⓘ</b> for its
       definition. Long notes are clamped to two lines in compact mode — hover to read the
@@ -802,7 +835,11 @@ function startShell() {
   initPalette();
   initKeys();
   enhancePanels();
-  $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal' || e.target.closest('.modal-x')) closeModal(); });
+  $('#modal').addEventListener('click', (e) => {
+    if (e.target.id === 'help-about') { e.preventDefault(); openAbout(); return; }
+    if (e.target.id === 'modal' || e.target.closest('.modal-x')) closeModal();
+  });
+  $('#brand').addEventListener('click', openAbout);
   // Re-decorate whatever the views render. Batched to one pass per frame.
   let pending = false;
   new MutationObserver(() => {

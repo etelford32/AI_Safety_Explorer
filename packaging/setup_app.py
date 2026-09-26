@@ -76,7 +76,8 @@ OPTIONS = {
         "LSMinimumSystemVersion": "11.0",
         "NSHighResolutionCapable": True,
         "LSUIElement": False,
-        "NSHumanReadableCopyright": "MIT licensed. © 2026 Elliot Telford.",
+        "CFBundleGetInfoString": f"AI Safety Explorer {LOADER_VERSION} — by Elliot Telford",
+        "NSHumanReadableCopyright": "© 2026 Elliot Telford · MIT License",
         # Belt and braces for the UTF-8 fix in explorer_loader.ensure_utf8: Launch Services
         # applies this environment when the app is opened from Finder, the Dock or `open`.
         "LSEnvironment": {"LANG": "en_US.UTF-8", "PYTHONUTF8": "1"},

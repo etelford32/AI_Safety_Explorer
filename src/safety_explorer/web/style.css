@@ -53,10 +53,28 @@ body.side-collapsed { --side-w: 56px; }
   background: var(--panel); border-right: 1px solid var(--line);
   display: flex; flex-direction: column; transition: width .2s var(--ease);
 }
-.brand { display: flex; align-items: center; gap: 10px; padding: 14px 14px 10px; }
-.brand img { width: 26px; height: 26px; border-radius: 6px; flex: none; }
-.brand-t { font-size: 10px; line-height: 1.25; letter-spacing: .2em; text-transform: uppercase;
-           color: var(--ink); font-weight: 600; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 14px 12px 10px; margin: 0;
+         background: none; border: 0; color: inherit; text-align: left; cursor: pointer;
+         font: inherit; border-radius: 8px; }
+.brand:hover .brand-t b { color: #fff; }
+.brand img { width: 30px; height: 30px; border-radius: 8px; flex: none;
+             box-shadow: 0 2px 10px rgba(57,135,229,.25); }
+.brand-t { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.brand-t b { font: 650 12.5px var(--prose); letter-spacing: .01em; color: var(--ink);
+             white-space: nowrap; transition: color .15s; }
+.brand-t small { font: 500 10px var(--prose); color: #f2a65a; letter-spacing: .06em;
+                 white-space: nowrap; margin-top: 2px; }
+/* The About panel. */
+.about { display: grid; grid-template-columns: 72px 1fr; gap: 18px; align-items: start; }
+.about img { width: 72px; height: 72px; border-radius: 16px; box-shadow: 0 6px 24px rgba(57,135,229,.3); }
+.about h3 { margin: 2px 0 2px !important; font: 700 18px var(--prose) !important; letter-spacing: 0 !important; }
+.about .by { color: #f2a65a; font: 600 12px var(--prose); letter-spacing: .12em; text-transform: uppercase; }
+.about .ver { color: var(--ink-faint); font: 11px var(--mono); margin-top: 4px; }
+.about-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.about-links a { font-size: 11px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink-dim); }
+.about-links a:hover { color: var(--ink); border-color: var(--ink-faint); text-decoration: none; }
+.about-cite { margin-top: 12px; font: 11px/1.5 var(--mono); color: var(--ink-dim); background: var(--bg);
+              border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; user-select: all; }
 body.side-collapsed .brand-t, body.side-collapsed .nav-t, body.side-collapsed .nav-k,
 body.side-collapsed .nav-h, body.side-collapsed #srv-txt { display: none; }
 

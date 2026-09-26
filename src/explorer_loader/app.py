@@ -78,7 +78,7 @@ class Controller:
             self.error = str(e)
             return
         time.sleep(0.5)                     # long enough to read "started"
-        self.window.set_title(f"AI Safety Explorer {info['version']} — {info['label']}")
+        self.window.set_title(f"AI Safety Explorer {info['version']} — by Elliot Telford")
         self.window.load_url(info["url"])
         self.loader.background_checks(UPDATE_EVERY_S, self.update_ready)
 

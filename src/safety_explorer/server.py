@@ -1287,7 +1287,7 @@ def serve(db_path: str, corpus_path: str, host: str = "127.0.0.1",
     threading.Thread(target=_warm, daemon=True).start()
 
     n_runs = db.query_one(conn, "SELECT COUNT(*) AS n FROM run")["n"]
-    print(f"SAFETY EXPLORER {__version__}")
+    print(f"AI SAFETY EXPLORER {__version__}  ·  by Elliot Telford")
     print(f"  corpus {c.version} ({c.content_hash[:16]})  lint "
           f"{'clean' if report.clean else str(len(report.errors)) + ' error(s)'}")
     print(f"  {len(c.runnable)} runnable prompts, {n_runs} stored runs")

@@ -1,39 +1,22 @@
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <!-- AI Safety Explorer app icon. The mark is the instrument's job: watching a body move
-       along a trajectory. An orbit with one tracked point, over the register baseline the
-       tool actually reads. Palette is the app's own dark surface and validated accents. -->
+<svg width="64" height="64" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" data-mark-version="2">
+  <!-- AI Safety Explorer — the small-size mark (favicon, sidebar, loader). The same twin
+       orbits as packaging/icon.svg, with heavier strokes, a fuller plate and no star field,
+       so it reads at 16 px. Keep the two in step: tests check they declare one mark version. -->
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1b1f27"/>
-      <stop offset="1" stop-color="#101318"/>
+    <linearGradient id="p" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#1b2a47"/>
+      <stop offset="1" stop-color="#0b1120"/>
     </linearGradient>
-    <radialGradient id="dot" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#8fc0ff"/>
-      <stop offset="0.5" stop-color="#3987e5"/>
-      <stop offset="1" stop-color="#3987e5" stop-opacity="0"/>
-    </radialGradient>
+    <linearGradient id="t" gradientUnits="userSpaceOnUse" x1="-60" y1="0" x2="520" y2="0">
+      <stop offset="0" stop-color="#5aa9ff"/>
+      <stop offset="1" stop-color="#f2a65a"/>
+    </linearGradient>
   </defs>
-
-  <!-- rounded-square plate, inset to sit as a macOS icon -->
-  <rect x="100" y="100" width="824" height="824" rx="188" fill="url(#bg)"/>
-  <rect x="100.5" y="100.5" width="823" height="823" rx="187.5" fill="none"
-        stroke="#2a2f39" stroke-width="1"/>
-
-  <!-- the register baseline the instrument reads: a quiet trace that lifts once -->
-  <path d="M 250 640 L 430 640 Q 470 640 486 604 L 520 528 Q 536 494 566 528 L 604 574
-           Q 620 592 648 592 L 792 592"
-        fill="none" stroke="#199e70" stroke-width="12" stroke-linecap="round"
-        stroke-linejoin="round" opacity="0.55"/>
-
-  <!-- the orbit, tilted -->
-  <g transform="translate(512 470) rotate(-24)">
-    <ellipse rx="286" ry="150" fill="none" stroke="#3d4552" stroke-width="14"/>
-    <ellipse rx="286" ry="150" fill="none" stroke="#3987e5" stroke-width="14"
-             stroke-linecap="round" stroke-dasharray="150 720" stroke-dashoffset="40"
-             opacity="0.9"/>
-    <!-- the tracked body on the orbit -->
-    <circle cx="243" cy="-79" r="78" fill="url(#dot)"/>
-    <circle cx="243" cy="-79" r="30" fill="#cfe4ff"/>
-    <circle cx="243" cy="-79" r="30" fill="none" stroke="#3987e5" stroke-width="6"/>
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#p)"/>
+  <g transform="translate(300 616) rotate(-24)">
+    <ellipse cx="132" cy="0" rx="210" ry="158" fill="none" stroke="#5aa9ff" stroke-width="54" opacity="0.65"/>
+    <ellipse cx="219" cy="0" rx="318" ry="228" fill="none" stroke="url(#t)" stroke-width="54"/>
+    <circle cx="0" cy="0" r="42" fill="#fff1dc"/>
+    <circle cx="462" cy="-146" r="62" fill="#fff1de" stroke="#f2a65a" stroke-width="18"/>
   </g>
 </svg>

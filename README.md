@@ -1,7 +1,23 @@
-# AI Safety Explorer
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="AI Safety Explorer — by Elliot Telford" width="100%">
+</p>
 
-[![tests](https://github.com/etelford32/AI_Safety_Explorer/actions/workflows/tests.yml/badge.svg)](https://github.com/etelford32/AI_Safety_Explorer/actions/workflows/tests.yml)
-&nbsp;MIT licensed · open source · [install](docs/INSTALL.md) · [cite](#citing)
+<p align="center">
+  <a href="https://github.com/etelford32/AI_Safety_Explorer/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/etelford32/AI_Safety_Explorer?label=release&color=3987e5"></a>
+  <a href="https://github.com/etelford32/AI_Safety_Explorer/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/etelford32/AI_Safety_Explorer/actions/workflows/tests.yml/badge.svg"></a>
+  <img alt="macOS app" src="https://img.shields.io/badge/macOS-Apple%20Silicon-1b2a47">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-1b2a47">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-f2a65a"></a>
+</p>
+
+<p align="center">
+  <b>Created by Elliot Telford</b> ·
+  <a href="https://github.com/etelford32/AI_Safety_Explorer/releases/latest">Download the app</a> ·
+  <a href="docs/INSTALL.md">Install guide</a> ·
+  <a href="#citing">Cite</a>
+</p>
+
+# AI Safety Explorer
 
 A research instrument for one question:
 
@@ -1150,4 +1166,8 @@ reproducible only against the exact instrument that produced it.
 (non-hazardous substrate, one-dimension twins, pre-registered analyses, controls shipped with
 their measures). Security reports: [`SECURITY.md`](SECURITY.md), privately.
 
-MIT licensed — see [`LICENSE`](LICENSE).
+## Author
+
+**Elliot Telford** created and maintains AI Safety Explorer.
+
+MIT licensed — © 2026 Elliot Telford, see [`LICENSE`](LICENSE).

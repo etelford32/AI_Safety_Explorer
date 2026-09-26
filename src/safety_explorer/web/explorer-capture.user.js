@@ -1,7 +1,12 @@
 // ==UserScript==
-// @name         Safety Explorer — chat capture
+// @name         AI Safety Explorer — chat capture
 // @namespace    https://github.com/etelford32/AI_Safety_Explorer
 // @version      0.31.0
+// @author       Elliot Telford
+// @homepageURL  https://github.com/etelford32/AI_Safety_Explorer
+// @supportURL   https://github.com/etelford32/AI_Safety_Explorer/issues
+// @icon         https://raw.githubusercontent.com/etelford32/AI_Safety_Explorer/main/src/safety_explorer/web/favicon.svg
+// @license      MIT
 // @description  Send a Claude.ai or ChatGPT conversation you are having to your local Safety Explorer — only when you click, or while you have Follow turned on for that chat.
 // @match        https://claude.ai/*
 // @match        https://chatgpt.com/*
@@ -507,7 +512,7 @@
         <span class="dot ${dotCls}"></span><span>${S.follow ? 'Following' : 'Explorer'}</span>
       </div>
       ${PANEL.open ? `<div class="panel" data-se="panel" role="dialog" aria-label="Safety Explorer capture">
-        <div class="hd"><span class="dot ${dotCls}"></span><b>Safety Explorer</b>
+        <div class="hd"><span class="dot ${dotCls}"></span><b>AI Safety Explorer</b>
           <button class="x" data-se="close" aria-label="Close">×</button></div>
         <div class="bd">
           <div class="row" data-se="status">${status}</div>

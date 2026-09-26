@@ -1251,10 +1251,11 @@ def _fmt(value, places: int = 3) -> str:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="explorer",
-        description="Safety Explorer — measuring how model behaviour changes as context "
+        description="AI Safety Explorer (by Elliot Telford) — measuring how model behaviour changes as context "
                     "framing becomes riskier while the reasoning task stays similar.",
     )
-    p.add_argument("--version", action="version", version=f"safety-explorer {__version__}")
+    p.add_argument("--version", action="version",
+                   version=f"AI Safety Explorer {__version__} — © 2026 Elliot Telford, MIT License")
     p.add_argument("--db", default="data/explorer.db", help="database path")
     p.add_argument("--corpus", default="corpus", help="corpus directory")
     sub = p.add_subparsers(dest="command", required=True)
