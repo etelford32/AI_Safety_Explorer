@@ -50,7 +50,7 @@ function showView(view) {
   if (view === 'results') loadResults();
   if (view === 'compare') loadCompareOptions();
   if (view === 'surface') loadSurface();
-  if (view === 'collect') loadData();
+  if (view === 'collect') { loadData(); if (typeof loadIntake === 'function') loadIntake(); }
   if (view === 'coanalyse') loadConversations();
   if (view === 'stance' && !STANCE.data) loadStance();
   if (view === 'sessions') loadSessions();
@@ -2589,7 +2589,22 @@ function renderLiveTrajectory(d, root = 'live') {
 function renderLiveTurns(d, root = 'live') {
   const box = $(`#${root}-turns`);
   box.innerHTML = '<h2>Turn by turn</h2>';
-  const rows = d.turns.map((t) => {
+  const win = d.window;
+  if (win && win.total > win.shown) {
+    box.insertAdjacentHTML('beforeend', `<div class="note" style="margin-bottom:8px">The most recent ${win.shown.toLocaleString()} of ${win.total.toLocaleString()} turns.</div>`);
+  }
+  // An agent's tool calls and results, and any system context, sit between the turns the
+  // register reading covers; they are shown in place, compact, and not read for register.
+  const ctx = (d.context_turns || []).map((c) => ({ ...c, context: true }));
+  const pos = d.positions || [];
+  const merged = ctx.length && pos.length
+    ? [...d.turns.map((t) => ({ ...t, pos: pos[t.index] ?? t.index })), ...ctx].sort((a, b) => a.pos - b.pos)
+    : d.turns;
+  const rows = merged.map((t) => {
+    if (t.context) {
+      return `<div class="live-turn ctx ${esc(t.role)}"><span class="ctx-r">${t.role === 'tool' ? 'tool' : 'context'}</span>`
+        + `<span class="ctx-t">${esc(t.text.slice(0, 280))}${t.text.length > 280 ? '…' : ''}</span></div>`;
+    }
     if (t.role === 'user') {
       const cm = t.corpus_match;
       const badge = !cm ? ''
@@ -2645,50 +2660,93 @@ function renderLiveTurns(d, root = 'live') {
    report states as a limit rather than hiding.
    ====================================================================== */
 
-const SESS = { current: null, timer: null };
+const SESS = { current: null, timer: null, limit: 60, bound: false };
+
+/* The reasons a conversation is worth opening, each an icon and a word — never a colour
+   alone, and never a verdict: a refusal may be exactly right. */
+function sessionFlags(s) {
+  const f = s.flags || {};
+  const out = [];
+  if (s.drift === 'alert') out.push(['alert', 'bad', 'Register shift', 'The register moved sharply between turns — open it to see where']);
+  else if (s.drift === 'watch') out.push(['eye', 'warn', 'Some shift', 'A smaller register movement across turns']);
+  if (f.refusals) out.push(['alert', 'warn', `Refusal${f.refusals > 1 ? ` ×${f.refusals}` : ''}`, `${f.refusals} model turn(s) decline in whole or in part${f.first_refusal !== null && f.first_refusal !== undefined ? ` — first at turn ${f.first_refusal}` : ''}`]);
+  if (f.aware) out.push(['eye', 'warn', 'Mentions testing', `${f.aware} model turn(s) talk about being tested or evaluated`]);
+  if (f.agency) out.push(['alert', 'warn', `Agency ${f.agency_peak}/5`, 'Peak expressed agency is high — read it against what the conversation granted']);
+  if (f.layer0) out.push(['check', 'good', 'Answer key', `${f.layer0} question(s) match a corpus prompt, so the reply can be scored objectively`]);
+  return out.map(([ic, tone, word, tip]) =>
+    `<span class="flag-chip ${tone}" data-tip="${esc(tip)}">${icon(ic, 'ic')}${esc(word)}</span>`).join('');
+}
+
+function bindSessionControls() {
+  if (SESS.bound) return;
+  SESS.bound = true;
+  const f = PREFS.get('sess.filter', 'all');
+  $$('#sess-filter button').forEach((b) => b.classList.toggle('on', b.dataset.f === f));
+  $('#sess-order').value = PREFS.get('sess.order', 'interest');
+  $$('#sess-filter button').forEach((b) => b.addEventListener('click', () => {
+    PREFS.set('sess.filter', b.dataset.f);
+    $$('#sess-filter button').forEach((x) => x.classList.toggle('on', x === b));
+    SESS.limit = 60;
+    loadSessions();
+  }));
+  $('#sess-order').addEventListener('change', () => { PREFS.set('sess.order', $('#sess-order').value); loadSessions(); });
+  let t;
+  $('#sess-q').addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { SESS.limit = 60; loadSessions(); }, 250); });
+}
 
 async function loadSessions() {
+  bindSessionControls();
   const status = $('#sess-status');
+  const filter = PREFS.get('sess.filter', 'all');
+  $$('#sess-filter button').forEach((b) => b.classList.toggle('on', b.dataset.f === filter));
+  const params = { limit: SESS.limit, order: $('#sess-order').value || 'interest', q: $('#sess-q').value.trim() };
+  if (filter === 'flagged') params.flagged = 1;
+  if (filter === 'live' || filter === 'imported') params.source = filter;
   let data;
   try {
-    data = await api('sessions');
+    data = await api('sessions', params);
   } catch (err) {
     status.textContent = `failed: ${esc(String(err))}`;
     return;
   }
   const list = data.sessions || [];
-  status.textContent = `${list.length} session(s)`;
+  const total = data.total ?? list.length;
+  const flagged = list.filter((s) => (s.score || 0) > 0).length;
+  status.innerHTML = `${total.toLocaleString()} conversation${total === 1 ? '' : 's'}`
+    + (flagged && filter !== 'flagged' ? ` · <b>${flagged}</b> of these worth a look` : '')
+    + (list.some((s) => s.pending) ? ' · <span class="warn">still reading some…</span>' : '');
   const box = $('#sess-list');
   if (!list.length) {
-    box.innerHTML = '<div class="empty-state">No live sessions yet. An agent posts to '
-      + '<code>/api/session/turn</code> to appear here.</div>';
+    box.innerHTML = filter === 'all' && !params.q
+      ? `<div class="empty-state">No conversations yet. <a href="#/collect">Add some</a> — drop a ChatGPT or Claude export,
+         connect your Claude Code logs, or have an agent post to <code>/api/session/turn</code>.</div>`
+      : '<div class="empty-state">Nothing matches.</div>';
+    $('#sess-more').innerHTML = '';
     return;
   }
   box.innerHTML = list.map((s) => {
     const on = s.id === SESS.current ? ' on' : '';
     const when = (s.updated_at || '').replace('T', ' ').replace(/[+Z].*$/, '');
-    // A drift badge so the list is a monitor: an overseer sees which session needs a
-    // look before opening it. Warn-toned, because a shift may be the right response.
-    const drift = s.drift === 'alert'
-      ? '<span class="chip driftbadge-alert">register drift</span>'
-      : s.drift === 'watch'
-        ? '<span class="chip driftbadge-watch">drift — watch</span>' : '';
+    const imported = (s.source || '').startsWith('import:');
+    const src = imported ? s.source.slice(7) : s.source;
     const dot = s.drift === 'alert' ? 'alert' : s.drift === 'watch' ? 'watch' : 'quiet';
     return `<div class="co-row sess-row${on}" data-sess="${esc(s.id)}"`
-      + ` data-tip="${esc(`${s.label} — ${s.n_turns} turn(s), ${s.n_assistant || 0} from the model; source ${s.source}, Tier ${s.tier}; last turn ${when}`)}">`
+      + ` data-tip="${esc(`${s.label} — ${s.n_turns} turn(s), ${s.n_assistant || 0} from the model; ${imported ? 'imported from' : 'source'} ${src}, Tier ${s.tier}; last turn ${when}`)}">`
       + `<span class="sm-dot ${dot}"></span>`
       + `<div class="sess-main"><div class="sess-l"><b>${esc(s.label)}</b></div>`
-      + `<div class="sess-m">${drift}<span class="chip">${esc(s.source)}</span>`
-      + `<span class="chip">Tier ${esc(s.tier)}</span>`
-      + `<span class="note">${s.n_turns} turns · ${typeof ago === 'function' ? ago(s.updated_at) : esc(when)}</span></div></div></div>`;
+      + `<div class="sess-m">${sessionFlags(s)}<span class="chip">${imported ? '' : '● '}${esc(src)}</span>`
+      + `<span class="note">${s.n_turns} turns · ${ago(s.updated_at)}</span></div></div></div>`;
   }).join('');
+  $('#sess-more').innerHTML = list.length < total
+    ? `<button class="ghost" id="sess-more-btn">Show more (${(total - list.length).toLocaleString()} left)</button>` : '';
+  $('#sess-more-btn')?.addEventListener('click', () => { SESS.limit += 120; loadSessions(); });
   $$('#sess-list .sess-row').forEach((r) =>
     r.addEventListener('click', () => openSession(r.dataset.sess)));
-  // If a session is open, refresh its detail too — an agent may have added turns. With none
-  // open, open the one most in need of a look (an alert first, else the newest), so the view
-  // never lands on an empty detail pane.
+  // If a conversation is open, refresh it too — an agent may have added turns. With none
+  // open, open the first in the list (the one most worth a look), so the view never lands
+  // on an empty detail pane.
   if (SESS.current && list.some((s) => s.id === SESS.current)) openSession(SESS.current);
-  else openSession((list.find((s) => s.drift === 'alert') || list[0]).id);
+  else if (!SESS.current) openSession(list[0].id);
 }
 
 async function openSession(id) {

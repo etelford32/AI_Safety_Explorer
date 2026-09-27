@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         AI Safety Explorer — chat capture
 // @namespace    https://github.com/etelford32/AI_Safety_Explorer
-// @version      0.32.0
+// @version      0.33.0
 // @author       Elliot Telford
 // @homepageURL  https://github.com/etelford32/AI_Safety_Explorer
 // @supportURL   https://github.com/etelford32/AI_Safety_Explorer/issues
 // @icon         https://raw.githubusercontent.com/etelford32/AI_Safety_Explorer/main/src/safety_explorer/web/favicon.svg
 // @license      MIT
-// @description  Send a Claude.ai or ChatGPT conversation you are having to your local Safety Explorer — only when you click, or while you have Follow turned on for that chat.
+// @description  Send a Claude.ai or ChatGPT conversation you are having to your local Safety Explorer — only when you click, while Follow is on for that chat, or while "every chat" is on for the site.
 // @match        https://claude.ai/*
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -43,7 +43,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.32.0';
+  const VERSION = '0.33.0';
   const DEFAULT_SERVER = 'http://127.0.0.1:8713';
   const STABLE_MS = 1200;      // a reply must stop changing this long before it is "done"
   const SCAN_DEBOUNCE_MS = 700;
@@ -210,6 +210,7 @@
     branch: 1,
     sent: [],            // normalised text acknowledged at each index of the session
     follow: false,
+    auto: false,         // follow every chat on this site, without switching each one on
     connected: null,     // true / false / null (not checked yet)
     version: null,
     drift: null,
@@ -228,7 +229,10 @@
     S.lastSeen = { text: null, since: 0 };
     S.drift = null;
     S.branch = S.key ? await getVal(`branch.${S.key}`, 1) : 1;
-    S.follow = S.key ? await getVal(`follow.${S.key}`, false) : false;
+    // "Every chat" is per site: switched on once, it follows each conversation opened here
+    // until it is switched off. Otherwise Follow is remembered per chat.
+    S.auto = S.adapter ? await getVal(`auto.${S.adapter.id}`, false) : false;
+    S.follow = S.key ? (S.auto || await getVal(`follow.${S.key}`, false)) : false;
     render();
     if (S.follow) scheduleScan(0);
   }
@@ -427,6 +431,15 @@
     if (on) sendConversation(true);
   }
 
+  async function setAuto(on) {
+    if (!S.adapter) return;
+    S.auto = on;
+    await setVal(`auto.${S.adapter.id}`, on);
+    S.follow = S.key ? (on || await getVal(`follow.${S.key}`, false)) : false;
+    render();
+    if (S.follow) sendConversation(true);
+  }
+
   /* ------------------------------------------------------------ panel */
   /* A shadow root, so neither the site's styles nor ours leak across. */
 
@@ -509,7 +522,7 @@
     const openUrl = S.last ? `${S.server}/#/sessions/${encodeURIComponent(S.last.sessionId)}` : `${S.server}/#/sessions`;
     PANEL.root.innerHTML = `<style>${CSS}</style>
       <div class="pill" data-se="pill" title="Safety Explorer capture (Alt+Shift+E)">
-        <span class="dot ${dotCls}"></span><span>${S.follow ? 'Following' : 'Explorer'}</span>
+        <span class="dot ${dotCls}"></span><span>${S.follow ? (S.auto ? 'Capturing' : 'Following') : 'Explorer'}</span>
       </div>
       ${PANEL.open ? `<div class="panel" data-se="panel" role="dialog" aria-label="Safety Explorer capture">
         <div class="hd"><span class="dot ${dotCls}"></span><b>AI Safety Explorer</b>
@@ -519,8 +532,10 @@
           <div class="row line" data-se="found">${foundLine()}</div>
           <div class="btns">
             <button class="b primary" data-se="send" ${S.busy ? 'disabled' : ''}>Send conversation</button>
-            <button class="b ${S.follow ? 'on' : ''}" data-se="follow" ${S.adapter ? '' : 'disabled'}
+            <button class="b ${S.follow ? 'on' : ''}" data-se="follow" ${S.adapter && !S.auto ? '' : 'disabled'}
               title="Send each new turn as it finishes, for this chat only">Follow: ${S.follow ? 'on' : 'off'}</button>
+            <button class="b wide ${S.auto ? 'on' : ''}" data-se="auto" ${S.adapter ? '' : 'disabled'}
+              title="Follow every conversation you open on this site, until you switch it off">Every ${esc(S.adapter ? S.adapter.name : '')} chat: ${S.auto ? 'on' : 'off'}</button>
             <button class="b wide" data-se="selection" ${S.busy ? 'disabled' : ''}
               title="Works on any page: select the conversation, then click">Send selection</button>
           </div>
@@ -528,8 +543,8 @@
           ${S.last ? `<div class="row">last: ${esc(S.last.text)} · ${ago(S.last.at)}
             ${S.drift ? `<span class="drift ${esc(S.drift)}" title="register drift, as the Explorer reads this session">${esc(S.drift)}</span>` : ''}
             <a href="${esc(openUrl)}" target="_blank" rel="noopener" style="margin-left:auto">open ↗</a></div>` : ''}
-          <div class="fine">Sends only when you click, or while Follow is on for this chat — and only
-            to your Explorer on this computer. Captured as Tier B: the model version and system
+          <div class="fine">Sends only when you click, while Follow is on for this chat, or while
+            “every chat” is on for this site — and only to your Explorer on this computer. Captured as Tier B: the model version and system
             prompt are not observable from a chat window.</div>
           <details><summary>Settings</summary>
             <label class="row" style="flex-direction:column;align-items:stretch">Explorer address
@@ -543,6 +558,7 @@
     $('close').addEventListener('click', () => { PANEL.open = false; render(); });
     $('send').addEventListener('click', () => sendConversation(false));
     $('follow').addEventListener('click', () => setFollow(!S.follow));
+    $('auto').addEventListener('click', () => setAuto(!S.auto));
     // Keep the page selection: a mousedown on the button would otherwise clear it.
     $('selection').addEventListener('mousedown', (e) => e.preventDefault());
     $('selection').addEventListener('click', sendSelection);

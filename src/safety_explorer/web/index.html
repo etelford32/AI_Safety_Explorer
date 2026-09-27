@@ -119,8 +119,12 @@
 
 <!-- ============================ COLLECT ============================ -->
 <section id="v-collect" class="view">
+  <div class="panel intake-panel" id="sec-intake">
+    <h2>Add conversations</h2>
+    <div id="intake-body"><div class="empty-state">—</div></div>
+  </div>
   <div class="panel">
-    <h2>Lanes</h2>
+    <h2>Or collect it yourself</h2>
     <div style="display:flex;gap:2px;margin-bottom:4px">
       <button class="ghost lane-tab on" data-lane="api">Lane 1 — live API</button>
       <button class="ghost lane-tab" data-lane="manual">Lane 2 — chat capture</button>
@@ -221,7 +225,7 @@
             <select id="im-tier"><option>C</option><option>B</option><option>A</option></select>
           </label>
         </div>
-        <div id="im-drop" style="margin-top:10px;border:1px dashed var(--line);padding:18px;text-align:center;color:var(--ink-faint);font-size:11px;cursor:pointer">
+        <div id="im-drop" data-own-drop style="margin-top:10px;border:1px dashed var(--line);padding:18px;text-align:center;color:var(--ink-faint);font-size:11px;cursor:pointer">
           drop a .jsonl file here, or click to choose
           <input type="file" id="im-file" accept=".jsonl,.json,.txt" style="display:none">
         </div>
@@ -439,21 +443,32 @@
   <div class="cols monitor">
     <div class="monitor-list">
       <div class="panel">
-        <h2>Live sessions <span class="live-pip beat-slow" data-tip="Updates on its own as turns arrive"></span></h2>
+        <h2>Conversations <span class="live-pip beat-slow" data-tip="Updates on its own as turns arrive"></span></h2>
         <p class="hint">
-          A session is a conversation an agent or app is having <b>right now</b>, accumulated
-          turn by turn. The tool never reaches into another process: a source opts in by
-          POSTing each turn to <code>/api/session/turn</code> as it happens — the paste
-          boundary generalised, <b>push, never pull</b>. Everything the Live view does runs on
-          each session, and its register trajectory updates as the agent keeps talking.
-          Wiring one up is one HTTP call per turn; <code>docs/INTEGRATION.md</code> has the four
-          modes and what each can and cannot measure.
+          Every conversation the Explorer holds: pushed live, turn by turn, by an agent or the
+          capture script (<b>push, never pull</b> — a source opts in by POSTing each turn to
+          <code>/api/session/turn</code>), or imported from an export, a log or a file on the
+          <a href="#/collect">Add data</a> page. Each is read on arrival and flagged when it is
+          worth opening — a sharp register shift, refusals, talk of being tested, high expressed
+          agency, or a question with an answer key.
         </p>
-        <div class="controls" style="margin:6px 0 4px">
-          <button class="ghost" id="btn-sessions-refresh">Refresh</button>
-          <span class="hint" id="sess-status"></span>
+        <div class="sess-tools">
+          <input type="search" id="sess-q" placeholder="Search titles and sources" spellcheck="false">
+          <div class="seg" id="sess-filter" role="tablist">
+            <button data-f="all" class="on">All</button>
+            <button data-f="flagged" data-tip="Conversations with at least one flag">Worth a look</button>
+            <button data-f="live" data-tip="Pushed as they happened">Live</button>
+            <button data-f="imported" data-tip="From exports, logs and files">Imported</button>
+          </div>
+          <select id="sess-order" data-tip="Order">
+            <option value="interest">Worth a look first</option>
+            <option value="recent">Newest first</option>
+          </select>
+          <button class="ghost" id="btn-sessions-refresh" data-tip="Refresh">↻</button>
         </div>
-        <div id="sess-list" class="co-list sess-list"><div class="empty-state">No live sessions yet.</div></div>
+        <div class="hint" id="sess-status"></div>
+        <div id="sess-list" class="co-list sess-list"><div class="empty-state">No conversations yet.</div></div>
+        <div id="sess-more"></div>
       </div>
       <div class="panel capture-card">
         <h2>Capture from Claude.ai &amp; ChatGPT</h2>
@@ -669,6 +684,7 @@
 <script src="/shell.js"></script>
 <script src="/app.js"></script>
 <script src="/overview.js"></script>
+<script src="/intake.js"></script>
 <script>startShell();</script>
 </body>
 </html>

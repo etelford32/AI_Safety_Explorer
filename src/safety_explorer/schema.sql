@@ -361,3 +361,57 @@ CREATE TABLE IF NOT EXISTS live_turn (
 
 CREATE INDEX IF NOT EXISTS idx_live_turn_session ON live_turn(session_id, turn_index);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_live_turn_pos ON live_turn(session_id, turn_index);
+
+-- Triage: a per-session reading cached against the number of turns it read, so a list of
+-- hundreds of imported conversations can be sorted by "worth a look" without re-reading
+-- every conversation on every request. Stale when the session gains a turn.
+CREATE TABLE IF NOT EXISTS session_summary (
+    session_id  TEXT PRIMARY KEY,
+    n_turns     INTEGER NOT NULL,
+    version     TEXT NOT NULL,
+    with_corpus INTEGER NOT NULL DEFAULT 0,
+    drift       TEXT,
+    flags       TEXT NOT NULL DEFAULT '{}',
+    score       REAL NOT NULL DEFAULT 0,
+    computed_at TEXT NOT NULL
+);
+
+-- Intake: where conversations came from. A source is a folder the user connected (or the
+-- inbox); a file is remembered by size and mtime so a watched source re-reads only what
+-- changed; an event is one import, for the UI's history. Nothing here is read until the
+-- user has connected it.
+CREATE TABLE IF NOT EXISTS intake_source (
+    id              TEXT PRIMARY KEY,
+    kind            TEXT NOT NULL,           -- inbox | claude_code | codex | folder
+    path            TEXT NOT NULL,
+    label           TEXT NOT NULL DEFAULT '',
+    watch           INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL,
+    last_scan       TEXT,
+    n_files         INTEGER NOT NULL DEFAULT 0,
+    n_conversations INTEGER NOT NULL DEFAULT 0,
+    error           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS intake_file (
+    path            TEXT PRIMARY KEY,
+    source_id       TEXT,
+    size            INTEGER NOT NULL,
+    mtime           REAL NOT NULL,
+    format          TEXT,
+    n_conversations INTEGER NOT NULL DEFAULT 0,
+    scanned_at      TEXT NOT NULL,
+    error           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS intake_event (
+    id          TEXT PRIMARY KEY,
+    at          TEXT NOT NULL,
+    origin      TEXT NOT NULL,
+    source_id   TEXT,
+    formats     TEXT NOT NULL DEFAULT '[]',
+    stats       TEXT NOT NULL DEFAULT '{}',
+    status      TEXT NOT NULL DEFAULT 'ok',  -- ok | empty | error
+    message     TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_intake_event_at ON intake_event(at);

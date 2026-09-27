@@ -28,7 +28,7 @@ WEB_ROOT = Path(__file__).parent / "web"
 SERVE_STARTED: float | None = None
 CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
                  ".svg": "image/svg+xml"}
-STATIC_FILES = ("/app.js", "/shell.js", "/overview.js", "/style.css", "/favicon.svg")
+STATIC_FILES = ("/app.js", "/shell.js", "/overview.js", "/intake.js", "/style.css", "/favicon.svg")
 
 
 class DemoState:
@@ -140,8 +140,16 @@ def status_report(conn, started: float | None = None, limit: int = 25) -> dict[s
         if _table_exists(conn, "live_turn") else 0
 
     watching = []
+    imported = {"n": 0, "flagged": 0}
     if n_sessions:
-        for s in sessions.list_sessions(conn, limit=limit, with_drift=True):
+        imp = db.query_one(conn, """SELECT COUNT(*) AS n,
+                SUM(CASE WHEN COALESCE(ss.score, 0) > 0 THEN 1 ELSE 0 END) AS flagged
+            FROM live_session s LEFT JOIN session_summary ss ON ss.session_id = s.id
+            WHERE s.source LIKE 'import:%'""") if _table_exists(conn, "session_summary") else None
+        imported = {"n": (imp or {}).get("n") or 0, "flagged": (imp or {}).get("flagged") or 0}
+        # The monitor is for conversations happening now; an imported history is listed in
+        # Conversations, and never lights the sidebar badge for something said last year.
+        for s in sessions.list_sessions(conn, limit=limit, with_drift=True, source="live", budget=8):
             watching.append({"id": s["id"], "label": s["label"], "source": s["source"],
                              "n_turns": s.get("n_turns") or 0, "drift": s.get("drift"),
                              "updated_at": s["updated_at"]})
@@ -163,6 +171,7 @@ def status_report(conn, started: float | None = None, limit: int = 25) -> dict[s
         "n_turns": n_turns,
         "n_alert": len(alerts),
         "n_watch": len(watch),
+        "imported": imported,
         "sessions": watching,
         "embedding_backend": model.backend.name if model else None,
         "embedding_trustworthy": bool(model and st.model_trustworthy(model)),
@@ -347,6 +356,14 @@ class ExplorerHandler(BaseHTTPRequestHandler):
         if not self._gate():
             return
         url = urlparse(self.path)
+        if url.path == "/api/intake/upload":
+            try:
+                return self._send_json(self._intake_upload())
+            except ValueError as exc:
+                return self._send_json({"error": str(exc)}, 400)
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                return self._send_json({"error": f"{type(exc).__name__}: {exc}"}, 500)
         try:
             body = self._body()
             if url.path == "/api/demo/seed":
@@ -448,6 +465,9 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                     language=body.get("language", "en"), meta=body.get("meta"))
                 return self._send_json({"ok": True, "session_id": sid})
 
+            if url.path.startswith("/api/intake/"):
+                return self._send_json(self._intake_post(url.path, body))
+
             if url.path == "/api/live":
                 from . import live
 
@@ -483,6 +503,73 @@ class ExplorerHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
             self._send_json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+
+    # -- intake ------------------------------------------------------------
+
+    @property
+    def intake(self):
+        return getattr(self.server, "intake", None)
+
+    def _intake_preview(self, path: Path, name: str) -> dict[str, Any]:
+        from . import intake, intake_store
+        batches = intake.detect_path(path)
+        out = intake_store.preview(batches, self.corpus)
+        out.update({"token": path.name, "name": name})
+        return out
+
+    def _intake_upload(self) -> dict[str, Any]:
+        """A dropped or chosen file: saved to disk as it streams in, then detected."""
+        from urllib.parse import unquote
+        if self.intake is None:
+            raise ValueError("intake is not running")
+        name = unquote(self.headers.get("X-Filename") or "upload")
+        length = int(self.headers.get("Content-Length") or 0)
+        if not length:
+            raise ValueError("empty upload")
+        path = self.intake.save_upload(name, self.rfile, length)
+        return self._intake_preview(path, name)
+
+    def _intake_post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        from . import sources
+        w = self.intake
+        if w is None:
+            raise ValueError("intake is not running")
+        if path == "/api/intake/text":
+            text = body.get("text") or ""
+            if not text.strip():
+                raise ValueError("nothing pasted")
+            data = text.encode("utf-8")
+            import io
+            dest = w.save_upload(body.get("name") or "pasted.txt", io.BytesIO(data), len(data))
+            return self._intake_preview(dest, body.get("name") or "pasted text")
+        if path == "/api/intake/commit":
+            src = w.upload_path(body.get("token") or "")
+            w.submit_file(src, body.get("name") or src.name.split("__", 1)[-1], delete_after=True)
+            return {"queued": True}
+        if path == "/api/intake/discard":
+            try:
+                w.upload_path(body.get("token") or "").unlink(missing_ok=True)
+            except ValueError:
+                pass
+            return {"ok": True}
+        if path == "/api/intake/import_path":
+            w.import_existing(self.conn, body.get("path") or "")
+            return {"queued": True}
+        if path == "/api/intake/source":
+            action = body.get("action")
+            if action == "connect":
+                src = sources.connect_source(self.conn, body.get("kind") or "folder",
+                                             body.get("path") or "", body.get("label") or "")
+                w.submit_scan(src["id"])
+                return {"ok": True, "source": src}
+            if action == "disconnect":
+                sources.disconnect_source(self.conn, body.get("id") or "")
+                return {"ok": True}
+            if action == "scan":
+                w.submit_scan(body.get("id") or None)
+                return {"ok": True}
+            raise ValueError(f"unknown action {action!r}")
+        raise ValueError(f"unknown intake request {path}")
 
     # -- demo --------------------------------------------------------------
 
@@ -533,7 +620,10 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 return {"ok": True, "version": __version__,
                         "session": ({"id": sid, "drift": sessions.session_drift(self.conn, sid)}
                                     if sid else None)}
-            return status_report(self.conn, SERVE_STARTED)
+            out = status_report(self.conn, SERVE_STARTED)
+            if self.intake is not None:
+                out["intake"] = self.intake.brief()
+            return out
 
         if path == "/api/overview":
             from . import dashboard
@@ -912,7 +1002,20 @@ class ExplorerHandler(BaseHTTPRequestHandler):
 
         if path == "/api/sessions":
             from . import sessions
-            return {"sessions": sessions.list_sessions(self.conn)}
+            rows, total = sessions.list_sessions(
+                self.conn, limit=min(int(q.get("limit", 60)), 500), offset=int(q.get("offset", 0)),
+                q=q.get("q") or None, source=q.get("source") or None,
+                flagged=q.get("flagged") in ("1", "true"), order=q.get("order", "recent"),
+                corpus=self.corpus, with_total=True)
+            return {"sessions": rows, "total": total}
+
+        if path == "/api/intake":
+            from . import sources
+            return sources.status(self.conn, self.intake)
+
+        if path == "/api/intake/discover":
+            from . import sources
+            return sources.discover(self.conn)
 
         if path == "/api/session":
             from . import sessions
@@ -1272,6 +1375,10 @@ def serve(db_path: str, corpus_path: str, host: str = "127.0.0.1",
     httpd.bound_host = host  # type: ignore[attr-defined]
     httpd.corpus = c  # type: ignore[attr-defined]
     httpd.annotator = annotator  # type: ignore[attr-defined]
+    # The intake worker: imports what is dropped or committed, and watches the inbox and
+    # every connected source for new conversations.
+    from . import sources
+    httpd.intake = sources.IntakeWorker(str(db_path), c, sources.default_inbox(db_path)).start()  # type: ignore[attr-defined]
 
     # Warm the caches on a connection of our own, so the first view opened does not pay the
     # full pass over every stored response on the request path: the posture cut points (which
@@ -1293,6 +1400,7 @@ def serve(db_path: str, corpus_path: str, host: str = "127.0.0.1",
           f"{'clean' if report.clean else str(len(report.errors)) + ' error(s)'}")
     print(f"  {len(c.runnable)} runnable prompts, {n_runs} stored runs")
     print(f"  http://{host}:{port}")
+    print(f"  inbox: {httpd.intake.inbox}  (drop exports and logs here to import them)")  # type: ignore[attr-defined]
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

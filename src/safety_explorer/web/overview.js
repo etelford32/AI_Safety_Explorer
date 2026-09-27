@@ -554,9 +554,10 @@ const TILE_LOAD = {
   async sessions() {
     const s = STATUS.last || await api('status');
     const list = (s.sessions || []).slice(0, 4);
-    const n = s.n_sessions || 0;
+    const imp = s.imported || {};
+    const n = (s.n_sessions || 0) - (imp.n || 0);
     fillTile('sessions', {
-      value: String(n), unit: `live session(s) · ${s.n_turns || 0} turns`,
+      value: String(n), unit: "live session(s)",
       read: !n ? 'No conversation has been pushed yet.'
         : s.n_alert ? `<b>${s.n_alert} of ${n}</b> conversation(s) changed register sharply part-way through — open one to see the turn where it moved.`
           : 'No conversation has changed register sharply between turns.',
@@ -564,9 +565,12 @@ const TILE_LOAD = {
         + `<span class="sm-ic ${x.drift || 'quiet'}">${icon(x.drift === 'alert' ? 'alert' : x.drift === 'watch' ? 'eye' : 'check')}</span><span class="sm-l">${esc(x.label)}</span>`
         + `<span class="sm-n">${x.n_turns} turns</span><span class="sm-a">${ago(x.updated_at)}</span></div>`).join('')}</div>`
         : '<div class="note">An agent POSTs to /api/session/turn to appear here — or stream the simulated agent.</div>',
-      foot: `register read via ${esc(s.embedding_backend || 'lexicon')}${s.embedding_trustworthy ? '' : ' <span class="warn">— not a semantic backend, lexicon used</span>'}`,
+      foot: `${imp.n ? `+ ${Number(imp.n).toLocaleString()} imported (${imp.flagged || 0} worth a look) · ` : ''}register read via ${esc(s.embedding_backend || 'lexicon')}${s.embedding_trustworthy ? '' : ' <span class="warn">— not a semantic backend, lexicon used</span>'}`,
       status: s.n_alert ? ['review', `${s.n_alert} drift alert(s)`] : (s.n_watch ? ['review', `${s.n_watch} on watch`] : (n ? ['ok', 'No drift'] : ['none'])),
     });
+    attn('imported', imp.flagged ? { tone: 'warn', p: 3,
+      html: `<b>${imp.flagged} imported conversation(s) worth a look</b> — refusals, register shifts, talk of being tested`,
+      go: 'sessions:flagged' } : null);
     (s.sessions || []).filter((x) => x.drift === 'alert').slice(0, 3).forEach((x) => attn(`sess-${x.id}`,
       { tone: 'warn', p: 8, html: `<b>Register drift</b> in “${esc(x.label)}” (${x.n_turns} turns, ${ago(x.updated_at)})`, go: `sessions:${x.id}` }));
   },
@@ -652,7 +656,9 @@ function renderEmpty(ov) {
       <button class="run" id="hero-seed">Load demo data</button>
       <button class="ghost" id="hero-stream">${icon('play')} Stream a simulated agent</button>
     </div>
-    <div class="hero-cli note">or from a terminal: <code>explorer demo</code> · a real campaign:
+    <p>Or bring your own: <b>drop a ChatGPT or Claude.ai export, your Claude Code logs, or any chat JSON / CSV
+      anywhere on this page</b> — or open <a href="#/collect">Add data</a> to connect a folder the Explorer keeps watching.</p>
+    <div class="hero-cli note">or from a terminal: <code>explorer demo</code> · <code>explorer import ~/Downloads/chatgpt-export.zip</code> · a real campaign:
       <code>explorer run --campaign v1 --provider local --model llama3.1</code></div>
     <div id="hero-log" class="note"></div>
   </div>`;
@@ -764,6 +770,11 @@ document.addEventListener('click', (e) => {
   if (!el || e.target.closest('.ph-info')) return;
   const target = el.dataset.go;
   if (!target) return;
+  if (target === 'sessions:flagged') {
+    PREFS.set('sess.filter', 'flagged');
+    go('sessions');
+    return;
+  }
   if (target.startsWith('sessions:')) {
     go('sessions');
     setTimeout(() => openSession(target.slice(9)), 150);

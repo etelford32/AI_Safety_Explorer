@@ -18,12 +18,12 @@ const VIEWS = [
     desc: 'Two-dimensional slices of the design space, sparsity shown, never interpolated.' },
   { id: 'compare', group: 'Analyse', title: 'Compare', key: 'c', icon: 'diff',
     desc: 'One run against its declared capability twin, with a word-level diff.' },
-  { id: 'sessions', group: 'Monitor', title: 'Sessions', key: 'm', icon: 'pulse',
-    desc: 'Live conversations an agent pushes turn by turn; register drift and reach flagged.' },
+  { id: 'sessions', group: 'Monitor', title: 'Conversations', key: 'm', icon: 'pulse',
+    desc: 'Every conversation — pushed live by an agent or imported — the ones worth a look first.' },
   { id: 'live', group: 'Monitor', title: 'Live', key: 'l', icon: 'chat',
     desc: 'Paste a conversation and read how its register moved across the turns.' },
-  { id: 'collect', group: 'Collect', title: 'Collect', key: 'd', icon: 'download',
-    desc: 'Run a campaign (Tier A), capture from a chat window (B) or import transcripts (C).' },
+  { id: 'collect', group: 'Collect', title: 'Add data', key: 'd', icon: 'download',
+    desc: 'Drop exports and logs, watch agent folders, capture chats, or run a campaign.' },
   { id: 'annotate', group: 'Review', title: 'Annotate', key: 'a', icon: 'pen',
     desc: 'Blinded human rating — the Layer 2 reference set.' },
   { id: 'coanalyse', group: 'Review', title: 'Co-analyse', key: 'n', icon: 'split',
@@ -600,6 +600,10 @@ function paletteItems() {
     { kind: 'action', label: 'Toggle reading font (proportional / mono)', run: () => $('#tb-prose').click() },
     { kind: 'action', label: 'Zoom in', run: () => $('#tb-zoom-up').click() },
     { kind: 'action', label: 'Zoom out', run: () => $('#tb-zoom-dn').click() },
+    { kind: 'action', label: 'Import conversations…', hint: 'exports, agent logs, JSON, CSV, transcripts — the format is detected',
+      run: () => { go('collect'); setTimeout(() => $('#intake-file')?.click(), 400); } },
+    { kind: 'action', label: 'Paste a conversation', run: () => typeof openPasteModal === 'function' && openPasteModal() },
+    { kind: 'action', label: 'Conversations worth a look', run: () => { PREFS.set('sess.filter', 'flagged'); go('sessions'); } },
     { kind: 'action', label: 'Load demo data (mock provider)', run: () => typeof demoSeed === 'function' && demoSeed() },
     { kind: 'action', label: 'Start / stop the simulated agent stream', run: () => typeof demoStreamToggle === 'function' && demoStreamToggle() },
     { kind: 'action', label: 'Refresh data now', run: () => pollStatus(true) },
@@ -794,14 +798,14 @@ function initKeys() {
 
 /* -------------------------------------------------------------- toasts */
 
-function toast(html, tone = '') {
+function toast(html, tone = '', ms = 3200) {
   const box = $('#toasts');
   const t = document.createElement('div');
   t.className = `toast ${tone}`;
   t.innerHTML = html;
   box.appendChild(t);
   requestAnimationFrame(() => t.classList.add('show'));
-  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 3200);
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, ms);
 }
 
 /* ------------------------------------------------------------ status poll */
@@ -830,6 +834,7 @@ async function pollStatus(force = false) {
   setBadge('sessions', s.n_alert ? String(s.n_alert) : (s.n_watch ? String(s.n_watch) : ''),
     s.n_alert ? 'bad' : 'warn');
   renderDemoBanner(s.demo);
+  if (typeof intakeStatus === 'function') intakeStatus(s);
 
   const v = s.data_version || '';
   const runsV = v.split('/').slice(0, -1).join('/');
@@ -883,7 +888,11 @@ function ago(iso) {
   if (s < 60) return `${Math.round(s)}s ago`;
   if (s < 3600) return `${Math.round(s / 60)}m ago`;
   if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
+  if (s < 45 * 86400) return `${Math.round(s / 86400)}d ago`;
+  // Past a few weeks, a date reads better than a count of days ("1048d ago").
+  const d = new Date(t);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) });
 }
 
 function startPolling() {

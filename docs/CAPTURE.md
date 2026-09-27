@@ -4,10 +4,11 @@ The Explorer's rule is **push, never pull**: it never reaches into another app o
 screen. A chat you have in a browser tab reaches it the same way an agent's turns do — a
 source *chooses* to send them. For Claude.ai and ChatGPT that source is a small userscript
 (`src/safety_explorer/web/explorer-capture.user.js`). It adds an **Explorer** button to the
-page, and it sends the conversation **only when you click Send, or while you have switched
-Follow on for that one chat**, and **only to the Explorer on your own computer**.
+page, and it sends the conversation **only when you click Send, while you have switched
+Follow on for that one chat, or while you have switched "every chat" on for that site**, and
+**only to the Explorer on your own computer**.
 
-Captured conversations arrive in **Sessions** as Tier B — a chat window does not show the
+Captured conversations arrive in **Conversations** as Tier B — a chat window does not show the
 model version, the system prompt or the sampling settings, and the instrument says so rather
 than pooling them with API runs.
 
@@ -38,6 +39,7 @@ Open a chat on claude.ai or chatgpt.com. A small **Explorer** pill sits at the b
 | **found N turn(s)** | The script's reading of the page, before anything is sent: how many turns, how many are yours, and the model name as the page displays it. If this says 0 on a chat that plainly has messages, the site has changed its markup — see *When a site changes* below. |
 | **Send conversation** | Sends every finished turn. Safe to click again: turns the Explorer already has are acknowledged, not duplicated. |
 | **Follow** | For this chat only, sends each new turn as it finishes. A reply still being written is held back until the site stops streaming it *and* its text has stopped changing for about a second, so a half-written reply is never stored. Follow is remembered per chat and is off for every new one. |
+| **Every ChatGPT / Claude chat** | Follow switched on for every conversation you open on that site, until you switch it off — the automatic mode. The pill reads **Capturing** while it is on. It is per site and off by default; turning it on is the same deliberate act as Follow, made once. |
 | **Send selection** | Select part of any page and send just that. Where the selection covers messages the script recognises, those messages go with their roles; anywhere else, the text goes to the Explorer's own splitter (the Live view's), which reports how it split it — or that it could not find speaker markers and read the whole selection as one reply. Works on pages the script knows nothing about. |
 | **open ↗** | Opens this session in the Explorer. |
 | **drift** chip | The session's register-drift status as the Explorer reads it (quiet / watch / alert). |

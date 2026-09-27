@@ -1601,6 +1601,34 @@ on every view while any is stored. And one chart that implied a trend it did not
 stance facets threaded C_intro between C and D — now draws the A→F ladder as the line and
 the introductory twins as hollow marks at their level.
 
+**Bring the conversations you already have (v0.33).** Getting data in used to mean knowing
+which of four doors to use and which shape each wanted. But most people who want to look at
+how a model behaves already have the conversations — a ChatGPT or Claude.ai history, an
+agent's session logs, an eval harness's output — in whatever shape the producing tool chose.
+So the intake reads the shape instead of asking for one (`intake.py`): detection by content,
+never extension (a ChatGPT and a Claude.ai `conversations.json` share a name and nothing
+else); ten formats parsed to one `Conversation`; each format carrying the provenance tier it
+earns (a chat export or an agent's own log is Tier B, an assembled file Tier C). The parsing
+keeps the instrument's rules: roles are read, never guessed, so a transcript the splitter
+cannot split confidently is refused rather than imported; hidden scaffolding, reasoning traces
+and image payloads are left out and *counted*; an agent's tool calls and results are kept as
+`tool` turns, shown in place and excluded from the register reading. Storage
+(`intake_store.py`) is idempotent and incremental — the same export twice adds nothing, a
+grown log adds only its new turns, an edited conversation becomes a branch and is never
+rewritten — which is what makes watching possible (`sources.py`): an inbox folder imports
+whatever is saved into it, and a connected folder (Claude Code's logs, Codex CLI's, any folder)
+is re-checked every few seconds, re-reading only files whose size or date changed, so an
+agent working in another window appears turn by turn. The consent rule is push-never-pull
+carried over to files: *finding* sources reads names, sizes and dates only, nothing is opened
+until the user connects or imports it, and only the Explorer's own pages can reach the intake
+endpoints. One bridge back to measurement: a conversation that *opens* with a corpus prompt is
+a Tier B capture of that prompt, so its first reply is also stored as a run and scored — the
+opening question only, because asked mid-conversation the same words carry context the corpus
+prompt never had. And because the point of importing a history is to find the conversations
+worth reading, every conversation is triaged on arrival (a register shift, refusals, talk of
+being tested, high expressed agency, an answer key), cached against its turn count so a list
+of thousands sorts by "worth a look" in one query.
+
 ### [ADD] One command that asks whether the instrument is sound (v0.12)
 
 Every arm in this document shipped with a falsification test, and the record of those

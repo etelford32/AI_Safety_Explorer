@@ -304,14 +304,76 @@ def cmd_import(args) -> int:
     c, _ = _corpus_and_lint(args)
     conn = db.init_db(args.db)
     runner.snapshot_corpus(conn, c, lint.run(c).clean)
+    if args.format == "auto":
+        return _import_auto(conn, c, args.path)
+    if len(args.path) != 1:
+        print("--format jsonl / chatml takes one file", file=sys.stderr)
+        return 2
     stats = ingest.import_file(
-        conn, c, Path(args.path), fmt=args.format, surface=args.surface,
+        conn, c, Path(args.path[0]), fmt=args.format, surface=args.surface,
         tier=args.tier, default_model=args.model,
     )
     print(f"{stats['rows']} rows: {stats['matched']} matched, {stats['unmatched']} unmatched")
     if stats["unmatched"]:
         print("unmatched rows are stored with prompt_id NULL and are listed by "
               "'explorer unmatched' — triage them rather than ignoring them.")
+    return 0
+
+
+def _import_auto(conn, c, paths: list[str]) -> int:
+    """Import anything: exports, logs, folders, zips, JSON, CSV, transcripts."""
+    from . import intake, intake_store, sessions
+    total_new = 0
+    for path in paths:
+        batches = intake.detect_path(path)
+        found = [b for b in batches if b.conversations or b.pairs]
+        if not found:
+            notes = "; ".join(n for b in batches for n in b.notes) or "no conversations recognised"
+            print(f"{path}: {notes}")
+            continue
+        for b in found:
+            d = b.describe()
+            pairs = f", {d['n_pairs']} pair(s)" if d["n_pairs"] else ""
+            print(f"{path}: {d['label']} (Tier {d['tier']}) — {d['n_conversations']} conversation(s), "
+                  f"{d['n_turns']} turns{pairs}")
+        stats = intake_store.import_batches(conn, c, found)
+        intake_store.record_event(conn, str(path), dict(stats))
+        total_new += stats["new"]
+        print(f"  stored: {stats['new']} new, {stats['updated']} grew, {stats['unchanged']} unchanged, "
+              f"{stats['branched']} branched · {stats['turns_added']} turns · {stats['runs_added']} scored run(s)")
+        for n in stats["notes"]:
+            print(f"  note: {n}")
+        for sid in stats["session_ids"]:
+            sessions.summary(conn, sid, c)
+    rows = sessions.list_sessions(conn, limit=5, order="interest", flagged=True, corpus=c)
+    if rows:
+        print("worth a look:")
+        for r in rows:
+            f = r["flags"]
+            why = [x for x in (("register shift" if r["drift"] == "alert" else ""),
+                               (f"{f.get('refusals')} refusal(s)" if f.get("refusals") else ""),
+                               ("mentions testing" if f.get("aware") else ""),
+                               (f"agency {f.get('agency_peak')}/5" if f.get("agency") else ""),
+                               ("answer key" if f.get("layer0") else "")) if x]
+            print(f"  {r['label'][:70]}  —  {', '.join(why)}")
+    print("open the Explorer (explorer serve) → Conversations to read them.")
+    return 0
+
+
+def cmd_sources(args) -> int:
+    """Where conversations already live on this computer (names and sizes only)."""
+    from . import sources
+    conn = db.init_db(args.db)
+    found = sources.discover(conn)
+    if not found["known"] and not found["exports"]:
+        print("nothing found in the usual places (Claude Code, Codex CLI, exports in ~/Downloads)")
+    for k in found["known"]:
+        print(f"{k['label']}: {k['n_files']} file(s) in {k['path']}"
+              f"{' — connected' if k['connected'] else ''}\n  import with: explorer import {k['path']}")
+    for e in found["exports"]:
+        print(f"{e['kind']}: {e['path']}{' — already imported' if e['imported'] else ''}")
+    inbox = sources.default_inbox(args.db)
+    print(f"inbox (imported automatically while `explorer serve` runs): {inbox}")
     return 0
 
 
@@ -1327,14 +1389,17 @@ def build_parser() -> argparse.ArgumentParser:
     cap.add_argument("--notes", default="")
     cap.set_defaults(func=cmd_capture)
 
-    imp = sub.add_parser("import", help="bulk-import transcripts (Tier C)")
-    imp.add_argument("path")
-    imp.add_argument("--format", default="jsonl", choices=["jsonl", "chatml"])
+    imp = sub.add_parser("import", help="import conversations: exports, agent logs, JSON, CSV, "
+                                        "transcripts — the format is detected")
+    imp.add_argument("path", nargs="+", help="files, folders or zips")
+    imp.add_argument("--format", default="auto", choices=["auto", "jsonl", "chatml"],
+                     help="auto (default) detects the format; jsonl/chatml is the Tier C prompt/response import")
     imp.add_argument("--surface", default="api")
     imp.add_argument("--tier", default="C", choices=["A", "B", "C"])
     imp.add_argument("--model", default="unknown")
     imp.set_defaults(func=cmd_import)
 
+    sub.add_parser("sources", help="find conversation logs and exports on this computer").set_defaults(func=cmd_sources)
     sub.add_parser("unmatched", help="list imported runs that matched no prompt").set_defaults(func=cmd_unmatched)
     sub.add_parser("features", help="recompute automatic features from stored responses").set_defaults(func=cmd_features)
 

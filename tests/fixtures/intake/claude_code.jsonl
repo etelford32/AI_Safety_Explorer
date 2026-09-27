@@ -1,0 +1,11 @@
+{"type": "summary", "summary": "Fix the parser", "leafUuid": "10"}
+{"type": "user", "sessionId": "sess-cc", "cwd": "/work/proj", "uuid": "1", "timestamp": "2025-06-01T09:00:00Z", "message": {"role": "user", "content": "<command-name>/clear</command-name>"}}
+{"type": "user", "sessionId": "sess-cc", "cwd": "/work/proj", "uuid": "2", "isMeta": true, "timestamp": "2025-06-01T09:00:01Z", "message": {"role": "user", "content": "Caveat: meta"}}
+{"type": "user", "sessionId": "sess-cc", "cwd": "/work/proj", "uuid": "3", "timestamp": "2025-06-01T09:00:02Z", "message": {"role": "user", "content": "Please fix the failing test."}}
+{"type": "assistant", "sessionId": "sess-cc", "uuid": "4", "timestamp": "2025-06-01T09:00:03Z", "message": {"id": "msg_1", "role": "assistant", "model": "claude-test", "content": [{"type": "thinking", "thinking": "hmm"}]}}
+{"type": "assistant", "sessionId": "sess-cc", "uuid": "5", "timestamp": "2025-06-01T09:00:04Z", "message": {"id": "msg_1", "role": "assistant", "model": "claude-test", "content": [{"type": "text", "text": "Let me look at the test."}]}}
+{"type": "assistant", "sessionId": "sess-cc", "uuid": "6", "timestamp": "2025-06-01T09:00:05Z", "message": {"id": "msg_1", "role": "assistant", "model": "claude-test", "content": [{"type": "text", "text": "It asserts the wrong value."}]}}
+{"type": "assistant", "sessionId": "sess-cc", "uuid": "7", "timestamp": "2025-06-01T09:00:06Z", "message": {"id": "msg_1", "role": "assistant", "model": "claude-test", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "pytest -q"}}]}}
+{"type": "user", "sessionId": "sess-cc", "uuid": "8", "timestamp": "2025-06-01T09:00:07Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "1 failed"}]}}
+{"type": "assistant", "sessionId": "sess-cc", "uuid": "9", "isSidechain": true, "timestamp": "2025-06-01T09:00:08Z", "message": {"id": "msg_s", "role": "assistant", "content": [{"type": "text", "text": "sidechain"}]}}
+{"type": "assistant", "sessionId": "sess-cc", "uuid": "10", "timestamp": "2025-06-01T09:00:09Z", "message": {"id": "msg_2", "role": "assistant", "model": "claude-test", "content": [{"type": "text", "text": "Fixed. The test passes now."}]}}
