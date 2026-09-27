@@ -152,7 +152,7 @@ def status_report(conn, started: float | None = None, limit: int = 25) -> dict[s
     # alert are semantic or lexical. Report it so the menu bar can warn when it is the
     # fallback. register_model() is cached, so this is cheap after the first call.
     model = st.register_model()
-    from . import dashboard
+    from . import dashboard, demo
     return {
         "ok": True,
         "version": __version__,
@@ -166,6 +166,7 @@ def status_report(conn, started: float | None = None, limit: int = 25) -> dict[s
         "sessions": watching,
         "embedding_backend": model.backend.name if model else None,
         "embedding_trustworthy": bool(model and st.model_trustworthy(model)),
+        "demo": demo.present(conn),
     }
 
 

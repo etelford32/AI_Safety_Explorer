@@ -1576,6 +1576,31 @@ CITATION.cff, SECURITY.md (private reporting; the local server's access rules), 
 (the rules that keep the measurements honest), CI for the test suite on every push, and a
 macOS build on every version tag that smoke-tests the bundle before attaching it to the release.
 
+**Every number says what it means (v0.32).** A review of the interface against one question —
+could a reader who has not read this document say what each screen found? — turned up the
+same few failures everywhere. Headline numbers stood alone in the instrument's own vocabulary
+("+0.41 DiD", "0.57 mean hit", "0/9 metrics usable"); status was carried by a red or amber
+border and nothing else; the small charts had no scale, truncated category names ("inten",
+"speci") and red/blue bars with no key; panel titles were letter-spaced grey capitals at a
+2.5:1 contrast; four views opened on "Render a slice." or "Press start."; and the demo's
+scripted "findings" were marked only by a small chip, so a screenshot of one could pass for
+a measurement. The fixes are one rule each. **Every reading has a sentence**: one function per
+analysis (`READ` in `overview.js`) writes the plain answer — "Yes, in intent. When the intent
+framing turns risky (D vs C), expert phrasing loses 0.41 more capability…" — and both the
+Overview tile and the top of the matching Results panel show it, so the two can never
+disagree. **Status is an icon and a word before it is a colour**: four kinds (Finding — a
+pre-registered interval cleared zero; Review — a spotlight for a human, not a verdict;
+Clean; No data), keyed once above the tiles and used the same way in tiles, panel headers
+and the results index. **Small charts keep a scale**: axis ends labelled, full names on
+horizontal bars, a key where colour means something, and a tooltip on every mark.
+**Every ink passes WCAG AA** (4.5:1) on every surface, and a test holds it there. **No view
+opens empty**: the surface starts on a source that has data and re-renders on change,
+Compare opens on a risky variant against its twin with a one-sentence summary of what
+survived, and Annotate and Co-analyse say what they are for. **Demo data announces itself**
+on every view while any is stored. And one chart that implied a trend it did not have — the
+stance facets threaded C_intro between C and D — now draws the A→F ladder as the line and
+the introductory twins as hollow marks at their level.
+
 ### [ADD] One command that asks whether the instrument is sound (v0.12)
 
 Every arm in this document shipped with a falsification test, and the record of those
@@ -1670,7 +1695,9 @@ recording of what we *cannot* observe.
 
 ## 7. Explorer UI
 
-A scientific instrument, not an admin dashboard: monospace, dense, no chrome.
+A scientific instrument, not an admin dashboard: dense, no chrome — prose in a proportional
+face, numbers and identifiers monospace. Every headline number carries a sentence saying what
+it means and a status that is an icon and a word, not a colour alone (v0.32).
 
 - Five dimension sliders → the corpus variant nearest that point in the design space
   (v0.1 selects from the authored corpus; it does not synthesise prompts, because a

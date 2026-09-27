@@ -65,10 +65,35 @@ const ICONS = {
   play: 'M7 4l13 8-13 8z',
   stop: 'M6 6h12v12H6z',
   side: 'M3 4h18v16H3zM9 4v16',
+  alert: 'M12 3.5l9.5 16.5h-19zM12 10v4.5M12 17.4v.01',
+  eye: 'M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12zM12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z',
+  check: 'M20 6.5L9.5 17 4 11.5',
+  ring: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16z',
+  flask: 'M9 3h6M10 3v6l-5.5 9.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3M7.5 15h9',
 };
 
 const icon = (name, cls = 'ic') =>
   `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[name] || ''}"/></svg>`;
+
+/* Status is never colour alone: every state has an icon and a word, then a colour. Four
+   kinds, used the same way everywhere — a tile, a panel header, the results index.
+     finding  a pre-registered test whose interval cleared zero (or a control that failed)
+     review   worth a human read — a spotlight, not a verdict
+     ok       tested, and within tolerance
+     none     nothing to read yet */
+const BADGE = {
+  finding: { icon: 'alert', word: 'Finding' },
+  review: { icon: 'eye', word: 'Review' },
+  ok: { icon: 'check', word: 'Clean' },
+  none: { icon: 'ring', word: 'No data' },
+};
+const TONE_BADGE = { bad: 'finding', warn: 'review', good: 'ok' };
+
+function badge(kind, label = null, tip = '') {
+  const b = BADGE[kind] || BADGE.none;
+  return `<span class="badge b-${kind in BADGE ? kind : 'none'}"${tip ? ` data-tip="${esc(tip)}"` : ''}>`
+    + `${icon(b.icon, 'ic')}<span>${esc(label || b.word)}</span></span>`;
+}
 
 /* ------------------------------------------------------------ preferences */
 /* Per-viewer conveniences only. Storage can be absent (a private window, a locked-down
@@ -487,15 +512,37 @@ function enhancePanels(root = document) {
 
 /* Called by the loaders: the one line a collapsed panel shows. */
 function setSummary(panel, html, tone = '') {
+  // The verdict wears its status icon, so a finding and a clean result differ in shape as
+  // well as colour.
+  const mark = TONE_BADGE[tone] ? icon(BADGE[TONE_BADGE[tone]].icon, 'ic sum-ic') : '';
   const el = document.getElementById(`sum-${panel}`);
-  if (el) { el.innerHTML = html; el.className = `ph-sum ${tone}`; }
+  if (el) { el.innerHTML = mark + html; el.className = `ph-sum ${tone}`; }
   const toc = document.getElementById(`toc-sum-${panel}`);
   if (toc) {
-    toc.innerHTML = html;
+    toc.innerHTML = mark + html;
     toc.className = `toc-sum ${tone}`;
     toc.parentElement.dataset.tip = toc.textContent;
     toc.parentElement.dataset.tipSide = 'right';
   }
+}
+
+/* The answer to the question a panel's title asks, in plain words, at the top of the
+   panel — the same sentence the Overview tile shows (see READ in overview.js). Pass null
+   to clear it. */
+function setAnswer(panel, r) {
+  const sec = document.getElementById(`sec-${panel}`);
+  if (!sec) return;
+  let el = sec.querySelector(':scope > .panel-body > .answer, :scope > .answer');
+  if (!r || !r.html) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'answer';
+    const body = sec.querySelector(':scope > .panel-body');
+    if (body) body.prepend(el);
+    else sec.querySelector(':scope > h2')?.after(el);
+  }
+  el.dataset.kind = r.kind || '';
+  el.innerHTML = `${r.kind ? badge(r.kind, r.label) : ''}<div class="ans-t">${r.html}</div>`;
 }
 
 function setAllPanels(root, collapsed) {
@@ -782,6 +829,7 @@ async function pollStatus(force = false) {
   if (runsEl) runsEl.textContent = `${Number(s.n_runs).toLocaleString()} runs`;
   setBadge('sessions', s.n_alert ? String(s.n_alert) : (s.n_watch ? String(s.n_watch) : ''),
     s.n_alert ? 'bad' : 'warn');
+  renderDemoBanner(s.demo);
 
   const v = s.data_version || '';
   const runsV = v.split('/').slice(0, -1).join('/');
@@ -796,6 +844,27 @@ async function pollStatus(force = false) {
       try { fn({ status: s, runsChanged: runsChanged || force, view: ROUTE.view }); } catch (err) { console.error(err); }
     }
   }
+}
+
+/* While demo data is stored, every view says so — above the fold, in words. The demo runs
+   the mock provider, whose "findings" are scripted; a screenshot of one must never pass
+   for a measurement of a model. */
+function renderDemoBanner(demo) {
+  const el = $('#demo-banner');
+  if (!el) return;
+  const on = demo && (demo.runs || demo.sessions);
+  el.hidden = !on;
+  if (!on) { el.innerHTML = ''; el.dataset.key = ''; return; }
+  const key = `${demo.runs}/${demo.sessions}`;
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
+  const parts = [demo.runs ? `${Number(demo.runs).toLocaleString()} demo run(s)` : '',
+    demo.sessions ? `${demo.sessions} demo session(s)` : ''].filter(Boolean).join(' and ');
+  el.innerHTML = `${icon('flask', 'ic')}<div class="db-t"><b>Demo data.</b> ${parts} from the <span data-term="mock">mock provider</span>
+      are loaded — scripted responses, not a measurement of any model. Readings and verdicts
+      on this data show the instrument working, not findings.</div>
+    <button class="ghost" id="db-clear">Clear demo data</button>`;
+  $('#db-clear').addEventListener('click', () => (typeof demoClear === 'function' ? demoClear() : null));
 }
 
 function fmtDur(sec) {

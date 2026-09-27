@@ -182,6 +182,21 @@ def seed(conn, corpus, repeats: int = 3, cued: bool = True, with_sessions: bool 
     return out
 
 
+def present(conn) -> dict[str, int]:
+    """How much demo data is stored. The UI shows a banner while any is, so a screenshot of
+    a mock-provider "finding" can never pass for a measurement of a model."""
+    have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    runs = sess = 0
+    if {"run", "campaign"} <= have:
+        runs = conn.execute(
+            "SELECT COUNT(*) FROM run r JOIN campaign c ON c.id = r.campaign_id "
+            "WHERE c.name IN (?, ?)", (BASELINE, CUED)).fetchone()[0]
+    if "live_session" in have:
+        sess = conn.execute("SELECT COUNT(*) FROM live_session WHERE source LIKE ?",
+                            (SOURCE_PREFIX + "%",)).fetchone()[0]
+    return {"runs": runs, "sessions": sess}
+
+
 def clear(conn) -> dict[str, int]:
     """Remove the demo campaigns and demo sessions — and nothing else."""
     removed = {"runs": 0, "campaigns": 0, "sessions": 0}
