@@ -378,3 +378,28 @@ def test_it_starts_under_an_ascii_locale(tmp_path):
     finally:
         proc.kill()
         proc.wait()
+
+
+# -- the app's self-test (run by CI natively, under Rosetta, and from the mounted DMG) ------------
+
+def test_self_test_imports_what_the_app_carries_and_reports_it(capsys):
+    from explorer_loader import __main__ as entry
+    assert entry.main(["--self-test"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["failed"] == [] and report["tls"] == "ok"
+    assert report["imports"]["ssl"] == "ok" and report["imports"]["sqlite3"] == "ok"
+    assert set(report["imports"]) == set(entry.CARRIED)
+    assert report["machine"]
+
+
+def test_self_test_fails_on_a_package_that_is_present_but_will_not_import(
+        capsys, monkeypatch, tmp_path):
+    from explorer_loader import __main__ as entry
+    (tmp_path / "brokenslice.py").write_text("raise ImportError('incompatible architecture')\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(entry, "CARRIED", ("ssl", "brokenslice", "not_bundled_here"))
+    assert entry.main(["--self-test"]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["failed"] == ["brokenslice"]
+    assert "incompatible architecture" in report["imports"]["brokenslice"]
+    assert report["imports"]["not_bundled_here"] == "absent"

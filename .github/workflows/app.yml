@@ -1,11 +1,18 @@
 name: macOS app
 
-# Builds "AI Safety Explorer.app" — the self-updating loader — and smoke-tests it.
-# When release.yml calls it with a tag (the usual way to release: merge a PR carrying
-# docs/releases/v<version>.md), or on a pushed version tag (v1.2.3), it also publishes the
-# zipped app to that GitHub Release, which is the file testers download. It also runs on any
-# push that changes the loader or its packaging (GitHub does not apply path filters to tag
-# pushes, so tags always build), and by hand from the Actions tab.
+# Builds "AI Safety Explorer.app" — the self-updating loader — as a disk image (.dmg) and a zip,
+# for Intel and Apple Silicon, and checks them the way a downloader gets them. When
+# release.yml calls it with a tag (the usual way to release: merge a PR carrying
+# docs/releases/v<version>.md), or on a pushed version tag (v1.2.3), it also publishes both
+# to that GitHub Release. The link https://github.com/<repo>/releases/latest/download/
+# AI-Safety-Explorer-macOS.dmg then always serves the newest.
+#
+# Signing: with the Developer ID and notarization secrets set (docs/SIGNING.md), the app and
+# the image are signed, notarized and stapled, and open like any app from the web. Without
+# them, the app is ad-hoc signed and macOS asks the user to approve it once (docs/INSTALL.md).
+#
+# It also runs on any push that changes the loader or its packaging (GitHub does not apply
+# path filters to tag pushes, so tags always build), and by hand from the Actions tab.
 on:
   push:
     tags: ["v*"]
@@ -38,19 +45,76 @@ jobs:
           python-version: "3.12"
       - name: Install build dependencies
         run: pip install -e ".[desktop,anthropic,openai]"
-      - name: Loader tests on macOS
-        run: pip install pytest && python -m pytest -q tests/test_loader.py
+      # Wheels published per architecture (the provider SDKs' jiter and pydantic_core) install
+      # only this runner's arm64 slice; add the x86_64 one so the app runs on Intel Macs too.
+      - name: Make native packages universal (Intel + Apple Silicon)
+        run: python packaging/macho.py fuse
+      - name: Loader and packaging tests on macOS
+        run: pip install pytest && python -m pytest -q tests/test_loader.py tests/test_packaging.py
       - name: Build and smoke-test the app
         run: bash packaging/build.sh
+      - name: Every binary runs on Intel and Apple Silicon
+        run: |
+          APP="dist/AI Safety Explorer.app"
+          python packaging/macho.py report "$APP"
+          python packaging/macho.py check "$APP"
+          # And by Apple's own tool, independently of the reader above.
+          python packaging/macho.py sign-order "$APP" | while IFS=$'\t' read -r kind path; do
+            if [[ "$kind" != "bundle" ]]; then lipo "$path" -verify_arch arm64 x86_64; fi
+          done
+      - name: Sign
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: bash packaging/sign.sh "dist/AI Safety Explorer.app"
+      - name: Notarize the app
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: bash packaging/notarize.sh "dist/AI Safety Explorer.app"
+      - name: Run the signed app, and its Intel slice under Rosetta
+        run: |
+          bash packaging/smoke.sh "dist/AI Safety Explorer.app"
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license || true
+          fi
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            bash packaging/smoke.sh "dist/AI Safety Explorer.app" --arch x86_64
+          else
+            echo "::warning::Rosetta is unavailable on this runner: the x86_64 slices were checked with lipo, not run"
+          fi
       - name: Zip
         run: |
           cd dist
           ditto -c -k --keepParent "AI Safety Explorer.app" AI-Safety-Explorer-macOS.zip
           shasum -a 256 AI-Safety-Explorer-macOS.zip | tee AI-Safety-Explorer-macOS.zip.sha256
+      - name: Disk image (built, then opened and run as a downloader would)
+        run: bash packaging/make_dmg.sh "dist/AI Safety Explorer.app" dist/AI-Safety-Explorer-macOS.dmg
+      - name: Notarize the disk image
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: bash packaging/notarize.sh dist/AI-Safety-Explorer-macOS.dmg
+      - name: Checksum the disk image
+        run: |
+          cd dist
+          shasum -a 256 AI-Safety-Explorer-macOS.dmg | tee AI-Safety-Explorer-macOS.dmg.sha256
+      - name: What Gatekeeper will say
+        run: |
+          if spctl --assess --type execute -vv "dist/AI Safety Explorer.app"; then
+            echo "Notarized: Gatekeeper accepts the app on first launch."
+          else
+            echo "::notice::Not notarized: on first launch, macOS asks the user to approve the app once (docs/INSTALL.md; to remove the step, docs/SIGNING.md)."
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: AI-Safety-Explorer-macOS
           path: |
+            dist/AI-Safety-Explorer-macOS.dmg
+            dist/AI-Safety-Explorer-macOS.dmg.sha256
             dist/AI-Safety-Explorer-macOS.zip
             dist/AI-Safety-Explorer-macOS.zip.sha256
       - name: Attach to the release
@@ -73,5 +137,6 @@ jobs:
                 --generate-notes --latest
             fi
           fi
-          gh release upload "$TAG" dist/AI-Safety-Explorer-macOS.zip \
+          gh release upload "$TAG" dist/AI-Safety-Explorer-macOS.dmg \
+            dist/AI-Safety-Explorer-macOS.dmg.sha256 dist/AI-Safety-Explorer-macOS.zip \
             dist/AI-Safety-Explorer-macOS.zip.sha256 --clobber

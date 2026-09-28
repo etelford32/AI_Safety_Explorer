@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime exceptions for an embedded Python. They are used only when the app is signed
+  with a Developer ID (packaging/sign.sh).
+  * allow-unsigned-executable-memory: pyobjc and ctypes build callable trampolines at run time.
+  * disable-library-validation: the runtime may load a native module this build did not sign.
+    An example is one brought by a later Explorer version, which the app downloads rather than
+    rebuilds.
+  The app is not sandboxed, and nothing else is requested.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

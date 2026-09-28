@@ -51,10 +51,11 @@ Then drag `dist/AI Safety Explorer.app` to `/Applications`. It builds with **py2
 bundles the `safety_explorer` package (with its web assets), the corpus (into the app's
 Resources), and the pywebview runtime.
 
-**First-launch Gatekeeper.** The app is unsigned (fine for your own machine). macOS will
-refuse a double-click the first time — right-click the app → **Open** → **Open**, once. For
-sharing it beyond your machine you'd sign and notarize it; that's out of scope for a personal
-research build.
+**First-launch Gatekeeper.** An app you build yourself opens directly: it was never downloaded,
+so Gatekeeper does not check it. The published download (`.dmg`, built by CI for Intel and Apple
+Silicon) is approved once on first launch ([INSTALL.md](INSTALL.md#the-first-launch)). Once
+the repository has a Developer ID, CI signs and notarizes it and no approval is needed
+([SIGNING.md](SIGNING.md)).
 
 ## Where your data lives
 
