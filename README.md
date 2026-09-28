@@ -58,8 +58,9 @@ information, because the information is identical on both sides of the compariso
 **Testers: [download AI Safety Explorer for Mac](https://github.com/etelford32/AI_Safety_Explorer/releases/latest/download/AI-Safety-Explorer-macOS.dmg)** (`.dmg`, macOS 11 or later,
 Intel or Apple Silicon). Open it, drag the app to Applications, and approve it once on first
 launch ([how](docs/INSTALL.md#the-first-launch)). It keeps itself up to date from this
-repository. It checks each new version before switching to it, and falls back to the last one
-that worked. For channels and where your data lives, see [`docs/INSTALL.md`](docs/INSTALL.md).
+repository: the Explorer code on every launch, and the app itself when a release ships a newer
+one. It checks each new version before switching to it, and falls back to the last one that
+worked. For channels and where your data lives, see [`docs/INSTALL.md`](docs/INSTALL.md).
 
 **Developers:** clone and `pip install -e '.[dev]'` — the quick start is below.
 

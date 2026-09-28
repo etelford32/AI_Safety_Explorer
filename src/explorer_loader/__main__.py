@@ -4,6 +4,8 @@
     python -m explorer_loader --headless       check, update, start; print the URL; serve
     python -m explorer_loader --check-only     check and install an update, then exit
     python -m explorer_loader --self-test      import what the app carries; print JSON; exit
+    python -m explorer_loader --update-app     replace this app with the latest release's, if
+                                               newer; the swap happens as this process exits
 
 Options for trying channels and for tests: --channel stable|dev|branch:<name>, --repo
 owner/name, --data-dir PATH, --api URL (a stand-in for api.github.com), --bundled DIR.
@@ -112,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-update", action="store_true", help="start what is installed")
     p.add_argument("--self-test", action="store_true",
                    help="import what the app carries, print JSON, exit 1 if any fails")
+    p.add_argument("--update-app", action="store_true",
+                   help="install a newer app from the latest release, if there is one")
     p.add_argument("--version", action="version", version=f"explorer-loader {LOADER_VERSION}")
     a = p.parse_args(argv)
     ensure_utf8()
@@ -128,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     store.save()
     bundled = Path(a.bundled) if a.bundled else bundled_dir()
 
-    if not (a.headless or a.check_only):
+    if not (a.headless or a.check_only or a.update_app):
         from .app import run_window
         return run_window(store, bundled, api=a.api)
 
@@ -136,6 +140,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"step": step, "state": state, "detail": detail}), flush=True)
 
     loader = Loader(store, bundled, emit, api=a.api)
+    if a.update_app:
+        res = loader.check_app()
+        if res.get("status") == "staged":
+            res["install"] = loader.install_app_update(relaunch=False)
+        print(json.dumps({"app_update": res}), flush=True)
+        return 0 if res.get("status") in ("none", "staged") else 1
     result = {"check": None}
     if not a.no_update:
         result["check"] = loader.check()

@@ -205,8 +205,8 @@ def verify(tree: Path) -> dict[str, Any]:
     api = (project.get("tool", {}).get("explorer-loader", {}) or {}).get("api", 1)
     if int(api) > LOADER_API:
         raise VerifyError(f"version {version} needs a newer app (loader contract {api}; this "
-                          f"app speaks {LOADER_API}). Download the latest app from the "
-                          "Releases page.")
+                          f"app speaks {LOADER_API}). The app installs a newer one itself once a "
+                          "release carries it, or download it from the Releases page.")
 
     missing = []
     for dep in project.get("project", {}).get("dependencies", []) or []:
@@ -216,7 +216,8 @@ def verify(tree: Path) -> dict[str, Any]:
             missing.append(name)
     if missing:
         raise VerifyError(f"version {version} needs {', '.join(missing)}, which this app does "
-                          "not include. Download the latest app from the Releases page.")
+                          "not include. The app installs a newer one itself once a release "
+                          "carries it, or download it from the Releases page.")
 
     # Compile every module on this interpreter: a syntax this Python does not speak fails
     # here, not halfway through starting.

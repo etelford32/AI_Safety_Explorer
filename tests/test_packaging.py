@@ -191,3 +191,27 @@ def test_sign_order_is_inside_out_and_marks_executables(tmp_path):
         names.index("Contents/Frameworks/Python.framework/Versions/3.12")
     assert not any(p.endswith("Versions/Current") for p in names)
     assert "." not in names and "" not in names             # never the app itself
+
+
+# -- the release manifest installed apps read -----------------------------------------------------
+
+def test_the_manifest_describes_the_zip_the_updater_checks(tmp_path, monkeypatch):
+    import hashlib
+    import json
+
+    from explorer_loader import LOADER_VERSION, MIN_MACOS, appupdate
+    spec = importlib.util.spec_from_file_location("manifest", ROOT / "packaging" / "manifest.py")
+    manifest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(manifest)
+    (tmp_path / appupdate.ZIP).write_bytes(b"the app")
+    (tmp_path / appupdate.DMG).write_bytes(b"the image")
+    monkeypatch.setenv("TAG", "v1.2.3")
+    assert manifest.main([str(tmp_path)]) == 0
+    m = json.loads((tmp_path / appupdate.MANIFEST).read_text())
+    assert m["loader_version"] == LOADER_VERSION and m["min_macos"] == MIN_MACOS
+    assert m["files"][appupdate.ZIP] == {"sha256": hashlib.sha256(b"the app").hexdigest(),
+                                         "size": 7}
+    assert appupdate.DMG in m["files"] and m["tag"] == "v1.2.3"
+    (tmp_path / appupdate.ZIP).unlink()
+    with pytest.raises(SystemExit):
+        manifest.main([str(tmp_path)])

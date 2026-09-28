@@ -69,8 +69,35 @@ version that worked; if none does, it starts the copy built into the app, which 
 You are never left with nothing to run.
 
 While you work, the app checks for updates every half hour. A new version is downloaded and
-verified in the background and announced in the Explorer; it takes effect at the next launch
+verified in the background and announced in the Explorer. It takes effect at the next launch
 (or **Updates → Restart**), never in the middle of a session.
+
+### The app updates itself, too
+
+The steps above keep the Explorer *code* current. The app around it changes less often. It
+holds the launcher, its Python, and the packages it carries, such as the Anthropic and OpenAI
+SDKs. When a release ships a newer app, your copy replaces itself:
+
+1. **Found.** The app compares its own version with the app in the latest release, shortly
+   after it starts and then every half hour.
+2. **Downloaded and checked in the background.** The download must match the size and SHA-256
+   the release publishes. It must also carry this app's identity and a code signature that
+   verifies. When the app is signed with a Developer ID, the new one must come from the same
+   developer.
+3. **Installed when you quit**, or at once with **Updates → Restart**. A few seconds after the
+   app closes, the new app takes its place. If that fails, the old app is put back and the
+   next launch tells you why.
+
+Your data, settings and installed Explorer versions are untouched, because they live in the
+data folder and not in the app. **Updates → Check for Updates Now** checks for both kinds of
+update.
+
+The app can only replace itself from a folder you can write to, such as Applications. A copy
+opened straight from the disk image, or from Downloads without moving it, tells you about the
+new version and links to the download instead.
+
+Apps from v0.31.0 do not update themselves yet: download the new app once, and from then on
+it updates itself.
 
 ### Channels
 

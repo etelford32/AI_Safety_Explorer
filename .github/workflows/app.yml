@@ -5,7 +5,10 @@ name: macOS app
 # release.yml calls it with a tag (the usual way to release: merge a PR carrying
 # docs/releases/v<version>.md), or on a pushed version tag (v1.2.3), it also publishes both
 # to that GitHub Release. The link https://github.com/<repo>/releases/latest/download/
-# AI-Safety-Explorer-macOS.dmg then always serves the newest.
+# AI-Safety-Explorer-macOS.dmg then always serves the newest. It also publishes app.json,
+# which installed apps read to replace themselves with a newer app
+# (src/explorer_loader/appupdate.py). Before any of it is published, a copy of the built app
+# is made to do exactly that against a stand-in release (packaging/selfupdate_e2e.sh).
 #
 # Signing: with the Developer ID and notarization secrets set (docs/SIGNING.md), the app and
 # the image are signed, notarized and stapled, and open like any app from the web. Without
@@ -85,6 +88,8 @@ jobs:
           else
             echo "::warning::Rosetta is unavailable on this runner: the x86_64 slices were checked with lipo, not run"
           fi
+      - name: The app replaces itself with a newer release's app
+        run: bash packaging/selfupdate_e2e.sh "dist/AI Safety Explorer.app"
       - name: Zip
         run: |
           cd dist
@@ -102,6 +107,10 @@ jobs:
         run: |
           cd dist
           shasum -a 256 AI-Safety-Explorer-macOS.dmg | tee AI-Safety-Explorer-macOS.dmg.sha256
+      - name: Release manifest (what installed apps read to update themselves)
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: python packaging/manifest.py dist
       - name: What Gatekeeper will say
         run: |
           if spctl --assess --type execute -vv "dist/AI Safety Explorer.app"; then
@@ -113,6 +122,7 @@ jobs:
         with:
           name: AI-Safety-Explorer-macOS
           path: |
+            dist/app.json
             dist/AI-Safety-Explorer-macOS.dmg
             dist/AI-Safety-Explorer-macOS.dmg.sha256
             dist/AI-Safety-Explorer-macOS.zip
@@ -137,6 +147,9 @@ jobs:
                 --generate-notes --latest
             fi
           fi
+          # app.json goes up last: an installed app acts on it, so the files it names are
+          # already there when it appears.
           gh release upload "$TAG" dist/AI-Safety-Explorer-macOS.dmg \
             dist/AI-Safety-Explorer-macOS.dmg.sha256 dist/AI-Safety-Explorer-macOS.zip \
             dist/AI-Safety-Explorer-macOS.zip.sha256 --clobber
+          gh release upload "$TAG" dist/app.json --clobber

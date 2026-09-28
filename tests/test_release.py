@@ -60,3 +60,12 @@ def test_every_download_link_in_the_docs_is_a_file_the_release_carries():
     assert "AI-Safety-Explorer-macOS.dmg" in linked       # the README's download button
     missing = {n: d for n, d in linked.items() if n not in uploaded}
     assert not missing, f"linked but never uploaded: {missing}"
+
+
+def test_the_app_updater_reads_files_the_release_carries_and_the_manifest_goes_last():
+    from explorer_loader import appupdate
+    app = (ROOT / ".github" / "workflows" / "app.yml").read_text(encoding="utf-8")
+    uploads = re.findall(r"dist/([\w.-]+)", app[app.index("gh release upload"):])
+    assert appupdate.ZIP in uploads and appupdate.MANIFEST in uploads
+    # An installed app acts on app.json at once, so what it names must already be there.
+    assert uploads.index(appupdate.MANIFEST) > uploads.index(appupdate.ZIP)

@@ -6,7 +6,9 @@ change is an app nobody keeps current. So the downloadable app is split in two:
 * **The loader** (this package) — small and stable. It opens a window, asks GitHub whether
   newer Explorer code exists on the chosen channel, downloads it, *verifies* it will run on
   this app before switching to it, and then starts it in the same window. It changes
-  rarely, and only a change to it needs a new download.
+  rarely. When it does, a release carries the new app and the app replaces itself
+  (appupdate.py): it downloads and checks the new app in the background, and swaps it in
+  when you quit.
 * **The Explorer** (`safety_explorer`) — the code that changes. It arrives as a source
   tarball from GitHub and runs in-process on the loader's Python. It has no third-party
   runtime dependencies, which is what makes this safe: a new version needs nothing the app
@@ -19,7 +21,10 @@ last good one — and, failing that, for the copy baked into the app, which alwa
 offline.
 """
 
-LOADER_VERSION = "1.0.0"
+LOADER_VERSION = "1.1.0"
+
+#: The oldest macOS the app runs on (its Info.plist, and the release manifest's `min_macos`).
+MIN_MACOS = "11.0"
 
 #: The contract between loader and Explorer: the Explorer exposes
 #: `safety_explorer.server.serve(db_path, corpus_path, host, port)` and reads its paths from
