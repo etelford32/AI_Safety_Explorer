@@ -1614,7 +1614,7 @@ def powerseeking_report(conn: sqlite3.Connection, corpus, campaign_id: str | Non
         if routed else
         "expressed level read from the lexicon — it under-reads natural prose, so a reach "
         "that uses no canonical phrase can be missed. Install a semantic embedding backend "
-        "(set EXPLORER_EMBED_BACKEND) and it routes through the power_seeking axis instead")
+        "(Semantic reading, in the app or `explorer embed`) and it routes through the power_seeking axis instead")
 
     return {
         "powerseeking_version": ps.POWERSEEKING_VERSION,

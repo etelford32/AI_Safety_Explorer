@@ -155,6 +155,9 @@ def analyse_turns(raw_turns: list[dict[str, Any]], corpus=None,
                           "one-sidedly")}
     turns: list[dict[str, Any]] = []
     last_user = ""
+    # A remote embedding backend answers a batch as fast as it answers one text: embed every
+    # model turn up front, so the per-turn readings below are cache hits.
+    st.prefetch([t["text"] for t in raw_turns if t.get("role") != "user"])
 
     for i, t in enumerate(raw_turns):
         entry: dict[str, Any] = {"index": i, "role": t["role"],
@@ -192,14 +195,14 @@ def analyse_turns(raw_turns: list[dict[str, Any]], corpus=None,
         # transcript this is where recall shows: a warm turn the lexicon read as neutral
         # may read as warm here — IF the backend is a real embedding. With the stdlib
         # fallback it is a placeholder, and `trustworthy` says so.
-        entry["embedding"] = st.embedding_reading(t["text"])
+        entry["embedding"] = st.embedding_reading(t["text"], language=language)
         # Expressed agency, read the same way and routed the same way: the embedding axis
         # when it can be trusted, the lexicon otherwise. Where the session declared the
         # autonomy it granted, the reach past that grant is computed per turn; on a pasted
         # transcript with no declared grant, the expressed reading stands alone and the
         # mandate comparison is left to the reader — exactly the INTEGRATION.md contract.
         entry["powerseeking"] = ps.probe(t["text"], language)
-        entry["powerseeking_embedding"] = ps.embedding_reading(t["text"])
+        entry["powerseeking_embedding"] = ps.embedding_reading(t["text"], language=language)
         if autonomy_grant is not None:
             entry["powerseeking_overreach"] = ps.overreach(
                 entry["powerseeking"], autonomy_grant, entry["powerseeking_embedding"])
@@ -234,6 +237,9 @@ def analyse_turns(raw_turns: list[dict[str, Any]], corpus=None,
               if t["role"] == "user" and (t.get("corpus_match") or {}).get("layer0")]
     underread = [t for t in assistant if t.get("underread")]
     emb = next((t.get("embedding") for t in assistant if t.get("embedding")), None)
+    # In a language with no validated lexicon, no turn has a lexical reading — but a backend
+    # trusted in that language still reads every turn, so the drift runs on it alone.
+    drift_turns = scored or [t for t in assistant if (t.get("embedding") or {}).get("trustworthy")]
 
     return {
         "live_version": LIVE_VERSION,
@@ -252,7 +258,7 @@ def analyse_turns(raw_turns: list[dict[str, Any]], corpus=None,
         "underread_turns": [t["index"] for t in underread],
         "embedding_backend": (emb or {}).get("backend"),
         "embedding_trustworthy": bool((emb or {}).get("trustworthy")),
-        "drift": _drift(scored, trajectory, postures, emb),
+        "drift": _drift(drift_turns, trajectory, postures, emb),
         "powerseeking": _powerseeking(assistant, autonomy_grant),
         "limits": _limits(split, scored, cuts, layer0, underread, emb, language),
     }
@@ -351,7 +357,7 @@ def _drift(scored, trajectory, postures, emb) -> dict[str, Any]:
         if trustworthy else
         "register channels read from the lexicon — it under-reads natural prose, so this "
         "drift can miss a real shift that uses no canonical markers. Install a semantic "
-        "embedding backend (set EXPLORER_EMBED_BACKEND) to route drift through it")
+        "embedding backend (Semantic reading, in the app or `explorer embed`) to route drift through it")
     return out
 
 

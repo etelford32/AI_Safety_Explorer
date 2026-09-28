@@ -1629,6 +1629,30 @@ worth reading, every conversation is triaged on arrival (a register shift, refus
 being tested, high expressed agency, an answer key), cached against its turn count so a list
 of thousands sorts by "worth a look" in one query.
 
+**Semantic reading in the app, trusted per language (v0.34).** The embedding register was
+built and controlled long ago, but its only real backend needed PyTorch — gigabytes that
+cannot ship inside the desktop app — and its only switch was an environment variable nobody
+double-clicking an app will set. (Two latent bugs surfaced on the way: the anchor file was
+opened relative to the working directory, which the app does not control, so the app had no
+embedding reading at all; and nothing imported the sentence-transformers backend, so asking
+for it by name silently fell back to hashing.) The backends are now models behind an HTTP API
+— a local Ollama (`bge-m3`, `nomic-embed-text`, …), anything that speaks the OpenAI embeddings
+protocol (OpenAI, LM Studio, llama.cpp, vLLM), and Voyage — reached with the standard library
+alone, so the self-updating app gets them as a code update. The choice is made in the app,
+saved beside the database, and **earned**: a candidate runs the register controls before it
+can become active, and the generalization control now runs in every corpus language — the
+held-out probes translated one for one into French, Spanish and Japanese and projected onto
+the English axes, a cross-lingual generalization test. A multilingual model passes all four
+and is trusted in all four; an English-only one is trusted in English and declines the rest,
+so a Japanese conversation is read by nothing rather than by a reading nobody validated.
+Imported conversations are tagged with their language; where no lexicon exists, drift runs
+on the embedding alone when the backend is trusted there. Vectors are cached on disk per
+model and text, so a history is embedded once; switching backends re-reads every
+conversation's triage in the background (the cache is versioned by the backend and its
+trusted languages); and a backend that goes away degrades to the untrusted lexicon within a
+second and is retried every minute, rather than hanging every reading. Cloud backends send
+the text being read to the named provider — shown before the choice, and never the default.
+
 ### [ADD] One command that asks whether the instrument is sound (v0.12)
 
 Every arm in this document shipped with a falsification test, and the record of those

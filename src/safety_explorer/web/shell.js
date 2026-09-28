@@ -603,6 +603,8 @@ function paletteItems() {
     { kind: 'action', label: 'Import conversations…', hint: 'exports, agent logs, JSON, CSV, transcripts — the format is detected',
       run: () => { go('collect'); setTimeout(() => $('#intake-file')?.click(), 400); } },
     { kind: 'action', label: 'Paste a conversation', run: () => typeof openPasteModal === 'function' && openPasteModal() },
+    { kind: 'action', label: 'Semantic reading — choose the embedding backend', hint: 'Ollama, LM Studio, OpenAI, Voyage — tested before use, trusted per language',
+      run: () => typeof openSemantic === 'function' && openSemantic() },
     { kind: 'action', label: 'Conversations worth a look', run: () => { PREFS.set('sess.filter', 'flagged'); go('sessions'); } },
     { kind: 'action', label: 'Load demo data (mock provider)', run: () => typeof demoSeed === 'function' && demoSeed() },
     { kind: 'action', label: 'Start / stop the simulated agent stream', run: () => typeof demoStreamToggle === 'function' && demoStreamToggle() },
@@ -841,12 +843,18 @@ async function pollStatus(force = false) {
   const changed = STATUS.version !== null && v !== STATUS.version;
   const runsChanged = STATUS.runsVersion !== null && runsV !== STATUS.runsVersion;
   if (runsChanged && typeof API_CACHE !== 'undefined') API_CACHE.clear();
+  // A new embedding backend changes every register reading: drop cached analyses and let
+  // the open view re-read, exactly as for new data.
+  const emb = (s.embedding || {}).fingerprint || '';
+  const embChanged = STATUS.embedding !== undefined && emb !== STATUS.embedding;
+  STATUS.embedding = emb;
+  if (embChanged && typeof API_CACHE !== 'undefined') API_CACHE.clear();
   STATUS.version = v;
   STATUS.runsVersion = runsV;
   STATUS.last = s;
-  if (changed || force) {
+  if (changed || force || embChanged) {
     for (const fn of STATUS.listeners) {
-      try { fn({ status: s, runsChanged: runsChanged || force, view: ROUTE.view }); } catch (err) { console.error(err); }
+      try { fn({ status: s, runsChanged: runsChanged || force || embChanged, view: ROUTE.view }); } catch (err) { console.error(err); }
     }
   }
 }

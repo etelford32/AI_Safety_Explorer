@@ -100,7 +100,7 @@ def store_conversation(conn, batch: intake.Batch, conv: intake.Conversation,
             meta["branch_of"] = base
         insert(conn, "live_session", {
             "id": sid, "label": (conv.title or sid)[:200], "source": batch.source,
-            "tier": batch.tier, "language": "en", "meta": meta,
+            "tier": batch.tier, "language": (conv.meta or {}).get("language") or "en", "meta": meta,
             "created_at": conv.created_at or now,
             "updated_at": conv.updated_at or conv.created_at or now,
         })

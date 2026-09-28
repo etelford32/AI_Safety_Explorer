@@ -278,6 +278,10 @@ class IntakeWorker:
     def submit_scan(self, source_id: str | None = None) -> None:
         self.tasks.put(("scan", {"source_id": source_id}))
 
+    def submit_reread(self) -> None:
+        """Re-read every conversation's triage — after the embedding backend changed."""
+        self.tasks.put(("reread", {}))
+
     def save_upload(self, name: str, stream, length: int) -> Path:
         if length > MAX_UPLOAD:
             raise ValueError(f"upload too large ({length:,} bytes; the limit is {MAX_UPLOAD:,})")
@@ -316,6 +320,8 @@ class IntakeWorker:
             try:
                 if kind == "file":
                     self._import_file(conn, **args)
+                elif kind == "reread":
+                    self._reread(conn)
                 elif kind == "scan":
                     self._scan(conn, args.get("source_id"))
                     if args.get("periodic") or args.get("source_id") is None:
@@ -331,6 +337,17 @@ class IntakeWorker:
             finally:
                 with self.lock:
                     self.state.update(busy=False, current=None)
+
+    def _reread(self, conn) -> None:
+        from . import embed_config
+        ids = [r["id"] for r in query(conn, "SELECT id FROM live_session ORDER BY updated_at DESC")]
+        label = f"re-reading with {embed_config.active_spec()}"
+        for i, sid in enumerate(ids):
+            if self._stop.is_set() or not self.tasks.empty() and self.tasks.queue[0][0] == "reread":
+                return      # a newer re-read is queued; it supersedes this one
+            with self.lock:
+                self.state.update(busy=True, current=label, done=i, total=len(ids))
+            sessions.summary(conn, sid, self.corpus)
 
     def _progress(self, label: str) -> Callable[[int, int, str], None]:
         def cb(done: int, total: int, item: str) -> None:

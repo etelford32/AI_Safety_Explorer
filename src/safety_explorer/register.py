@@ -65,6 +65,13 @@ DIMENSIONS = ("warmth", "moralizing", "distancing", "refusal", "power_seeking")
 #: anchors it was built from.
 GENERALIZATION_MARGIN = 0.05
 
+#: Languages the held-out probes are translated into (`probe_positive_<lang>` in the anchor
+#: file). The axes are always built from the English anchors; a translated probe asks
+#: whether the backend places the SAME meaning in another language on the same side of the
+#: same axis — cross-lingual generalization. A multilingual model earns trust per language
+#: here; an English-only one is trusted for English and declines the rest.
+PROBE_LANGUAGES = ("fr", "es", "ja")
+
 #: Leave-one-out separation is expected to be near perfect on the anchors — they define
 #: the axis — so anything below this is a sign the exemplar set is internally
 #: contradictory rather than a sign the backend is weak.
@@ -188,20 +195,31 @@ class RegisterModel:
         out["passes"] = worst >= SEPARATION_FLOOR
         return out
 
-    def generalization(self) -> dict[str, Any]:
+    def generalization(self, language: str | None = None) -> dict[str, Any]:
         """The control that tells a real embedding from a bag of surface forms.
 
         The probe sentences share no content words with the anchors, so a lexical backend
         cannot place them and scores near chance; a semantic one orders them correctly.
         This is what earns the `trustworthy` flag — a backend's own `semantic` claim does
         not.
+
+        With a `language`, the probes are the translated ones and the axes stay English:
+        does the backend put the same meaning, said in another language, on the same side?
         """
-        out: dict[str, Any] = {"by_dimension": {}}
+        suffix = "" if language in (None, "en") else f"_{language}"
+        if suffix and not all(f"probe_positive{suffix}" in b and f"probe_negative{suffix}" in b
+                              for b in self.anchors.values()):
+            return {"language": language, "available": False, "passes": False,
+                    "note": f"no translated probes for {language!r}"}
+        cache = self.__dict__.setdefault("_gen_cache", {})
+        if language in cache:
+            return cache[language]
+        out: dict[str, Any] = {"by_dimension": {}, "language": language or "en", "available": True}
         worst_margin = 1.0
         for dim, axis in self.axes.items():
             block = self.anchors[dim]
-            pp = self.backend.embed(block["probe_positive"])
-            pn = self.backend.embed(block["probe_negative"])
+            pp = self.backend.embed(block[f"probe_positive{suffix}"])
+            pn = self.backend.embed(block[f"probe_negative{suffix}"])
             pos_mean = sum(axis.project(v) for v in pp) / len(pp)
             neg_mean = sum(axis.project(v) for v in pn) / len(pn)
             margin = pos_mean - neg_mean
@@ -217,17 +235,37 @@ class RegisterModel:
         out["note"] = (
             "the probes share no content words with the anchors, so a lexical backend "
             "scores near zero here while a semantic one orders them correctly"
-        )
+            if not suffix else
+            f"the English axes, probed in {language}: a multilingual backend places the "
+            "translated probes on the same side; an English-only one does not")
+        cache[language] = out
         return out
 
-    def trustworthy(self) -> bool:
-        """A reading may be believed only if the backend actually generalises.
+    def trusted_languages(self) -> list[str]:
+        """The languages this backend's reading may be believed in: English when it passes
+        generalization, and each translated-probe language it also passes. Empty for a
+        backend that does not claim to be semantic, whatever it scores."""
+        if not self.backend.semantic:
+            return []
+        cached = self.__dict__.get("_trusted_langs")
+        if cached is not None:
+            return list(cached)
+        langs = []
+        if self.generalization()["passes"]:
+            langs.append("en")
+            langs += [lang for lang in PROBE_LANGUAGES if self.generalization(lang)["passes"]]
+        self.__dict__["_trusted_langs"] = langs
+        return list(langs)
+
+    def trustworthy(self, language: str = "en") -> bool:
+        """A reading may be believed only if the backend actually generalises — in the
+        language the text is in.
 
         Both conditions, and the empirical one is the real gate: a backend that declares
         itself semantic but fails generalization is not trustworthy, and a backend that
         passes generalization while modestly declaring itself is.
         """
-        return self.backend.semantic and self.generalization()["passes"]
+        return language in self.trusted_languages() if self.backend.semantic else False
 
     def topic_null(self, benign: Sequence[str], alarming: Sequence[str]) -> dict[str, Any]:
         """Does alarming TOPIC vocabulary move the register score? It must not.
@@ -291,9 +329,17 @@ class RegisterModel:
         return out
 
 
-def load(path: str | Path = "corpus/register_anchors.toml",
+def anchors_path() -> Path:
+    """The anchor file, found the way the corpus is — never relative to the working
+    directory, which a desktop app does not control (the app was launched with the file
+    out of reach, so it quietly had no embedding reading at all)."""
+    from . import paths
+    return paths.corpus_dir() / "register_anchors.toml"
+
+
+def load(path: str | Path | None = None,
          backend: embed_mod.Backend | None = None) -> RegisterModel:
-    data = tomllib.loads(Path(path).read_text())
+    data = tomllib.loads(Path(path or anchors_path()).read_text(encoding="utf-8"))
     be = backend or embed_mod.get_backend("hashing")
     anchors = {d: data[d] for d in DIMENSIONS if d in data}
     axes = {}
@@ -305,7 +351,7 @@ def load(path: str | Path = "corpus/register_anchors.toml",
                          version=data.get("anchors_version", "0"))
 
 
-def lint(path: str | Path = "corpus/register_anchors.toml") -> list[str]:
+def lint(path: str | Path | None = None) -> list[str]:
     """Faults that would make the axis meaningless before any backend runs.
 
     Kept separate from the backend controls on purpose: this checks the exemplar file is
@@ -313,8 +359,9 @@ def lint(path: str | Path = "corpus/register_anchors.toml") -> list[str]:
     embeds it.
     """
     problems: list[str] = []
+    path = path or anchors_path()
     try:
-        data = tomllib.loads(Path(path).read_text())
+        data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
     except FileNotFoundError:
         return [f"{path} not found"]
     for dim in DIMENSIONS:
@@ -325,6 +372,14 @@ def lint(path: str | Path = "corpus/register_anchors.toml") -> list[str]:
         for key in ("positive", "negative", "probe_positive", "probe_negative"):
             if len(block.get(key, [])) < 3:
                 problems.append(f"{dim}.{key}: needs at least 3 exemplars")
+        # A translation must mirror the English probes one for one, or the per-language
+        # control would compare different claims.
+        for lang in PROBE_LANGUAGES:
+            for key in ("probe_positive", "probe_negative"):
+                tr = block.get(f"{key}_{lang}")
+                if tr is not None and len(tr) != len(block.get(key, [])):
+                    problems.append(f"{dim}.{key}_{lang}: {len(tr)} translation(s) for "
+                                    f"{len(block.get(key, []))} probe(s)")
         # A probe that reuses an anchor's content words cannot test generalization.
         anchor_words = {w.lower() for k in ("positive", "negative")
                         for s in block.get(k, [])

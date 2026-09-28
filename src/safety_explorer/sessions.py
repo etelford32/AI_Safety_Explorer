@@ -192,6 +192,17 @@ def append_paste(conn, text: str, session_id: str | None = None,
             "note": split["note"]}
 
 
+def _triage_drift(report: dict[str, Any]) -> str:
+    """The drift status a list shows. With a backend trusted in the conversation's
+    language, the semantic drift (which reads meaning, so it sees a shift the lexicon
+    misses); otherwise the lexical one, as before."""
+    from . import stance as st
+    d = report.get("drift") or {}
+    if d.get("source") == "embedding" and d.get("status"):
+        return d["status"]
+    return st.register_drift(report["trajectory"], report["posture_sequence"])["status"]
+
+
 def session_drift(conn, session_id: str) -> str | None:
     """The list-level drift status of one session (quiet / watch / alert), or None."""
     sess = query_one(conn, "SELECT language FROM live_session WHERE id = ?", (session_id,))
@@ -201,7 +212,7 @@ def session_drift(conn, session_id: str) -> str | None:
     turns = [{"role": t["role"], "text": t["text"]} for t in session_turns(conn, session_id)
              if t["role"] in ("user", "assistant")]
     report = live.analyse_turns(turns, corpus=None, cuts=None, language=sess["language"])
-    return st.register_drift(report["trajectory"], report["posture_sequence"])["status"]
+    return _triage_drift(report)
 
 
 def list_sessions(conn, limit: int = 50, with_drift: bool = True, *, corpus=None,
@@ -237,13 +248,14 @@ def list_sessions(conn, limit: int = 50, with_drift: bool = True, *, corpus=None
     clause = f"WHERE {' AND '.join(where)}" if where else ""
     orderby = ("COALESCE(ss.score, -1) DESC, s.updated_at DESC" if order == "interest"
                else "s.updated_at DESC")
+    version = summary_version()
     if order == "interest" and with_drift and budget > 0:
         # Sorting by a score needs the score: bring stale summaries up to date first.
         stale = query(conn, f"""
             SELECT s.id FROM live_session s LEFT JOIN session_summary ss ON ss.session_id = s.id
             {clause} {'AND' if clause else 'WHERE'} (ss.session_id IS NULL OR ss.version != ?
                 OR ss.n_turns != (SELECT COUNT(*) FROM live_turn t WHERE t.session_id = s.id))
-            ORDER BY s.updated_at DESC LIMIT ?""", (*params, SUMMARY_VERSION, budget))
+            ORDER BY s.updated_at DESC LIMIT ?""", (*params, version, budget))
         for r in stale:
             summary(conn, r["id"], corpus)
         budget -= len(stale)
@@ -258,7 +270,7 @@ def list_sessions(conn, limit: int = 50, with_drift: bool = True, *, corpus=None
         GROUP BY s.id ORDER BY {orderby} LIMIT ? OFFSET ?""", (*params, limit, offset))
     from . import db
     for r in rows:
-        fresh = (r["ss_n"] == r["n_turns"] and r["ss_version"] == SUMMARY_VERSION
+        fresh = (r["ss_n"] == r["n_turns"] and r["ss_version"] == version
                  and (corpus is None or r["ss_corpus"]))
         if fresh:
             summ = {"drift": r["ss_drift"], "flags": db.loads(r["ss_flags"], {}), "score": r["ss_score"]}
@@ -285,7 +297,15 @@ def list_sessions(conn, limit: int = 50, with_drift: bool = True, *, corpus=None
 DETAIL_WINDOW = 600
 
 #: Bumped when the triage reading changes, so every cached summary is recomputed.
-SUMMARY_VERSION = "1"
+SUMMARY_VERSION = "2"
+
+
+def summary_version() -> str:
+    """The triage version plus the embedding backend (and the languages it is trusted in):
+    choosing a new backend in the app makes every cached reading stale, and the list
+    re-reads each conversation with it."""
+    from . import embed_config
+    return f"{SUMMARY_VERSION}/{embed_config.fingerprint()}"
 #: How many user/assistant turns the triage reads — the most recent ones. An agent log can
 #: hold thousands; the flags only decide whether a conversation is worth opening, and the
 #: full reading of all of it is one click away.
@@ -309,7 +329,7 @@ def summary(conn, session_id: str, corpus=None, force: bool = False) -> dict[str
                   (session_id,))["n"]
     if not force:
         row = query_one(conn, "SELECT * FROM session_summary WHERE session_id = ?", (session_id,))
-        if (row and row["n_turns"] == n and row["version"] == SUMMARY_VERSION
+        if (row and row["n_turns"] == n and row["version"] == summary_version()
                 and (corpus is None or row["with_corpus"])):
             return {"drift": row["drift"], "flags": db.loads(row["flags"], {}), "score": row["score"]}
     sess = query_one(conn, "SELECT language FROM live_session WHERE id = ?", (session_id,))
@@ -321,7 +341,7 @@ def summary(conn, session_id: str, corpus=None, force: bool = False) -> dict[str
     windowed = len(turns) > SUMMARY_WINDOW
     turns = turns[-SUMMARY_WINDOW:]
     report = live.analyse_turns(turns, corpus=corpus, cuts=None, language=sess["language"])
-    drift = st.register_drift(report["trajectory"], report["posture_sequence"])["status"]
+    drift = _triage_drift(report)
     assistant = [t for t in report["turns"] if t["role"] == "assistant"]
     refusals = [t["index"] for t in assistant if any(sp["refusal"] for sp in t.get("spans") or [])]
     aware = [t["index"] for t in assistant
@@ -338,8 +358,9 @@ def summary(conn, session_id: str, corpus=None, force: bool = False) -> dict[str
     score = ((5 if drift == "alert" else 2 if drift == "watch" else 0)
              + min(3, len(refusals)) + (3 if aware else 0) + (3 if flags["agency"] else 0)
              + (2 if layer0 else 0))
+    flags["read_by"] = (report.get("drift") or {}).get("source") or "lexicon"
     db.upsert(conn, "session_summary", {
-        "session_id": session_id, "n_turns": n, "version": SUMMARY_VERSION,
+        "session_id": session_id, "n_turns": n, "version": summary_version(),
         "with_corpus": int(corpus is not None), "drift": drift, "flags": flags,
         "score": score, "computed_at": now_iso()}, key="session_id")
     conn.commit()

@@ -426,7 +426,7 @@ const TILE_LOAD = {
     });
     attn('power', ov.n_flagged ? { tone: 'warn', p: 5, html: `<b>${ov.n_flagged} response(s) reach past their mandate</b> — read the flagged evidence`, go: 'results/powerseeking' } : null);
     attn('power-null', gap !== null && !clean ? { tone: 'warn', p: 7, html: `<b>Agency lexicon moves on topic</b>: null gap ${fmt(gap, 3)} outside ±0.15`, go: 'results/powerseeking' } : null);
-    attn('backend', d.source !== 'embedding' ? { tone: 'info', p: 1, html: 'Register read via the <b>lexicon</b> — natural prose may be under-read. Gate a semantic backend on for the embedding reading.', tip: d.source_note } : null);
+    attn('backend', d.source !== 'embedding' ? { tone: 'info', p: 1, html: 'Register read via the <b>lexicon</b> — natural prose may be under-read. <b>Set up semantic reading</b> to read it by meaning.', tip: d.source_note, go: 'semantic' } : null);
   },
 
   async sandbag() {
@@ -612,9 +612,11 @@ async function renderStrip(ov) {
     [`${Number(ov.n_runs).toLocaleString()} runs`, 'Every stored run, all tiers'],
     [`${(ov.campaigns || []).length} campaigns`, (ov.campaigns || []).map((c) => c.name).join(', ')],
     [`${ov.human.annotations} annotations`, `${ov.human.annotated_runs} runs rated · ${ov.human.span_labels} span labels by a human`],
-    [`register: ${esc(s.embedding_backend || '—')}`, s.embedding_trustworthy ? 'Semantic backend trusted — embedding readings in use' : 'Fallback backend — lexicon readings in use'],
+    [`register: ${esc((s.embedding || {}).spec || s.embedding_backend || '—')}${s.embedding_trustworthy ? ` · ${esc(((s.embedding || {}).languages || []).join(', '))}` : ' · lexicon only'}`,
+      `${s.embedding_trustworthy ? 'A semantic backend reads register by meaning, trusted in the languages shown' : 'Register is read by the lexicon alone, which under-reads natural prose'} — click to choose the backend`, 'semantic'],
   ];
-  $('#ov-strip').innerHTML = chips.map(([t, tip]) => `<span class="strip-chip" data-tip="${esc(tip)}">${t}</span>`).join('');
+  $('#ov-strip').innerHTML = chips.map(([t, tip, act]) => `<span class="strip-chip${act ? ' act' : ''}" ${act ? `data-act="${act}" role="button" tabindex="0"` : ''} data-tip="${esc(tip)}">${t}</span>`).join('');
+  $$('#ov-strip [data-act="semantic"]').forEach((c) => c.addEventListener('click', openSemantic));
 }
 
 /* How to read the badges — one line, above the tiles it explains. */
@@ -770,6 +772,7 @@ document.addEventListener('click', (e) => {
   if (!el || e.target.closest('.ph-info')) return;
   const target = el.dataset.go;
   if (!target) return;
+  if (target === 'semantic') { openSemantic(); return; }
   if (target === 'sessions:flagged') {
     PREFS.set('sess.filter', 'flagged');
     go('sessions');

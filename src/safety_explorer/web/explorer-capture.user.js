@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Safety Explorer — chat capture
 // @namespace    https://github.com/etelford32/AI_Safety_Explorer
-// @version      0.33.0
+// @version      0.34.0
 // @author       Elliot Telford
 // @homepageURL  https://github.com/etelford32/AI_Safety_Explorer
 // @supportURL   https://github.com/etelford32/AI_Safety_Explorer/issues
@@ -43,7 +43,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.33.0';
+  const VERSION = '0.34.0';
   const DEFAULT_SERVER = 'http://127.0.0.1:8713';
   const STABLE_MS = 1200;      // a reply must stop changing this long before it is "done"
   const SCAN_DEBOUNCE_MS = 700;

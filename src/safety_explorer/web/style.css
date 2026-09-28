@@ -1039,3 +1039,28 @@ a.install:hover { text-decoration: none; filter: brightness(1.1); }
                  border-left: 2px solid var(--line); font: 11.5px/1.5 var(--mono); color: var(--ink-faint); }
 .live-turn.ctx .ctx-r { flex: none; text-transform: uppercase; letter-spacing: .1em; font-size: 9.5px; }
 .live-turn.ctx .ctx-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ================================================================ semantic reading */
+.modal:has(.sem) { width: min(760px, 94vw); }
+.sem p { margin: 0 0 10px; }
+.sem-current { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 10px 12px;
+               border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); margin-bottom: 4px; }
+.sem-current .badge { flex: none; margin-top: 2px; }
+.sem-spec { font: 600 15px var(--mono); margin: 2px 0; }
+.sem-cloud { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 6px; background: var(--bg); }
+.sem-cloud .inbox-row { margin-top: 6px; flex-wrap: wrap; }
+.sem-cloud input[type=password] { flex: 1; min-width: 160px; }
+.sem-cloud select { min-width: 150px; }
+.sem-testing { font: 13px var(--prose); color: var(--ink-dim); padding: 10px 0; }
+.sem-table { margin: 8px 0; font-size: 12px; }
+.sem-table td.good { color: var(--good); } .sem-table td.bad { color: var(--bad); }
+.sem-pull { margin: 6px 0; font: 12.5px var(--prose); }
+.sem-pull .bar { height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.sem-pull .bar > div { height: 100%; background: var(--accent); transition: width .4s; }
+#sem-result { margin-top: 12px; }
+.strip-chip.act { cursor: pointer; border-color: rgba(111,179,210,.45); }
+.strip-chip.act:hover { color: var(--ink); background: rgba(111,179,210,.08); }
+input[type=password] { background: var(--bg); color: var(--ink); border: 1px solid var(--line); padding: 5px 8px; font: 12px var(--mono); border-radius: 4px; }
+.sem .src-main .note { white-space: normal; overflow: visible; }
+.sem .src-row { align-items: flex-start; }
+.sem .src-row .ghost { flex: none; }

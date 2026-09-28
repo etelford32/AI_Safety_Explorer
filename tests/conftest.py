@@ -10,6 +10,14 @@ from safety_explorer import corpus as corpus_mod, db, runner
 from safety_explorer.providers import get_provider
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_embedding_settings(tmp_path_factory):
+    """No test reads the developer's own embedding choice or keys from data/."""
+    from safety_explorer import embed_config
+    embed_config.set_home(tmp_path_factory.mktemp("embed-home"))
+    yield
+
+
 @pytest.fixture(scope="session")
 def corpus():
     return corpus_mod.load(ROOT / "corpus")

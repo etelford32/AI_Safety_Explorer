@@ -28,7 +28,12 @@ WEB_ROOT = Path(__file__).parent / "web"
 SERVE_STARTED: float | None = None
 CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
                  ".svg": "image/svg+xml"}
-STATIC_FILES = ("/app.js", "/shell.js", "/overview.js", "/intake.js", "/style.css", "/favicon.svg")
+STATIC_FILES = ("/app.js", "/shell.js", "/overview.js", "/intake.js", "/semantic.js", "/style.css",
+                "/favicon.svg")
+
+
+#: The last evaluation of each backend, so "use" after "test" does not test twice.
+LAST_EVAL: dict[str, dict[str, Any]] = {}
 
 
 class DemoState:
@@ -175,8 +180,20 @@ def status_report(conn, started: float | None = None, limit: int = 25) -> dict[s
         "sessions": watching,
         "embedding_backend": model.backend.name if model else None,
         "embedding_trustworthy": bool(model and st.model_trustworthy(model)),
+        "embedding": {"spec": _embed_spec(), "languages": st.trusted_languages() if model else [],
+                      "fingerprint": _embed_fingerprint()},
         "demo": demo.present(conn),
     }
+
+
+def _embed_spec() -> str:
+    from . import embed_config
+    return embed_config.active_spec()
+
+
+def _embed_fingerprint() -> str:
+    from . import embed_config
+    return embed_config.fingerprint()
 
 
 def _table_exists(conn, name: str) -> bool:
@@ -468,6 +485,9 @@ class ExplorerHandler(BaseHTTPRequestHandler):
             if url.path.startswith("/api/intake/"):
                 return self._send_json(self._intake_post(url.path, body))
 
+            if url.path.startswith("/api/embedding/"):
+                return self._send_json(self._embedding_post(url.path, body))
+
             if url.path == "/api/live":
                 from . import live
 
@@ -570,6 +590,34 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 return {"ok": True}
             raise ValueError(f"unknown action {action!r}")
         raise ValueError(f"unknown intake request {path}")
+
+    # -- the semantic backend ---------------------------------------------
+
+    def _embedding_post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        from . import embed_config
+        if path == "/api/embedding/test":
+            spec = (body.get("spec") or "").strip()
+            if not spec:
+                raise ValueError("spec required")
+            result = embed_config.evaluate(spec)
+            LAST_EVAL[spec] = result
+            return result
+        if path == "/api/embedding/use":
+            spec = (body.get("spec") or "").strip()
+            cfg = embed_config.activate(spec, force=bool(body.get("force")), result=LAST_EVAL.get(spec))
+            if self.intake is not None:
+                self.intake.submit_reread()
+            return {"ok": True, "config": {k: v for k, v in cfg.items() if k != "controls"},
+                    "status": embed_config.status()}
+        if path == "/api/embedding/key":
+            embed_config.set_key(body.get("provider") or "", body.get("key") or "")
+            return {"ok": True, "has_key": embed_config.has_key(body.get("provider") or "")}
+        if path == "/api/embedding/pull":
+            model = (body.get("model") or "").strip()
+            if not model:
+                raise ValueError("model required")
+            return embed_config.start_pull(model)
+        raise ValueError(f"unknown embedding request {path}")
 
     # -- demo --------------------------------------------------------------
 
@@ -1013,6 +1061,13 @@ class ExplorerHandler(BaseHTTPRequestHandler):
             from . import sources
             return sources.status(self.conn, self.intake)
 
+        if path == "/api/embedding":
+            from . import embed_config
+            out = {"status": embed_config.status()}
+            if q.get("detect", "1") != "0":
+                out["detect"] = embed_config.detect()
+            return out
+
         if path == "/api/intake/discover":
             from . import sources
             return sources.discover(self.conn)
@@ -1377,6 +1432,9 @@ def serve(db_path: str, corpus_path: str, host: str = "127.0.0.1",
     httpd.annotator = annotator  # type: ignore[attr-defined]
     # The intake worker: imports what is dropped or committed, and watches the inbox and
     # every connected source for new conversations.
+    # The semantic backend's choice, keys and cache live beside the database.
+    from . import embed_config
+    embed_config.set_home(Path(db_path).resolve().parent)
     from . import sources
     httpd.intake = sources.IntakeWorker(str(db_path), c, sources.default_inbox(db_path)).start()  # type: ignore[attr-defined]
 

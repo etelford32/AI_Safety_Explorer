@@ -239,9 +239,56 @@ def _title_from(conv: Conversation) -> str:
     return (line[:77] + "…") if len(line) > 80 else (line or "untitled conversation")
 
 
+_STOP = {
+    "en": "the and is to of you that it in for with this are be have not can what i your will".split(),
+    "fr": "le la les et est des une un pour que qui dans pas vous je du sur avec ce il nous mais".split(),
+    "es": "el la los las y es que en un una por para con no se lo del al como pero su muy".split(),
+    "de": "der die das und ist nicht ich sie es ein eine zu mit auf für den von dem sich auch".split(),
+    "it": "il lo gli e è di che per un una non con del della sono ho anche questo ma".split(),
+    "pt": "o os as é de que em um uma para com não do da no na se por mas você".split(),
+}
+
+
+def detect_language(texts: list[str]) -> str:
+    """The language a conversation is in, roughly: by script for Japanese, Chinese,
+    Korean, Cyrillic and Arabic, and by the commonest function words for Latin-script
+    languages. Only as good as it needs to be: it decides which lexicon (if any) may read
+    the text and which language a backend has to be trusted in, and anything uncertain
+    falls back to English — the pre-detection behaviour."""
+    sample = " ".join(texts)[:6000]
+    if not sample.strip():
+        return "en"
+    kana = sum(1 for c in sample if "\u3040" <= c <= "\u30ff")
+    han = sum(1 for c in sample if "\u4e00" <= c <= "\u9fff")
+    hangul = sum(1 for c in sample if "\uac00" <= c <= "\ud7af")
+    cyr = sum(1 for c in sample if "\u0400" <= c <= "\u04ff")
+    arab = sum(1 for c in sample if "\u0600" <= c <= "\u06ff")
+    letters = sum(1 for c in sample if c.isalpha()) or 1
+    if (kana + han) / letters > 0.2:
+        return "ja" if kana > 0.05 * (kana + han) else "zh"
+    if hangul / letters > 0.2:
+        return "ko"
+    if cyr / letters > 0.3:
+        return "ru"
+    if arab / letters > 0.3:
+        return "ar"
+    words = re.findall(r"[a-zà-öø-ÿ']+", sample.lower())
+    if len(words) < 8:
+        return "en"
+    scores = {lang: sum(1 for w in words if w in set(sw)) for lang, sw in _STOP.items()}
+    best = max(scores, key=scores.get)
+    # Only move off English on a clear margin: a mixed or short text stays English.
+    if best != "en" and scores[best] >= 1.5 * max(scores["en"], 1) and scores[best] >= 4:
+        return best
+    return "en"
+
+
 def _finish(conv: Conversation) -> Conversation:
     if not conv.title:
         conv.title = _title_from(conv)
+    if "language" not in conv.meta:
+        conv.meta["language"] = detect_language(
+            [t["text"] for t in conv.turns[:24] if t["role"] in ("user", "assistant")])
     stamps = [t["at"] for t in conv.turns if t.get("at")]
     conv.created_at = conv.created_at or (min(stamps) if stamps else None)
     conv.updated_at = conv.updated_at or (max(stamps) if stamps else conv.created_at)

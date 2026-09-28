@@ -128,6 +128,10 @@ def get_backend(name: str = "hashing", **kwargs: Any) -> Backend:
     `semantic = False`, so nothing downstream silently treats a fallback as the model that
     was asked for.
     """
+    if name == "minilm" and name not in _BACKENDS:
+        # The sentence-transformers backend registers itself on import; nothing imported it,
+        # so asking for it by name used to fall straight back to hashing.
+        from . import embed_st  # noqa: F401
     if name in _BACKENDS:
         try:
             return _BACKENDS[name](**kwargs)

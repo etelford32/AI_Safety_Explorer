@@ -360,6 +360,74 @@ def _import_auto(conn, c, paths: list[str]) -> int:
     return 0
 
 
+def cmd_embed(args) -> int:
+    """Find, test and choose the semantic embedding backend — the same choice the app makes."""
+    from . import embed_config, register as reg
+    embed_config.set_home(Path(args.db).resolve().parent)
+    if args.action == "status":
+        st = embed_config.status()
+        print(f"reading register with: {st['spec']}"
+              f"{' (from EXPLORER_EMBED_BACKEND)' if st['from_env'] else ''}")
+        print(f"  trusted in: {', '.join(st['languages']) or 'nothing — lexicon only'}")
+        det = embed_config.detect()
+        ol = det["ollama"]
+        if ol["running"]:
+            got = ", ".join(m["name"] for m in ol["models"]) or "no embedding model yet"
+            print(f"Ollama at {ol['url']}: {got}")
+            for r in ol["recommended"]:
+                if not r["installed"]:
+                    print(f"  explorer embed pull {r['model']}   ({r['size']}, {r['languages']}) — {r['note']}")
+        else:
+            print(f"Ollama: not running (install from {ol['install_url']} for private, free, local models)")
+        if det["lmstudio"]["running"]:
+            print(f"LM Studio: {', '.join(det['lmstudio']['models']) or 'no embedding model loaded'}")
+        for k, c in det["cloud"].items():
+            print(f"{c['label']}: {'key saved' if c['has_key'] else f'no key (explorer embed key {k})'} — "
+                  f"models {', '.join(c['models'])}; sends text to {c['destination']}")
+        print("test one with: explorer embed test ollama:bge-m3   ·   use it with: explorer embed use ollama:bge-m3")
+        return 0
+    if not args.arg:
+        print(f"explorer embed {args.action} needs an argument", file=sys.stderr)
+        return 2
+    if args.action == "key":
+        import getpass
+        key = getpass.getpass(f"{args.arg} API key (stored owner-only beside the database): ")
+        embed_config.set_key(args.arg, key)
+        print("saved" if key else "removed")
+        return 0
+    if args.action == "pull":
+        from . import embed_remote as er
+        last = [""]
+
+        def prog(status, done, total):
+            line = f"{status} {int(100 * done / total)}%" if done and total else status
+            if line != last[0]:
+                print(f"  {line}", flush=True)
+                last[0] = line
+        er.ollama_pull(args.arg, on_progress=prog)
+        print(f"pulled {args.arg}; test it with: explorer embed test ollama:{args.arg}")
+        return 0
+    result = embed_config.evaluate(args.arg)
+    if not result.get("ok"):
+        print(f"could not test {args.arg}: {result.get('error')}", file=sys.stderr)
+        return 1
+    print(f"{args.arg}: {result['dim']}-dimensional, tested in {result['seconds']}s, "
+          f"text goes to {result['destination']}")
+    print(f"  exemplar coherence (worst leave-one-out AUC): {result['separation']['worst']}")
+    for lang, g in result["generalization"].items():
+        dims = "  ".join(f"{d} {m:+.2f}" for d, m in g["by_dimension"].items())
+        print(f"  {lang}: {'PASS' if g['passes'] else 'FAIL'}   {dims}")
+    print(f"  trusted in: {', '.join(result['languages']) or 'nothing'} (margin needed ≥ {result['threshold']})")
+    if args.action == "use":
+        try:
+            embed_config.activate(args.arg, force=args.force, result=result)
+        except ValueError as exc:
+            print(f"not activated: {exc} (--force to use it anyway)", file=sys.stderr)
+            return 1
+        print(f"now reading register with {args.arg}; a running Explorer picks it up on its next reading")
+    return 0
+
+
 def cmd_sources(args) -> int:
     """Where conversations already live on this computer (names and sizes only)."""
     from . import sources
@@ -605,7 +673,10 @@ def cmd_register(args) -> int:
             print(f"  - {f}")
         return 1
 
-    backend = embed_mod.get_backend(args.backend)
+    from . import embed_config
+    embed_config.set_home(Path(args.db).resolve().parent)
+    spec = args.backend or embed_config.active_spec()
+    backend = embed_config.build(spec) if ":" in spec else embed_mod.get_backend(spec)
     m = reg.load(backend=backend)
     print(f"embedding register — anchors v{m.version}, backend {backend.name!r} "
           f"(declares semantic={backend.semantic})")
@@ -626,7 +697,12 @@ def cmd_register(args) -> int:
               f"({'placed' if v['separated'] else 'not placed'})")
     print(f"    {gen['note']}")
 
-    print(f"\n  trustworthy: {m.trustworthy()}")
+    langs = m.trusted_languages()
+    for lang in reg.PROBE_LANGUAGES:
+        g = m.generalization(lang)
+        if g.get("available"):
+            print(f"    in {lang}: worst margin {g['worst_margin']:+.3f}  {'PASS' if g['passes'] else 'FAIL'}")
+    print(f"\n  trustworthy: {m.trustworthy()}  (languages: {', '.join(langs) or 'none'})")
     if not m.trustworthy():
         print("  This backend's reading is a placeholder, not a measurement. Either it")
         print("  does not claim to be semantic, or it failed generalization above. The")
@@ -1419,9 +1495,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     rg = sub.add_parser("register",
                         help="the embedding register model and its controls")
-    rg.add_argument("--backend", default="hashing",
-                    help="embedding backend name (default: the stdlib hashing fallback)")
+    rg.add_argument("--backend", default=None,
+                    help="a backend spec (hashing, ollama:bge-m3, openai:text-embedding-3-large, "
+                         "voyage:voyage-3.5, …); default: the active one")
     rg.set_defaults(func=cmd_register)
+
+    em = sub.add_parser("embed", help="choose the semantic backend that reads register "
+                                      "(Ollama, LM Studio, OpenAI, Voyage, any OpenAI-compatible)")
+    em.add_argument("action", nargs="?", default="status", choices=["status", "test", "use", "key", "pull"])
+    em.add_argument("arg", nargs="?", help="a backend spec for test/use, a provider for key, a model for pull")
+    em.add_argument("--force", action="store_true", help="use a backend that did not pass (readings stay untrusted)")
+    em.set_defaults(func=cmd_embed)
 
     sm = sub.add_parser("stance-model",
                         help="what the mock's register will do, before a campaign")
