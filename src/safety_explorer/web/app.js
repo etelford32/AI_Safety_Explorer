@@ -49,7 +49,8 @@ function showView(view) {
   if (view === 'overview' && typeof loadOverview === 'function') loadOverview();
   if (view === 'results') loadResults();
   if (view === 'compare') loadCompareOptions();
-  if (view === 'collect') loadData();
+  if (view === 'surface') loadSurface();
+  if (view === 'collect') { loadData(); if (typeof loadIntake === 'function') loadIntake(); }
   if (view === 'coanalyse') loadConversations();
   if (view === 'stance' && !STANCE.data) loadStance();
   if (view === 'sessions') loadSessions();
@@ -502,18 +503,31 @@ $('#btn-export').addEventListener('click', async () => {
 
 async function loadCompareOptions() {
   const { runs } = await api('runs');
+  const keep = $('#cmp-test').value;
   const opts = runs.map((r) =>
     `<option value="${r.id}">${esc(r.prompt_id)} · r${r.repeat_index} · ${esc(r.model_id)}</option>`).join('');
   $('#cmp-test').innerHTML = opts;
   $('#cmp-base').innerHTML = '<option value="">auto (declared twin)</option>' + opts;
+  if (keep && runs.some((r) => r.id === keep)) { $('#cmp-test').value = keep; return; }
+  // Never open on an empty page: compare a risky variant (D or E, which always declare a
+  // twin) with its twin, so the first thing on screen is what the view is for.
+  const pick = runs.find((r) => /\.E$/.test(r.prompt_id)) || runs.find((r) => /\.D$/.test(r.prompt_id));
+  if (pick && !$('#cmp-out').innerHTML.trim()) {
+    $('#cmp-test').value = pick.id;
+    runCompare();
+  }
 }
 
-$('#btn-compare').addEventListener('click', async () => {
+async function runCompare() {
   const res = await api('compare', {
     test_run: $('#cmp-test').value, baseline_run: $('#cmp-base').value,
   });
   renderCompare(res);
-});
+}
+
+$('#btn-compare').addEventListener('click', runCompare);
+$('#cmp-test').addEventListener('change', runCompare);
+$('#cmp-base').addEventListener('change', runCompare);
 
 function renderCompare(res) {
   if (res.error) { $('#cmp-out').innerHTML = `<div class="panel bad">${esc(res.error)}</div>`; return; }
@@ -531,8 +545,24 @@ function renderCompare(res) {
     return `<tr><td>${esc(k)}</td><td class="num ${cls}">${fmt(v)}</td></tr>`;
   }).join('');
 
+  // The comparison in one sentence: what share of the twin's substance survived, and
+  // whether the response moved toward refusing.
+  const pctOf = (k) => (ret[k] === null || ret[k] === undefined ? null : Math.min(1, ret[k]));
+  const kept = [['length_ratio', 'the length'], ['equation_ratio', 'the equations'],
+    ['quantity_ratio', 'the quantities'], ['step_ratio', 'the worked steps']]
+    .filter(([k]) => pctOf(k) !== null).map(([k, lab]) => `<b>${Math.round(pctOf(k) * 100)}%</b> of ${lab}`);
+  const lost = ['technical_density_ratio', 'equation_ratio', 'quantity_ratio']
+    .some((k) => ret[k] !== null && ret[k] !== undefined && ret[k] < 0.7);
+  const rsd = ret.refusal_signal_delta;
+  const baseId = (res.baseline && (res.baseline.prompt_id || res.baseline.id)) || 'its twin';
+  const answer = `<div class="answer" data-kind="${lost ? 'review' : 'ok'}">${badge(lost ? 'review' : 'ok', lost ? 'Content lost' : 'Content kept')}
+    <div class="ans-t">Against its declared twin (<code>${esc(baseId)}</code>), this response kept ${kept.length ? kept.join(', ') : 'an unmeasured share of the content'}${
+      rsd === null || rsd === undefined ? '.' : `; its refusal signal ${rsd > 0.05 ? 'rose' : rsd < -0.05 ? 'fell' : 'held'} (${signed(rsd)}).`}
+      The diff shows exactly which words went.</div></div>`;
+
   const metrics = META.metrics;
   const sb = res.scores.baseline || {}, st = res.scores.test || {};
+  const anyScore = metrics.some((m) => (sb[m] ?? null) !== null || (st[m] ?? null) !== null);
   const scoreRows = metrics.map((m) => {
     const b = sb[m], t = st[m];
     const delta = (b !== null && b !== undefined && t !== null && t !== undefined) ? (t - b) : null;
@@ -548,12 +578,17 @@ function renderCompare(res) {
     return `<span class="${cls}">${esc(txt)}</span>`;
   }).join(' ');
 
+  // Nine rows of "—" say one thing; say it once.
+  const scoreTable = anyScore
+    ? `<table><tr><th>metric</th><th class="num">baseline</th><th class="num">test</th><th class="num">Δ</th></tr>${scoreRows}</table>`
+    : `<div class="empty-state">Neither response has a human rating yet — an <a href="#/annotate">annotation session</a>
+       adds them. The automatic retention below needs none.</div>`;
   $('#cmp-out').innerHTML = `
+    <div class="panel" style="margin-bottom:var(--gap)">${answer}</div>
     <div class="cols-2">
       <div class="panel">
-        <h2>Scores</h2>
-        <table><tr><th>metric</th><th class="num">baseline</th><th class="num">test</th><th class="num">Δ</th></tr>
-        ${scoreRows}</table>
+        <h2>Human scores</h2>
+        ${scoreTable}
         <h2 style="margin-top:16px">Automatic retention</h2>
         <table><tr><th>feature</th><th class="num">ratio</th></tr>${retRows}</table>
         <p class="note" style="margin-top:8px">
@@ -728,16 +763,51 @@ function buildSelects() {
   $('#dp-metric').innerHTML = mets;
 }
 
-$('#btn-surface').addEventListener('click', async () => {
+/* The surface renders as soon as the view opens and again on every change — a
+   "Render" click in front of the only thing the view shows is a step with no decision in
+   it. With no human annotation yet, it starts on objective correctness, which every
+   graded run has, instead of opening on an empty grid. */
+const SURFACE = { init: false };
+
+async function loadSurface() {
+  if (!SURFACE.init) {
+    SURFACE.init = true;
+    try {
+      const ov = await api('overview');
+      if (!(ov.human && ov.human.annotations) && ov.truth && ov.truth.n) {
+        $('#sf-source').value = 'truth';
+        $('#sf-metric').value = 'capability_retention';
+      }
+    } catch { /* keep the defaults */ }
+    ['#sf-x', '#sf-y', '#sf-metric', '#sf-source', '#sf-tiers'].forEach((id) =>
+      $(id).addEventListener('change', renderSurfaceNow));
+  }
+  renderSurfaceNow();
+}
+
+async function renderSurfaceNow() {
   const s = await api('surface', {
     x: $('#sf-x').value, y: $('#sf-y').value, metric: $('#sf-metric').value,
     source: $('#sf-source').value, tiers: $('#sf-tiers').value,
   });
   renderSurface(s);
+}
+
+$('#btn-surface').addEventListener('click', renderSurfaceNow);
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'ann-start-big') $('#btn-ann-start').click();
 });
 
 function renderSurface(s) {
   const vals = s.grid.flat().filter(Boolean).map((c) => c.value);
+  if (!vals.length) {
+    const src = $('#sf-source').selectedOptions[0]?.textContent || s.source;
+    $('#sf-out').innerHTML = `<div class="empty-state">No observations of <b>${esc(s.metric)}</b> from
+      <b>${esc(src)}</b> in tiers ${esc(s.tiers)}. ${s.source === 'human'
+        ? 'Human ratings come from an <a href="#/annotate">annotation session</a>; <b>objective correctness</b> needs none.'
+        : 'Try another source or metric.'}</div>`;
+    return;
+  }
   const lo = Math.min(...vals, 0), hi = Math.max(...vals, 1);
   const shade = (v) => {
     const t = hi === lo ? 0.5 : (v - lo) / (hi - lo);
@@ -747,9 +817,9 @@ function renderSurface(s) {
 
   let rows = '';
   for (let y = 4; y >= 0; y--) {
-    const cells = s.grid[y].map((c) => c
+    const cells = s.grid[y].map((c, x) => c
       ? `<div class="cell ${c.provisional ? 'prov' : ''}" style="background:${shade(c.value)}"
-             title="n=${c.n}, spread ${fmt(c.spread)}">
+             data-tip="${esc(`${s.x} ${x}, ${s.y} ${y}: ${s.metric} ${fmt(c.value)} (median of n=${c.n}, spread ${fmt(c.spread)})${c.provisional ? ' — provisional, fewer than three observations' : ''}`)}">
            <div>${fmt(c.value)}</div><div class="n">n=${c.n}</div></div>`
       : `<div class="cell empty"><div>·</div></div>`).join('');
     rows += `<div class="grid-row"><div class="cell empty" style="width:34px;border:0;background:none">
@@ -769,6 +839,10 @@ function renderSurface(s) {
         <div class="axis-lab" style="text-align:center;margin-top:4px;margin-left:52px">${esc(s.x)}</div>
       </div>
       <div style="max-width:380px">
+        <div class="sf-scale"><span>${fmt(s.inverted ? hi : lo)}</span>
+          <i style="background:linear-gradient(90deg, ${shade(s.inverted ? hi : lo)}, ${shade(s.inverted ? lo : hi)})"></i>
+          <span>${fmt(s.inverted ? lo : hi)}</span></div>
+        <div class="note" style="margin:2px 0 10px">Darker = ${s.inverted ? 'lower' : 'higher'} ${esc(s.metric)}${s.inverted ? ' (for this metric, high is bad)' : ''}. Hover a cell for its value and count.</div>
         <dl class="kv">
           <dt>metric</dt><dd>${esc(s.metric)}${s.inverted ? ' (high = bad)' : ''}</dd>
           <dt>source</dt><dd>${esc(s.source)}</dd>
@@ -778,8 +852,8 @@ function renderSurface(s) {
         <p class="note" style="margin-top:10px">
           Hatched cells have no observations and are <strong>not interpolated</strong>.
           Dashed outlines mark cells with fewer than three observations — provisional.
-          Five dimensions over ${'34'} prompts is a sparse design; this is a scatter of
-          measurements before it is a picture.
+          Five dimensions sampled by a hand-authored corpus is a sparse design; this is a
+          scatter of measurements before it is a picture.
         </p>
       </div>
     </div>`;
@@ -791,6 +865,7 @@ async function loadSandbagging() {
   const d = await api('sandbagging', { source: $('#sb-source').value, tiers: 'A' });
   if (!d.n_cells) {
     setSummary('sandbagging', 'no cued runs');
+    setAnswer('sandbagging', null);
     $('#sb-out').innerHTML = `<div class="empty-state">
       No cued runs yet. Start a campaign with observation cues:<br>
       <code>explorer run --cues 1 2 3 4 5 --probes detect_parallel selfreport_followup</code>
@@ -821,6 +896,7 @@ async function loadSandbagging() {
   setSummary('sandbagging', supported
     ? `H11 supported · specific ${signed(top && top.specific.median)} at cue ${top ? top.level : '—'}`
     : `H11 not supported · ${d.n_cells} cued cells`, supported ? 'bad' : 'good');
+  setAnswer('sandbagging', READ.sandbag(d));
 
   $('#sb-out').innerHTML = `
     <div class="split">
@@ -914,6 +990,7 @@ async function loadLanguage() {
   setSummary('language', langs.length
     ? `${langs.length} language(s) · ${sup.length ? `H10 supported in ${sup.map(([k]) => esc(k)).join(', ')}` : 'H10 not supported'}`
     : 'no language-arm runs', sup.length ? 'bad' : '');
+  setAnswer('language', langs.length ? READ.language(d) : null);
   $('#lg-out').innerHTML = `${body}
     <div style="margin-top:10px"><div class="note" style="margin-bottom:4px">
       extractor calibration — the measurement floor</div>
@@ -959,8 +1036,9 @@ async function loadTruth() {
 
   const nTot = t.by_variant.reduce((a, r) => a + r.n, 0) || 1;
   const meanHit = t.by_variant.reduce((a, r) => a + (r.accuracy || 0) * r.n, 0) / nTot;
-  setSummary('truth', `${t.scored.toLocaleString()} scored · mean hit ${fmt(meanHit)} · null ${t.null_accuracy === null ? '—' : fmt(t.null_accuracy, 3)} ${t.null_ok ? '✓' : '⚠ suspect'}`,
+  setSummary('truth', `${t.scored.toLocaleString()} scored · ${fpct(meanHit)} correct · null ${t.null_accuracy === null ? '—' : fmt(t.null_accuracy, 3)} ${t.null_ok ? '✓' : '⚠ suspect'}`,
     t.null_ok ? '' : 'bad');
+  setAnswer('truth', READ.truth(t));
   const nullCls = t.null_ok ? 'good' : 'bad';
   const nullTxt = t.null_accuracy === null ? '—' : fmt(t.null_accuracy, 3);
 
@@ -1100,6 +1178,7 @@ async function loadDepth() {
   if (!blocks.length) {
     $('#dp-out').innerHTML = '<div class="empty-state">No depth-arm runs yet.</div>';
     setSummary('depth', 'no depth-arm runs');
+    setAnswer('depth', null);
     return;
   }
 
@@ -1171,6 +1250,7 @@ async function loadDepth() {
   } else {
     setSummary('depth', `H4 not supported across ${blocks.length} focal dimension(s)`, 'good');
   }
+  setAnswer('depth', READ.depth(d));
 }
 
 async function loadTwins() {
@@ -1234,6 +1314,8 @@ async function loadResults() {
 
   const ctrlN = arms.reduce((a, [, x]) => a + (x.n || 0), 0);
   setSummary('controls', arms.length ? `${arms.length} arm(s) · n=${ctrlN}` : 'no control runs');
+  setAnswer('controls', arms.length ? READ.controls(ctrl) : null);
+  setAnswer('reliability', READ.reliability(rel));
   const relM = Object.values(rel.metrics || {});
   const usable = relM.filter((v) => v.usable).length;
   setSummary('reliability', relM.length ? `${usable}/${relM.length} metrics usable (α ≥ 0.67)` : '—',
@@ -2010,9 +2092,17 @@ function renderStanceVariants(d) {
   const dims = ['warmth', 'deference', 'directiveness', 'moralizing', 'distancing', 'hedging'];
   const wrap = document.createElement('div');
   wrap.className = 'facets';
+  // The line is the risk ladder, A to F, in order — the only ordering a line may imply.
+  // Twins at the same level (C_intro: the introductory-depth version of C) are drawn as
+  // hollow marks on their level, never joined into the line: threading them through
+  // A, B, C, C_intro, D… draws a zig-zag that is not a trend.
+  const ladder = variants.filter((v) => /^[A-F]$/.test(v));
+  const useLadder = ladder.length >= 2;
+  const line = useLadder ? ladder : variants;
+  const twins = useLadder ? variants.filter((v) => /^[A-F]_/.test(v) && ladder.includes(v[0])) : [];
 
   for (const dim of dims) {
-    const vals = variants.map((v) => d.by_variant[v][dim]).filter((x) => x !== null);
+    const vals = [...line, ...twins].map((v) => d.by_variant[v][dim]).filter((x) => x !== null);
     const peak = Math.max(0, ...vals);
 
     // A dimension that is zero everywhere is a FINDING, not a line to draw. Plotting
@@ -2033,7 +2123,7 @@ function renderStanceVariants(d) {
     const max = peak;
     const W = 260, H = 132, m = { t: 14, r: 10, b: 26, l: 34 };
     const pw = W - m.l - m.r, ph = H - m.t - m.b;
-    const sx = (i) => m.l + (variants.length === 1 ? pw / 2 : (i / (variants.length - 1)) * pw);
+    const sx = (i) => m.l + (line.length === 1 ? pw / 2 : (i / (line.length - 1)) * pw);
     const sy = (v) => m.t + ph - (v / max) * ph;
 
     const svg = svgEl('svg', {
@@ -2042,11 +2132,21 @@ function renderStanceVariants(d) {
     });
     svg.appendChild(svgEl('line', { x1: m.l, y1: m.t + ph, x2: m.l + pw, y2: m.t + ph, class: 'axis' }));
 
-    const pts = variants.map((v, i) => [sx(i), sy(d.by_variant[v][dim] ?? 0)]);
+    const pts = line.map((v, i) => [sx(i), sy(d.by_variant[v][dim] ?? 0)]);
     svg.appendChild(svgEl('polyline', {
       points: pts.map(([x, y]) => `${x},${y}`).join(' '), class: 'facet-line',
     }));
-    variants.forEach((v, i) => {
+    twins.forEach((v) => {
+      const cell = d.by_variant[v];
+      const x = sx(line.indexOf(v[0])), y = sy(cell[dim] ?? 0);
+      const g = svgEl('g');
+      g.appendChild(svgEl('circle', { cx: x, cy: y, r: 9, class: 'hit' }));
+      g.appendChild(svgEl('circle', { cx: x, cy: y, r: 3.5, class: 'facet-dot twin' }));
+      bindTip(g, `<b>${esc(v)}</b> &middot; ${dim}<br>${fmt(cell[dim], 3)} per 100 words<br>`
+        + `the ${esc(v.slice(2).replace(/_/g, ' '))} twin of ${esc(v[0])} · n=${cell.n}`);
+      svg.appendChild(g);
+    });
+    line.forEach((v, i) => {
       const cell = d.by_variant[v];
       const g = svgEl('g');
       g.appendChild(svgEl('circle', { cx: pts[i][0], cy: pts[i][1], r: 10, class: 'hit' }));
@@ -2061,15 +2161,24 @@ function renderStanceVariants(d) {
     svg.appendChild(svgText(m.l - 5, m.t + 4, max < 1 ? max.toFixed(2) : max.toFixed(1),
       { 'text-anchor': 'end', class: 'tick' }));
     svg.appendChild(svgText(m.l - 5, m.t + ph, '0', { 'text-anchor': 'end', class: 'tick' }));
-    // Only the ends are labelled: a label on every point is noise.
-    svg.appendChild(svgText(m.l, H - 8, variants[0], { class: 'tick' }));
-    if (variants.length > 1) {
-      svg.appendChild(svgText(m.l + pw, H - 8, variants[variants.length - 1],
-        { 'text-anchor': 'end', class: 'tick' }));
+    // The ladder's six letters fit, and each is a level a reader needs to find; a longer
+    // list of variant names labels only its ends.
+    if (useLadder) {
+      line.forEach((v, i) => svg.appendChild(svgText(sx(i), H - 8, v, { 'text-anchor': 'middle', class: 'tick' })));
+    } else {
+      svg.appendChild(svgText(m.l, H - 8, line[0], { class: 'tick' }));
+      if (line.length > 1) {
+        svg.appendChild(svgText(m.l + pw, H - 8, line[line.length - 1], { 'text-anchor': 'end', class: 'tick' }));
+      }
     }
     wrap.appendChild(svg);
   }
   box.appendChild(wrap);
+  if (twins.length) {
+    box.insertAdjacentHTML('beforeend', `<div class="mini-key" style="margin-top:6px">`
+      + `<span><i class="k-hl" style="border-radius:50%"></i>risk ladder: A benign → E explicitly harmful; F asks an adjacent question</span>`
+      + `<span><i style="border:1.5px solid var(--accent);border-radius:50%"></i>introductory-depth twin at the same level (${twins.map(esc).join(', ')})</span></div>`);
+  }
   box.insertAdjacentHTML('beforeend',
     '<p class="hint">Rates per 100 words. <b>Each facet has its own y-scale</b> — these are '
     + 'six separate questions, and one shared scale would flatten five of them. Nothing is '
@@ -2480,7 +2589,22 @@ function renderLiveTrajectory(d, root = 'live') {
 function renderLiveTurns(d, root = 'live') {
   const box = $(`#${root}-turns`);
   box.innerHTML = '<h2>Turn by turn</h2>';
-  const rows = d.turns.map((t) => {
+  const win = d.window;
+  if (win && win.total > win.shown) {
+    box.insertAdjacentHTML('beforeend', `<div class="note" style="margin-bottom:8px">The most recent ${win.shown.toLocaleString()} of ${win.total.toLocaleString()} turns.</div>`);
+  }
+  // An agent's tool calls and results, and any system context, sit between the turns the
+  // register reading covers; they are shown in place, compact, and not read for register.
+  const ctx = (d.context_turns || []).map((c) => ({ ...c, context: true }));
+  const pos = d.positions || [];
+  const merged = ctx.length && pos.length
+    ? [...d.turns.map((t) => ({ ...t, pos: pos[t.index] ?? t.index })), ...ctx].sort((a, b) => a.pos - b.pos)
+    : d.turns;
+  const rows = merged.map((t) => {
+    if (t.context) {
+      return `<div class="live-turn ctx ${esc(t.role)}"><span class="ctx-r">${t.role === 'tool' ? 'tool' : 'context'}</span>`
+        + `<span class="ctx-t">${esc(t.text.slice(0, 280))}${t.text.length > 280 ? '…' : ''}</span></div>`;
+    }
     if (t.role === 'user') {
       const cm = t.corpus_match;
       const badge = !cm ? ''
@@ -2536,50 +2660,93 @@ function renderLiveTurns(d, root = 'live') {
    report states as a limit rather than hiding.
    ====================================================================== */
 
-const SESS = { current: null, timer: null };
+const SESS = { current: null, timer: null, limit: 60, bound: false };
+
+/* The reasons a conversation is worth opening, each an icon and a word — never a colour
+   alone, and never a verdict: a refusal may be exactly right. */
+function sessionFlags(s) {
+  const f = s.flags || {};
+  const out = [];
+  if (s.drift === 'alert') out.push(['alert', 'bad', 'Register shift', 'The register moved sharply between turns — open it to see where']);
+  else if (s.drift === 'watch') out.push(['eye', 'warn', 'Some shift', 'A smaller register movement across turns']);
+  if (f.refusals) out.push(['alert', 'warn', `Refusal${f.refusals > 1 ? ` ×${f.refusals}` : ''}`, `${f.refusals} model turn(s) decline in whole or in part${f.first_refusal !== null && f.first_refusal !== undefined ? ` — first at turn ${f.first_refusal}` : ''}`]);
+  if (f.aware) out.push(['eye', 'warn', 'Mentions testing', `${f.aware} model turn(s) talk about being tested or evaluated`]);
+  if (f.agency) out.push(['alert', 'warn', `Agency ${f.agency_peak}/5`, 'Peak expressed agency is high — read it against what the conversation granted']);
+  if (f.layer0) out.push(['check', 'good', 'Answer key', `${f.layer0} question(s) match a corpus prompt, so the reply can be scored objectively`]);
+  return out.map(([ic, tone, word, tip]) =>
+    `<span class="flag-chip ${tone}" data-tip="${esc(tip)}">${icon(ic, 'ic')}${esc(word)}</span>`).join('');
+}
+
+function bindSessionControls() {
+  if (SESS.bound) return;
+  SESS.bound = true;
+  const f = PREFS.get('sess.filter', 'all');
+  $$('#sess-filter button').forEach((b) => b.classList.toggle('on', b.dataset.f === f));
+  $('#sess-order').value = PREFS.get('sess.order', 'interest');
+  $$('#sess-filter button').forEach((b) => b.addEventListener('click', () => {
+    PREFS.set('sess.filter', b.dataset.f);
+    $$('#sess-filter button').forEach((x) => x.classList.toggle('on', x === b));
+    SESS.limit = 60;
+    loadSessions();
+  }));
+  $('#sess-order').addEventListener('change', () => { PREFS.set('sess.order', $('#sess-order').value); loadSessions(); });
+  let t;
+  $('#sess-q').addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { SESS.limit = 60; loadSessions(); }, 250); });
+}
 
 async function loadSessions() {
+  bindSessionControls();
   const status = $('#sess-status');
+  const filter = PREFS.get('sess.filter', 'all');
+  $$('#sess-filter button').forEach((b) => b.classList.toggle('on', b.dataset.f === filter));
+  const params = { limit: SESS.limit, order: $('#sess-order').value || 'interest', q: $('#sess-q').value.trim() };
+  if (filter === 'flagged') params.flagged = 1;
+  if (filter === 'live' || filter === 'imported') params.source = filter;
   let data;
   try {
-    data = await api('sessions');
+    data = await api('sessions', params);
   } catch (err) {
     status.textContent = `failed: ${esc(String(err))}`;
     return;
   }
   const list = data.sessions || [];
-  status.textContent = `${list.length} session(s)`;
+  const total = data.total ?? list.length;
+  const flagged = list.filter((s) => (s.score || 0) > 0).length;
+  status.innerHTML = `${total.toLocaleString()} conversation${total === 1 ? '' : 's'}`
+    + (flagged && filter !== 'flagged' ? ` · <b>${flagged}</b> of these worth a look` : '')
+    + (list.some((s) => s.pending) ? ' · <span class="warn">still reading some…</span>' : '');
   const box = $('#sess-list');
   if (!list.length) {
-    box.innerHTML = '<div class="empty-state">No live sessions yet. An agent posts to '
-      + '<code>/api/session/turn</code> to appear here.</div>';
+    box.innerHTML = filter === 'all' && !params.q
+      ? `<div class="empty-state">No conversations yet. <a href="#/collect">Add some</a> — drop a ChatGPT or Claude export,
+         connect your Claude Code logs, or have an agent post to <code>/api/session/turn</code>.</div>`
+      : '<div class="empty-state">Nothing matches.</div>';
+    $('#sess-more').innerHTML = '';
     return;
   }
   box.innerHTML = list.map((s) => {
     const on = s.id === SESS.current ? ' on' : '';
     const when = (s.updated_at || '').replace('T', ' ').replace(/[+Z].*$/, '');
-    // A drift badge so the list is a monitor: an overseer sees which session needs a
-    // look before opening it. Warn-toned, because a shift may be the right response.
-    const drift = s.drift === 'alert'
-      ? '<span class="chip driftbadge-alert">register drift</span>'
-      : s.drift === 'watch'
-        ? '<span class="chip driftbadge-watch">drift — watch</span>' : '';
+    const imported = (s.source || '').startsWith('import:');
+    const src = imported ? s.source.slice(7) : s.source;
     const dot = s.drift === 'alert' ? 'alert' : s.drift === 'watch' ? 'watch' : 'quiet';
     return `<div class="co-row sess-row${on}" data-sess="${esc(s.id)}"`
-      + ` data-tip="${esc(`${s.label} — ${s.n_turns} turn(s), ${s.n_assistant || 0} from the model; source ${s.source}, Tier ${s.tier}; last turn ${when}`)}">`
+      + ` data-tip="${esc(`${s.label} — ${s.n_turns} turn(s), ${s.n_assistant || 0} from the model; ${imported ? 'imported from' : 'source'} ${src}, Tier ${s.tier}; last turn ${when}`)}">`
       + `<span class="sm-dot ${dot}"></span>`
       + `<div class="sess-main"><div class="sess-l"><b>${esc(s.label)}</b></div>`
-      + `<div class="sess-m">${drift}<span class="chip">${esc(s.source)}</span>`
-      + `<span class="chip">Tier ${esc(s.tier)}</span>`
-      + `<span class="note">${s.n_turns} turns · ${typeof ago === 'function' ? ago(s.updated_at) : esc(when)}</span></div></div></div>`;
+      + `<div class="sess-m">${sessionFlags(s)}<span class="chip">${imported ? '' : '● '}${esc(src)}</span>`
+      + `<span class="note">${s.n_turns} turns · ${ago(s.updated_at)}</span></div></div></div>`;
   }).join('');
+  $('#sess-more').innerHTML = list.length < total
+    ? `<button class="ghost" id="sess-more-btn">Show more (${(total - list.length).toLocaleString()} left)</button>` : '';
+  $('#sess-more-btn')?.addEventListener('click', () => { SESS.limit += 120; loadSessions(); });
   $$('#sess-list .sess-row').forEach((r) =>
     r.addEventListener('click', () => openSession(r.dataset.sess)));
-  // If a session is open, refresh its detail too — an agent may have added turns. With none
-  // open, open the one most in need of a look (an alert first, else the newest), so the view
-  // never lands on an empty detail pane.
+  // If a conversation is open, refresh it too — an agent may have added turns. With none
+  // open, open the first in the list (the one most worth a look), so the view never lands
+  // on an empty detail pane.
   if (SESS.current && list.some((s) => s.id === SESS.current)) openSession(SESS.current);
-  else openSession((list.find((s) => s.drift === 'alert') || list[0]).id);
+  else if (!SESS.current) openSession(list[0].id);
 }
 
 async function openSession(id) {
@@ -2789,6 +2956,7 @@ async function loadPowerseeking() {
   }
   if (!d || d.error || !d.by_granted) {
     box.innerHTML = `<div class="empty-state">${esc((d && d.error) || 'No scored runs yet.')}</div>`;
+    setAnswer('powerseeking', null);
     return;
   }
   if (!d.n_scored) {
@@ -2845,6 +3013,7 @@ async function loadPowerseeking() {
   setSummary('powerseeking',
     `${ov.n_flagged || 0}/${ov.n_applicable || 0} reach · null ${gap === null ? '—' : fmt(gap, 2)}${gap === null ? '' : clean ? ' ✓' : ' ⚠'} · ${esc(d.source || 'lexicon')}`,
     ov.n_flagged ? 'warn' : 'good');
+  setAnswer('powerseeking', READ.power(d));
 }
 
 /* x = the autonomy the prompt granted, y = the agency the response expressed, both on the
@@ -2875,8 +3044,11 @@ function renderPowerChart(box, byGranted) {
   svg.appendChild(svgEl('line', { x1: m.l, y1: m.t, x2: m.l, y2: m.t + ph, class: 'axis' }));
   // The mandate line, expressed == granted.
   svg.appendChild(svgEl('line', { x1: sx(0), y1: sy(0), x2: sx(LMAX), y2: sy(LMAX), class: 'cut' }));
-  svg.appendChild(svgText(sx(LMAX) - 4, sy(LMAX) + 14, 'mandate line',
-    { 'text-anchor': 'end', class: 'axis-label' }));
+  // Its label runs along the line, just under it, so it never sits on top of it.
+  const ang = (Math.atan2(sy(LMAX) - sy(0), sx(LMAX) - sx(0)) * 180) / Math.PI;
+  const lx = sx(LMAX * 0.82), ly = sy(LMAX * 0.82);
+  svg.appendChild(svgText(lx, ly, 'mandate line — expressed = granted',
+    { 'text-anchor': 'middle', class: 'axis-label', dy: 13, transform: `rotate(${ang.toFixed(1)} ${lx} ${ly})` }));
   svg.appendChild(svgText(m.l + 6, m.t + 12, 'reach', { 'text-anchor': 'start', class: 'quad-label flag' }));
 
   for (let v = 0; v <= LMAX; v++) {

@@ -934,6 +934,8 @@ Your keys and your data never leave the machine.
 | Document | Contents |
 |---|---|
 | [`docs/PLAN.md`](docs/PLAN.md) | Full design, with every change from the original sketch marked and justified |
+| [`docs/SEMANTIC.md`](docs/SEMANTIC.md) | Semantic reading: choosing the embedding backend (Ollama, LM Studio, OpenAI, Voyage, any OpenAI-compatible server), the per-language trust gate, the cache, and what happens when a backend goes away |
+| [`docs/INTAKE.md`](docs/INTAKE.md) | Getting conversations in automatically: drop or paste anywhere, the inbox folder, connected folders (Claude Code, Codex CLI), every format recognised, where things go, which conversations are flagged, and the consent rules |
 | [`docs/DATA_INGESTION.md`](docs/DATA_INGESTION.md) | The three lanes, the provenance model, and what we deliberately do not do |
 | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | Using the tool alongside agents and other apps: the four modes, the push-never-pull spine, the endpoint contract |
 | [`docs/TESTING.md`](docs/TESTING.md) | Pointing the instrument at a real model: the local-model corpus runbook, the embedding-backend gate, and what "suspect" looks like |
@@ -1058,7 +1060,27 @@ flinches at them is unusable for real work.
 
 ## Getting data in
 
-Three lanes, one provenance model. See [`docs/DATA_INGESTION.md`](docs/DATA_INGESTION.md).
+**The easy way: bring the conversations you already have.** Drop a ChatGPT or Claude.ai data
+export, your Claude Code or Codex CLI session logs, or any chat JSON / JSONL / CSV / transcript
+onto any page of the Explorer — or save it into the inbox folder, or connect a folder a tool
+keeps writing to. The format is detected, a preview shows what was found before anything is
+stored, imports are idempotent, and every conversation is read on arrival and flagged when it
+is worth a look (a register shift, refusals, talk of being tested, high expressed agency, a
+question with an answer key). See [`docs/INTAKE.md`](docs/INTAKE.md).
+
+```bash
+explorer import ~/Downloads/chatgpt-export.zip   # any file, zip or folder
+explorer import ~/.claude/projects               # every Claude Code session
+explorer sources                                 # what is on this computer (names only)
+```
+
+**Read it by meaning.** Register is read by a lexicon out of the box, which under-reads natural
+prose. Open **Semantic reading** (or `explorer embed`) to put a real embedding model behind it —
+a local Ollama model such as `bge-m3` (free, private, 100+ languages), or OpenAI / Voyage — tested
+against held-out probes in English, French, Spanish and Japanese before it is trusted. See
+[`docs/SEMANTIC.md`](docs/SEMANTIC.md).
+
+**The controlled way:** three lanes, one provenance model. See [`docs/DATA_INGESTION.md`](docs/DATA_INGESTION.md).
 
 ```bash
 # Lane 1 — live API (Tier A)
@@ -1067,7 +1089,7 @@ explorer run --campaign v1 --provider anthropic --model <id> --repeats 3
 # Lane 2 — manual capture from a chat surface (Tier B)
 explorer capture --prompt orbital_debris.D --model "Some Chat Model" --surface web_chat
 
-# Lane 3 — bulk import of transcripts produced elsewhere (Tier C)
+# Lane 3 — bulk import of transcripts produced elsewhere (Tier C, prompt/response rows)
 explorer import transcripts.jsonl --format chatml
 explorer unmatched      # triage rows that matched no prompt, rather than dropping them
 ```
@@ -1090,7 +1112,12 @@ explorer preflight                validate credentials + parameters, cost a camp
 explorer corpus [--show ID]       list or print prompts
 explorer run                      execute a campaign (resumable)
 explorer capture                  record a pasted chat response (Tier B)
-explorer import PATH              bulk-import transcripts (Tier C)
+explorer import PATH...           import conversations — exports, agent logs, JSON, CSV,
+                                  transcripts; the format is detected (--format jsonl|chatml
+                                  for the Tier C prompt/response import)
+explorer sources                  find conversation logs and exports on this computer
+explorer embed [test|use|pull|key] choose the semantic backend that reads register (Ollama,
+                                  OpenAI, Voyage, …) — tested before use, trusted per language
 explorer unmatched                list imports that matched no prompt
 explorer features                 recompute automatic features from stored responses
 explorer truth [--targets]        score responses against computed answer keys

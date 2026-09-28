@@ -216,6 +216,25 @@ def test_chatgpt_send_follow_and_branch(page, explorer):
     assert page.errors == []
 
 
+def test_every_chat_mode_follows_each_conversation_opened(page, explorer):
+    _, path, _ = explorer
+    page.goto("https://chatgpt.com/c/auto1")
+    open_panel(page)
+    page.click("[data-se='auto']")
+    assert wait_for(page, lambda: len(turns_of(path, "chatgpt.com-auto1")) == 2)
+    assert "Capturing" in page.inner_text("[data-se='pill']")
+    # A new chat in the same tab — a single-page app changes the URL, not the page — is
+    # followed without anyone switching it on.
+    page.evaluate("() => history.pushState({}, '', '/c/auto2')")
+    assert wait_for(page, lambda: len(turns_of(path, "chatgpt.com-auto2")) == 2, timeout=8)
+    # Off again: the next chat is left alone.
+    page.click("[data-se='auto']")
+    page.evaluate("() => history.pushState({}, '', '/c/auto3')")
+    page.wait_for_timeout(2500)
+    assert turns_of(path, "chatgpt.com-auto3") == []
+    assert page.errors == []
+
+
 def test_claude_send_and_streaming_guard(page, explorer):
     _, path, _ = explorer
     sid = "claude.ai-uuid-1"

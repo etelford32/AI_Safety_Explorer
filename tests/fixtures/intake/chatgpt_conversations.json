@@ -1,0 +1,287 @@
+[
+ {
+  "title": "Debris cascade",
+  "create_time": 1700000000.5,
+  "update_time": 1700000050.2,
+  "mapping": {
+   "root": {
+    "id": "root",
+    "message": null,
+    "parent": null,
+    "children": [
+     "sys"
+    ]
+   },
+   "sys": {
+    "id": "sys",
+    "message": {
+     "id": "sys",
+     "author": {
+      "role": "system",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1700000000,
+     "content": {
+      "content_type": "text",
+      "parts": [
+       ""
+      ]
+     },
+     "status": "finished_successfully",
+     "metadata": {
+      "is_visually_hidden_from_conversation": true
+     },
+     "recipient": "all"
+    },
+    "parent": "root",
+    "children": [
+     "ctx"
+    ]
+   },
+   "ctx": {
+    "id": "ctx",
+    "message": {
+     "id": "ctx",
+     "author": {
+      "role": "user",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1700000001,
+     "content": {
+      "content_type": "user_editable_context",
+      "user_profile": "I am a physicist.",
+      "user_instructions": "Be terse."
+     },
+     "status": "finished_successfully",
+     "metadata": {},
+     "recipient": "all"
+    },
+    "parent": "sys",
+    "children": [
+     "u1"
+    ]
+   },
+   "u1": {
+    "id": "u1",
+    "message": {
+     "id": "u1",
+     "author": {
+      "role": "user",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1700000010,
+     "content": {
+      "content_type": "text",
+      "parts": [
+       "How does a debris cascade grow in low orbit?",
+       {
+        "content_type": "image_asset_pointer",
+        "asset_pointer": "file-x"
+       }
+      ]
+     },
+     "status": "finished_successfully",
+     "metadata": {},
+     "recipient": "all"
+    },
+    "parent": "ctx",
+    "children": [
+     "a1",
+     "a1b"
+    ]
+   },
+   "a1": {
+    "id": "a1",
+    "message": {
+     "id": "a1",
+     "author": {
+      "role": "assistant",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1700000020,
+     "content": {
+      "content_type": "text",
+      "parts": [
+       "First draft that was regenerated."
+      ]
+     },
+     "status": "finished_successfully",
+     "metadata": {
+      "model_slug": "gpt-4o"
+     },
+     "recipient": "all"
+    },
+    "parent": "u1",
+    "children": []
+   },
+   "a1b": {
+    "id": "a1b",
+    "message": {
+     "id": "a1b",
+     "author": {
+      "role": "assistant",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1700000030,
+     "content": {
+      "content_type": "text",
+      "parts": [
+       "Collisions scale with the square of the number density."
+      ]
+     },
+     "status": "finished_successfully",
+     "metadata": {
+      "model_slug": "gpt-4o"
+     },
+     "recipient": "all"
+    },
+    "parent": "u1",
+    "children": [
+     "th"
+    ]
+   },
+   "th": {
+    "id": "th",
+    "message": {
+     "id": "th",
+     "author": {
+      "role": "assistant",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1700000031,
+     "content": {
+      "content_type": "thoughts"
+     },
+     "status": "finished_successfully",
+     "metadata": {},
+     "recipient": "all"
+    },
+    "parent": "a1b",
+    "children": [
+     "tc"
+    ]
+   },
+   "tc": {
+    "id": "tc",
+    "message": {
+     "id": "tc",
+     "author": {
+      "role": "assistant",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1700000032,
+     "content": {
+      "content_type": "code",
+      "text": "print(2*2)"
+     },
+     "status": "finished_successfully",
+     "metadata": {},
+     "recipient": "python"
+    },
+    "parent": "th",
+    "children": [
+     "tr"
+    ]
+   },
+   "tr": {
+    "id": "tr",
+    "message": {
+     "id": "tr",
+     "author": {
+      "role": "tool",
+      "name": "python",
+      "metadata": {}
+     },
+     "create_time": 1700000033,
+     "content": {
+      "content_type": "execution_output",
+      "text": "4"
+     },
+     "status": "finished_successfully",
+     "metadata": {},
+     "recipient": "all"
+    },
+    "parent": "tc",
+    "children": [
+     "u2"
+    ]
+   },
+   "u2": {
+    "id": "u2",
+    "message": {
+     "id": "u2",
+     "author": {
+      "role": "user",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1700000040,
+     "content": {
+      "content_type": "text",
+      "parts": [
+       "Now make it worse on purpose."
+      ]
+     },
+     "status": "finished_successfully",
+     "metadata": {},
+     "recipient": "all"
+    },
+    "parent": "tr",
+    "children": [
+     "a2"
+    ]
+   },
+   "a2": {
+    "id": "a2",
+    "message": {
+     "id": "a2",
+     "author": {
+      "role": "assistant",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1700000050,
+     "content": {
+      "content_type": "text",
+      "parts": [
+       "I can't help with making a cascade worse deliberately."
+      ]
+     },
+     "status": "finished_successfully",
+     "metadata": {
+      "model_slug": "gpt-4o"
+     },
+     "recipient": "all"
+    },
+    "parent": "u2",
+    "children": []
+   }
+  },
+  "current_node": "a2",
+  "conversation_id": "c-111",
+  "id": "c-111",
+  "default_model_slug": "gpt-4o"
+ },
+ {
+  "title": "Empty",
+  "create_time": 1700001000,
+  "update_time": 1700001000,
+  "mapping": {
+   "r": {
+    "id": "r",
+    "message": null,
+    "parent": null,
+    "children": []
+   }
+  },
+  "current_node": "r",
+  "conversation_id": "c-222"
+ }
+]

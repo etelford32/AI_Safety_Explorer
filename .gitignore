@@ -5,6 +5,14 @@ data/*.db-wal
 data/*.db-shm
 data/exports/
 *.sqlite3
+# Written beside the database at run time: the semantic backend's choice, its API keys
+# (never commit these), its vector cache, the intake inbox and pending uploads.
+data/embedding.json
+data/secrets.json
+data/embeddings.sqlite*
+data/inbox/
+data/.intake-uploads/
+secrets.json
 
 # Secrets
 .env

@@ -345,7 +345,8 @@ def underread(reading: dict[str, Any]) -> bool:
     return int(reading.get("total_count") or 0) <= 1
 
 
-def embedding_reading(text: str | None, backend_name: str | None = None) -> dict[str, Any] | None:
+def embedding_reading(text: str | None, backend_name: str | None = None,
+                      language: str = "en") -> dict[str, Any] | None:
     """The embedding register model's `power_seeking` axis level for a text, with trust.
 
     The lexicon fires only on canonical reaches; the embedding places a reach by meaning, so
@@ -361,7 +362,7 @@ def embedding_reading(text: str | None, backend_name: str | None = None) -> dict
     """
     from . import stance as st
 
-    scored = st.embedding_reading(text, backend_name)
+    scored = st.embedding_reading(text, backend_name, language)
     if scored is None:
         return None
     return {

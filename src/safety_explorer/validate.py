@@ -564,7 +564,7 @@ def run(conn, corpus, *, campaign_id: str | None = None) -> Report:
         ok = d["source"] == "lexicon" and "under-reads" in d.get("source_note", "")
         return (PASS if ok else FAIL,
                 "no semantic backend installed, so drift reads the lexicon and says so; "
-                "set EXPLORER_EMBED_BACKEND to a real backend to close the recall gap",
+                "choose a semantic backend (Semantic reading, or `explorer embed`) to close the recall gap",
                 d["source"])
     _guard(report, "drift routes through the best available register estimator, and says which",
            "layer 1.5", "embedding when trustworthy, else lexicon with a caveat", drift_routing)

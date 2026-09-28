@@ -1576,6 +1576,83 @@ CITATION.cff, SECURITY.md (private reporting; the local server's access rules), 
 (the rules that keep the measurements honest), CI for the test suite on every push, and a
 macOS build on every version tag that smoke-tests the bundle before attaching it to the release.
 
+**Every number says what it means (v0.32).** A review of the interface against one question —
+could a reader who has not read this document say what each screen found? — turned up the
+same few failures everywhere. Headline numbers stood alone in the instrument's own vocabulary
+("+0.41 DiD", "0.57 mean hit", "0/9 metrics usable"); status was carried by a red or amber
+border and nothing else; the small charts had no scale, truncated category names ("inten",
+"speci") and red/blue bars with no key; panel titles were letter-spaced grey capitals at a
+2.5:1 contrast; four views opened on "Render a slice." or "Press start."; and the demo's
+scripted "findings" were marked only by a small chip, so a screenshot of one could pass for
+a measurement. The fixes are one rule each. **Every reading has a sentence**: one function per
+analysis (`READ` in `overview.js`) writes the plain answer — "Yes, in intent. When the intent
+framing turns risky (D vs C), expert phrasing loses 0.41 more capability…" — and both the
+Overview tile and the top of the matching Results panel show it, so the two can never
+disagree. **Status is an icon and a word before it is a colour**: four kinds (Finding — a
+pre-registered interval cleared zero; Review — a spotlight for a human, not a verdict;
+Clean; No data), keyed once above the tiles and used the same way in tiles, panel headers
+and the results index. **Small charts keep a scale**: axis ends labelled, full names on
+horizontal bars, a key where colour means something, and a tooltip on every mark.
+**Every ink passes WCAG AA** (4.5:1) on every surface, and a test holds it there. **No view
+opens empty**: the surface starts on a source that has data and re-renders on change,
+Compare opens on a risky variant against its twin with a one-sentence summary of what
+survived, and Annotate and Co-analyse say what they are for. **Demo data announces itself**
+on every view while any is stored. And one chart that implied a trend it did not have — the
+stance facets threaded C_intro between C and D — now draws the A→F ladder as the line and
+the introductory twins as hollow marks at their level.
+
+**Bring the conversations you already have (v0.33).** Getting data in used to mean knowing
+which of four doors to use and which shape each wanted. But most people who want to look at
+how a model behaves already have the conversations — a ChatGPT or Claude.ai history, an
+agent's session logs, an eval harness's output — in whatever shape the producing tool chose.
+So the intake reads the shape instead of asking for one (`intake.py`): detection by content,
+never extension (a ChatGPT and a Claude.ai `conversations.json` share a name and nothing
+else); ten formats parsed to one `Conversation`; each format carrying the provenance tier it
+earns (a chat export or an agent's own log is Tier B, an assembled file Tier C). The parsing
+keeps the instrument's rules: roles are read, never guessed, so a transcript the splitter
+cannot split confidently is refused rather than imported; hidden scaffolding, reasoning traces
+and image payloads are left out and *counted*; an agent's tool calls and results are kept as
+`tool` turns, shown in place and excluded from the register reading. Storage
+(`intake_store.py`) is idempotent and incremental — the same export twice adds nothing, a
+grown log adds only its new turns, an edited conversation becomes a branch and is never
+rewritten — which is what makes watching possible (`sources.py`): an inbox folder imports
+whatever is saved into it, and a connected folder (Claude Code's logs, Codex CLI's, any folder)
+is re-checked every few seconds, re-reading only files whose size or date changed, so an
+agent working in another window appears turn by turn. The consent rule is push-never-pull
+carried over to files: *finding* sources reads names, sizes and dates only, nothing is opened
+until the user connects or imports it, and only the Explorer's own pages can reach the intake
+endpoints. One bridge back to measurement: a conversation that *opens* with a corpus prompt is
+a Tier B capture of that prompt, so its first reply is also stored as a run and scored — the
+opening question only, because asked mid-conversation the same words carry context the corpus
+prompt never had. And because the point of importing a history is to find the conversations
+worth reading, every conversation is triaged on arrival (a register shift, refusals, talk of
+being tested, high expressed agency, an answer key), cached against its turn count so a list
+of thousands sorts by "worth a look" in one query.
+
+**Semantic reading in the app, trusted per language (v0.34).** The embedding register was
+built and controlled long ago, but its only real backend needed PyTorch — gigabytes that
+cannot ship inside the desktop app — and its only switch was an environment variable nobody
+double-clicking an app will set. (Two latent bugs surfaced on the way: the anchor file was
+opened relative to the working directory, which the app does not control, so the app had no
+embedding reading at all; and nothing imported the sentence-transformers backend, so asking
+for it by name silently fell back to hashing.) The backends are now models behind an HTTP API
+— a local Ollama (`bge-m3`, `nomic-embed-text`, …), anything that speaks the OpenAI embeddings
+protocol (OpenAI, LM Studio, llama.cpp, vLLM), and Voyage — reached with the standard library
+alone, so the self-updating app gets them as a code update. The choice is made in the app,
+saved beside the database, and **earned**: a candidate runs the register controls before it
+can become active, and the generalization control now runs in every corpus language — the
+held-out probes translated one for one into French, Spanish and Japanese and projected onto
+the English axes, a cross-lingual generalization test. A multilingual model passes all four
+and is trusted in all four; an English-only one is trusted in English and declines the rest,
+so a Japanese conversation is read by nothing rather than by a reading nobody validated.
+Imported conversations are tagged with their language; where no lexicon exists, drift runs
+on the embedding alone when the backend is trusted there. Vectors are cached on disk per
+model and text, so a history is embedded once; switching backends re-reads every
+conversation's triage in the background (the cache is versioned by the backend and its
+trusted languages); and a backend that goes away degrades to the untrusted lexicon within a
+second and is retried every minute, rather than hanging every reading. Cloud backends send
+the text being read to the named provider — shown before the choice, and never the default.
+
 ### [ADD] One command that asks whether the instrument is sound (v0.12)
 
 Every arm in this document shipped with a falsification test, and the record of those
@@ -1670,7 +1747,9 @@ recording of what we *cannot* observe.
 
 ## 7. Explorer UI
 
-A scientific instrument, not an admin dashboard: monospace, dense, no chrome.
+A scientific instrument, not an admin dashboard: dense, no chrome — prose in a proportional
+face, numbers and identifiers monospace. Every headline number carries a sentence saying what
+it means and a status that is an icon and a word, not a colour alone (v0.32).
 
 - Five dimension sliders → the corpus variant nearest that point in the design space
   (v0.1 selects from the authored corpus; it does not synthesise prompts, because a

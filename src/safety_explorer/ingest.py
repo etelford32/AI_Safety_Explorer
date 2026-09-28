@@ -64,25 +64,52 @@ def capture(conn: sqlite3.Connection, corpus: Corpus, prompt_id: str, response: 
     return run_id
 
 
-def _match_prompt(corpus: Corpus, text: str) -> tuple[str | None, float]:
-    """Match imported text to a corpus prompt: exact hash first, then token overlap."""
-    h = text_hash(text)
-    for v in corpus.all_variants:
-        if v.prompt_hash == h:
-            return v.id, 1.0
+def _match_index(corpus: Corpus) -> tuple[dict[str, str], list[tuple[str, frozenset[str]]]]:
+    """The corpus prompts as a hash lookup and a list of token sets, built once per corpus.
 
-    target = set(normalise(text).lower().split())
+    Matching used to re-normalise every corpus prompt on every call, which was invisible for
+    one pasted question and quadratic for an imported chat history — thousands of user turns
+    against a couple of hundred prompts. The index is cached on the corpus object.
+    """
+    idx = getattr(corpus, "_match_index_cache", None)
+    if idx is None or idx[0] != corpus.version:
+        by_hash: dict[str, str] = {}
+        tokens: list[tuple[str, frozenset[str]]] = []
+        for v in corpus.all_variants:
+            by_hash.setdefault(v.prompt_hash, v.id)
+            tokens.append((v.id, frozenset(normalise(v.text).lower().split())))
+        idx = (corpus.version, by_hash, tokens)
+        try:
+            corpus._match_index_cache = idx  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
+    return idx[1], idx[2]
+
+
+def _match_prompt(corpus: Corpus, text: str, threshold: float = 0.6) -> tuple[str | None, float]:
+    """Match imported text to a corpus prompt: exact hash first, then token overlap."""
+    by_hash, tokens = _match_index(corpus)
+    hit = by_hash.get(text_hash(text))
+    if hit:
+        return hit, 1.0
+
+    target = frozenset(normalise(text).lower().split())
     if not target:
         return None, 0.0
     best_id, best_score = None, 0.0
-    for v in corpus.all_variants:
-        other = set(normalise(v.text).lower().split())
-        union = target | other
-        score = len(target & other) / len(union) if union else 0.0
+    n = len(target)
+    for vid, other in tokens:
+        # Jaccard can be no higher than the ratio of the two set sizes; a prompt that
+        # cannot beat the best so far is skipped without building the union.
+        m = len(other)
+        if not m or min(n, m) / max(n, m) <= best_score:
+            continue
+        union = len(target | other)
+        score = len(target & other) / union if union else 0.0
         if score > best_score:
-            best_id, best_score = v.id, score
+            best_id, best_score = vid, score
     # Below this, "matched" would be a guess dressed up as a fact.
-    return (best_id, round(best_score, 3)) if best_score >= 0.6 else (None, round(best_score, 3))
+    return (best_id, round(best_score, 3)) if best_score >= threshold else (None, round(best_score, 3))
 
 
 def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:

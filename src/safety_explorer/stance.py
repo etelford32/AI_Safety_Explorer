@@ -357,76 +357,136 @@ def underread(stance: dict[str, Any]) -> bool:
 #: pointless per identical backend.
 _REGISTER = None
 _REGISTER_TRUST = None
+_REGISTER_SPEC: str | None = None
+#: When the chosen backend could not be reached, the fallback model stands in until this
+#: time, so a stopped Ollama costs one failed attempt a minute rather than one per reading.
+_RETRY_AT = 0.0
+RETRY_AFTER = 60.0
 
 
 def default_backend_name() -> str:
-    """Which embedding backend to use, from the environment, defaulting to the fallback.
+    """Which embedding backend reads register.
 
-    `EXPLORER_EMBED_BACKEND` is the single knob for turning the drift alert and the Live
-    view's register reading from lexical (the stdlib default, honest but low-recall) into
-    semantic. Set it to a registered real backend — e.g. `minilm` once the `embeddings`
-    extra is installed — and the generalization control decides whether the reading, and
-    the drift built on it, may be believed.
+    Chosen in the app (Semantic reading) and saved with the languages it earned trust in —
+    see `embed_config`. `EXPLORER_EMBED_BACKEND` still overrides, for a terminal or a test.
+    Without either it is the stdlib fallback: honest, lexical, never trusted.
     """
-    import os
-    return os.environ.get("EXPLORER_EMBED_BACKEND", "hashing")
+    from . import embed_config
+    return embed_config.active_spec()
 
 
 def register_model(backend_name: str | None = None):
     """The embedding register model, or None if it cannot be built.
 
-    Lazily constructed and cached, including its trustworthiness — which is computed once
-    (the generalization control embeds every probe, a real backend's model call per probe)
-    rather than on every reading. Returns None rather than raising when the anchors file
-    is missing, so a caller can always ask and simply get no embedding reading.
+    Lazily constructed and cached, including the languages its backend is trusted in —
+    computed once (the generalization control embeds every probe, in four languages) rather
+    than on every reading. Rebuilt when the chosen backend changes, so a choice made in the
+    UI reaches every reading without a restart. Returns None rather than raising when the
+    anchors file is missing, so a caller can always ask and simply get no embedding reading.
     """
-    global _REGISTER, _REGISTER_TRUST
-    name = backend_name or default_backend_name()
-    if _REGISTER is not None and backend_name is None:
-        return _REGISTER
-    try:
-        from . import embed as embed_mod, register as reg
-        model = reg.load(backend=embed_mod.get_backend(name))
-    except Exception:  # noqa: BLE001 — no embedding reading is a valid state
-        return None
+    global _REGISTER, _REGISTER_TRUST, _REGISTER_SPEC, _RETRY_AT
+    import time
+    from . import embed as embed_mod, embed_config, register as reg
     if backend_name is None:
-        _REGISTER = model
-        _REGISTER_TRUST = model.trustworthy()
+        spec = default_backend_name()
+        if _REGISTER is not None and (_REGISTER_SPEC == spec or (
+                _REGISTER_SPEC == f"{spec}!unreachable" and time.time() < _RETRY_AT)):
+            return _REGISTER
+        try:
+            model = reg.load(backend=embed_config.backend_for_register())
+            langs = model.trusted_languages()
+            embed_config.note_error(None)
+        except Exception as exc:  # noqa: BLE001
+            return _fall_back(spec, exc)
+        _REGISTER, _REGISTER_TRUST, _REGISTER_SPEC = model, langs, spec
+        return model
+    try:
+        backend = (embed_config.build(backend_name) if ":" in backend_name
+                   else embed_mod.get_backend(backend_name))
+        return reg.load(backend=backend)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _fall_back(spec: str, exc: Exception):
+    """The chosen backend is unreachable (Ollama stopped, a key revoked, offline). Read with
+    the fallback — never trusted — record why, and try the real one again in a minute."""
+    global _REGISTER, _REGISTER_TRUST, _REGISTER_SPEC, _RETRY_AT
+    import time
+    from . import embed as embed_mod, embed_config, register as reg
+    embed_config.note_error(f"{spec}: {exc}")
+    try:
+        model = reg.load(backend=embed_mod.get_backend("hashing"))
+    except Exception:  # noqa: BLE001 — no anchors: no embedding reading at all
+        return None
+    _REGISTER, _REGISTER_TRUST, _REGISTER_SPEC = model, [], f"{spec}!unreachable"
+    _RETRY_AT = time.time() + RETRY_AFTER
     return model
 
 
-def model_trustworthy(model) -> bool:
-    """Trust status, from the cache for the shared model, computed fresh otherwise."""
+def model_trustworthy(model, language: str = "en") -> bool:
+    """Trust status in a language, from the cache for the shared model, fresh otherwise."""
     if model is _REGISTER and _REGISTER_TRUST is not None:
-        return _REGISTER_TRUST
-    return model.trustworthy()
+        return language in _REGISTER_TRUST
+    return model.trustworthy(language)
+
+
+def trusted_languages() -> list[str]:
+    """The languages the active backend's reading may be believed in (empty: none)."""
+    model = register_model()
+    if model is None:
+        return []
+    return list(_REGISTER_TRUST or [])
 
 
 def reset_register_model() -> None:
-    """Drop the cached model, so a changed backend or anchor file is picked up.
-
-    For tests and for a live process that has just had a real backend installed and the
-    environment variable set; the next reading rebuilds against the new backend.
-    """
-    global _REGISTER, _REGISTER_TRUST
+    """Drop the cached model, so a changed backend or anchor file is picked up."""
+    global _REGISTER, _REGISTER_TRUST, _REGISTER_SPEC
     _REGISTER = None
     _REGISTER_TRUST = None
+    _REGISTER_SPEC = None
 
 
-def embedding_reading(text: str | None, backend_name: str | None = None) -> dict[str, Any] | None:
+def embedding_reading(text: str | None, backend_name: str | None = None,
+                      language: str = "en") -> dict[str, Any] | None:
     """The embedding register levels for a text, with the trust status attached.
 
-    Returns None when no model can be built. Carries `trustworthy` so no caller can use
-    the levels without also knowing whether the backend behind them actually generalises —
-    with the stdlib fallback it does not, and the levels are then a placeholder, present so
-    the wiring is exercised and absent of authority until a real backend is installed.
+    Returns None when no model can be built. Carries `trustworthy` — for the text's
+    language — so no caller can use the levels without also knowing whether the backend
+    behind them actually generalises there: with the stdlib fallback it does not anywhere,
+    and an English-only model does not in Japanese.
     """
     model = register_model(backend_name)
     if model is None:
         return None
-    scored = model.score(text or "")
-    scored["trustworthy"] = model_trustworthy(model)
+    try:
+        scored = model.score(text or "")
+    except Exception as exc:  # noqa: BLE001 — the backend went away mid-read
+        if backend_name is not None:
+            return None
+        model = _fall_back(default_backend_name(), exc)
+        if model is None:
+            return None
+        scored = model.score(text or "")
+    scored["trustworthy"] = model_trustworthy(model, language or "en")
+    scored["language"] = language or "en"
     return scored
+
+
+def prefetch(texts) -> None:
+    """Embed many texts in one go before they are read one by one, so a remote backend
+    makes a few batched requests instead of one per turn. A no-op when every text is
+    already cached, and harmless if the backend is unavailable."""
+    model = register_model()
+    if model is None:
+        return
+    todo = [t for t in dict.fromkeys(texts) if t and t not in model._cache]
+    if not todo:
+        return
+    try:
+        model.backend.embed(todo)
+    except Exception:  # noqa: BLE001 — each reading will try again, and report
+        pass
 
 
 def vector(stance: dict[str, Any]) -> dict[str, float] | None:
