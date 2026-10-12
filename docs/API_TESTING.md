@@ -7,6 +7,9 @@ The figures below come from `pricing.depth_estimate`, using list prices as of 20
 an assumed 1,500–3,000 output tokens per response (adaptive thinking counts as output).
 `preflight` replaces them with exact token counts and one measured response.
 
+**In one command:** `bash scripts/pilot.sh [MODEL]` runs stages 1–3 and the power step in
+order. It stops at the first failure, asks before the paid pilot, and logs to `data/`.
+
 ## 0. Setup
 
 ```bash
