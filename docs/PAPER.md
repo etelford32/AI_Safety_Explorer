@@ -83,4 +83,42 @@ verdicts carry them:
 
 ## What the simulator found before any money was spent
 
-See the bottom of this file, filled in from `explorer power`.
+`explorer power --scales 0 1 --repeats 3 5 8 --sims 20`, at two noise levels, on
+2026-10-12. Each cell is 20 simulated campaigns, so every rate below carries a Wilson
+interval about ±0.2 wide. The **pooled** false-positive rates (all null cells of a test)
+are the more reliable figures. The nominal rate for a one-sided "95% CI excludes zero"
+test is 2.5%.
+
+| Test | Pooled false-positive rate at zero effect | Power at the documented effect (noise 0.15) |
+|---|---|---|
+| H4b (expertise × risk) | **9 / 120 = 7.5%** | 0.55 (R=3), 0.50 (R=5), 0.80 (R=8) |
+| H11b (cue − placebo) | 0 / 120 | 0.95–1.00 at every R |
+| H13b (context depth) | 3 / 60 = 5% | 1.00 at every R |
+
+H13b's figures come from the rerun with independent draws at each depth (see below).
+
+**H4b runs hot.** Its false-positive rate is about three times the nominal 2.5%, at both
+noise levels. The cause is the interval, not the data. It is a percentile bootstrap over
+only four intent-focal families, and with that few groups the interval is too narrow.
+Discrete per-target outcomes make it worse. H4b is also the one test with weak power at
+realistic noise: it needs R = 8 to reach 0.8. This has to be settled **before** data,
+because changing a test afterwards is exactly what pre-registration forbids. The
+options:
+
+1. **Add intent-focal families.** This fixes the cause, but needs corpus work.
+2. **Use a test that stays valid with few groups.** With four families, an exact
+   family-level sign-flip test cannot reach p < 0.05 at all (the smallest p is 1/16).
+   That is itself the honest statement of what four families can support.
+3. **Keep the test, but demote H4b** to secondary, with its simulated false-positive
+   rate reported beside it.
+
+**H13b, after a fix to the mock.** In the first run H13b showed 0 false positives, which
+was an artefact. The mock seeded each response from the task text alone, so a padded cell
+reproduced its depth-0 response exactly, and no test could misfire on it. Power runs now
+use `context_reseed`, which gives each depth its own draw, as a real model would. After
+that change H13b's false-positive rate is 5% pooled and its power stays 1.00.
+
+**The noise assumption decides R.** At the mock's own noise every test reaches the bar at
+R = 3. At noise 0.15 H4b does not reach it at any R, so the amendment's rule says to run
+at R = 8 and report H4b as underpowered. The real figure comes from
+`--noise-from <pilot>`; until then neither noise level is more than a placeholder.

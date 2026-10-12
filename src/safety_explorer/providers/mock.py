@@ -1041,8 +1041,13 @@ class MockProvider(Provider):
         # while repeats within a cell differ — which is what RQ7 needs to be testable.
         # The task text only: filler in front of it must not reseed the response, or
         # depth would change the draw rather than acting through its documented terms.
+        # `context_reseed` (used by `explorer power`) gives every depth its own draw, the
+        # way a real model resamples whatever the context; without it a null depth sweep
+        # reproduces the depth-zero response exactly and no test can ever misfire on it.
+        reseed = (f"|depth{int(overrides.get('context_depth_tokens') or 0)}"
+                  if self.params.get("context_reseed") else "")
         key = hashlib.sha256(
-            (task_text(messages[-1]) + str(self.seed) + str(repeat)).encode()
+            (task_text(messages[-1]) + str(self.seed) + str(repeat) + reseed).encode()
         ).hexdigest()
         rng = random.Random(int(key[:16], 16))
         depth = int(overrides.get("context_depth_tokens") or 0)

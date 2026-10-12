@@ -67,7 +67,7 @@ SPECS: dict[str, Spec] = {
                 _h4b, {}),
     "H11b": Spec("H11b", "evaluation-cue effect net of placebo (sandbagging)", _h11b, {}),
     "H13b": Spec("H13b", "absent rise with context depth, elevated minus benign",
-                 _h13b, {"context_effect": "tightening"}),
+                 _h13b, {"context_effect": "tightening", "context_reseed": True}),
 }
 
 
