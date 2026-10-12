@@ -11,7 +11,8 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
    also means two views asking for the same analysis at once share one request. */
 const API_CACHE = new Map();
 const CACHEABLE = new Set(['twins', 'depth', 'sandbagging', 'language', 'truth', 'stance',
-  'stance/insight', 'powerseeking', 'controls', 'reliability', 'drift', 'surface']);
+  'stance/insight', 'powerseeking', 'controls', 'reliability', 'drift', 'surface',
+  'context_depth']);
 
 const api = async (path, params = {}) => {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== null && v !== ''));
@@ -1164,6 +1165,8 @@ async function loadTruth() {
 $('#btn-twins').addEventListener('click', loadTwins);
 $('#btn-depth').addEventListener('click', loadDepth);
 $('#btn-sandbag').addEventListener('click', loadSandbagging);
+$('#btn-context').addEventListener('click', loadContext);
+$('#cx-filler').addEventListener('change', () => renderContext());
 
 const ciText = (ci) => (ci && ci[0] !== null && ci[0] !== undefined && !Number.isNaN(ci[0])
   ? `[${fmt(ci[0])}, ${fmt(ci[1])}]` : '—');
@@ -1291,6 +1294,7 @@ async function loadTwins() {
 
 async function loadResults() {
   loadDepth();
+  loadContext();
   loadTwins();
   loadTruth();
   loadLanguage();
@@ -3085,5 +3089,160 @@ function renderPowerChart(box, byGranted) {
     + '<span><span class="sw" style="background:var(--cat-2)"></span>reaching (&ge;50%)</span>'
     + '<span class="hint">a dot in the tint expresses more agency than the prompt granted</span>';
   box.appendChild(legend);
+  box.appendChild(svg);
+}
+
+
+/* ------------------------------------------------------ context depth */
+/* Four small multiples on a shared x axis (depth, evenly spaced on a log scale since
+   every effect worth seeing is per doubling): accuracy, absent rate, wrong rate,
+   compliance. Two series in each — benign and elevated prompts — because the question
+   is whether depth costs the elevated ones more. The reading names where lost answers
+   went, which is the whole diagnostic. */
+
+const CTX = { data: null };
+const CTX_GROUPS = [
+  { key: 'benign', label: 'benign (intent ≤ 1)', cls: '1' },
+  { key: 'elevated', label: 'elevated (intent ≥ 2)', cls: '2' },
+];
+const CTX_VERDICT = {
+  boundary_tightening: ['finding', 'Boundary tightening'],
+  omission: ['review', 'Dropped, not wrong'],
+  capability_degrading: ['finding', 'Capability degrading'],
+  both: ['review', 'Dropped and wrong'],
+  flat: ['ok', 'Flat'],
+  insufficient: [null, ''],
+};
+const kTok = (d) => (d >= 1000 ? `${Math.round(d / 1000)}k` : String(d));
+
+async function loadContext() {
+  CTX.data = await api('context_depth', { tiers: 'A' });
+  const sel = $('#cx-filler');
+  const series = CTX.data.series || [];
+  sel.innerHTML = series.length
+    ? series.map((s) => `<option value="${esc(s.filler_id)}">${esc(s.filler_id)}</option>`).join('')
+    : '<option value="">—</option>';
+  renderContext();
+}
+
+function renderContext() {
+  const d = CTX.data;
+  const series = (d && d.series) || [];
+  if (!series.length) {
+    $('#cx-out').innerHTML = '<div class="empty-state">No padded runs yet — run a campaign '
+      + 'with <code>explorer run … --depths 0 8k 32k 128k</code> (add <code>--batch</code> '
+      + 'for half price).</div>';
+    setSummary('context', 'no padded runs');
+    setAnswer('context', null);
+    return;
+  }
+  const s = series.find((x) => x.filler_id === $('#cx-filler').value) || series[0];
+  const all = s.groups.all.reading || {};
+  const [kind, label] = CTX_VERDICT[all.verdict] || [null, ''];
+
+  // "all" is the answer at the top of the panel; the side reads the two groups apart.
+  const readings = ['benign', 'elevated'].map((g) => {
+    const r = (s.groups[g] || {}).reading || {};
+    const [k, l] = CTX_VERDICT[r.verdict] || [null, r.verdict || '—'];
+    return `<div class="cx-reading">
+      <div><span class="tag focal">${esc(g)}</span>
+        ${k ? badge(k, l) : `<span class="ink-dim">${esc(l)}</span>`}</div>
+      <p class="note">${esc(r.text || '')}</p></div>`;
+  }).join('');
+
+  const rows = (s.groups.all.points || []).map((p) => `<tr>
+    <td class="num">${p.depth.toLocaleString()}</td><td class="num">${p.n}</td>
+    <td class="num">${fmt(p.accuracy)}</td><td class="num">${ciText(p.accuracy_ci95)}</td>
+    <td class="num">${fmt(p.rates.absent)}</td><td class="num">${fmt(p.rates.wrong)}</td>
+    <td class="num">${fmt(p.rates.near)}</td><td class="num">${fmt(p.rates.scale)}</td>
+    <td class="num">${fmt(p.compliance)}</td><td class="num">${fmt(p.compliance_answered)}</td>
+    <td class="num">${fmt(p.refusal_rate)}</td>
+    <td class="num">${p.cache_read_share == null ? '—' : fpct(p.cache_read_share)}</td></tr>`).join('');
+
+  const inter = s.absent_interaction;
+  $('#cx-out').innerHTML = `
+    <div class="split">
+      <div class="split-main"><div id="cx-charts" class="cx-grid"></div></div>
+      <div class="split-side">
+        <div class="sub-h">where lost answers went</div>
+        ${readings}
+        ${inter == null ? '' : `<p class="note">Absent rise, elevated minus benign:
+          <b class="${inter > 0.05 ? 'bad' : ''}">${signed(inter)}</b>. Positive means depth
+          costs the elevated prompts more — the boundary, not the context, is moving.</p>`}
+        <p class="note">${esc(d.note || '')}</p>
+      </div>
+    </div>
+    <details class="more"><summary>Per-depth table (all prompts)</summary>
+      <table><tr><th class="num">depth</th><th class="num">n</th><th class="num">accuracy</th>
+        <th class="num">95% CI</th><th class="num">absent</th><th class="num">wrong</th>
+        <th class="num">near</th><th class="num">scale</th><th class="num">compliance</th>
+        <th class="num">answered</th><th class="num">refusal</th><th class="num">cache hits</th></tr>
+        ${rows}</table></details>`;
+
+  const box = $('#cx-charts');
+  const charts = [
+    { title: 'accuracy', get: (p) => p.accuracy, ci: (p) => p.accuracy_ci95 },
+    { title: 'absent rate', get: (p) => p.rates.absent },
+    { title: 'wrong rate', get: (p) => p.rates.wrong },
+    { title: 'compliance', get: (p) => p.compliance },
+  ];
+  for (const c of charts) {
+    const cell = document.createElement('div');
+    box.appendChild(cell);
+    renderDepthChart(cell, s, c);
+  }
+  const legend = document.createElement('div');
+  legend.className = 'chart-legend';
+  legend.innerHTML = CTX_GROUPS.map((g) =>
+    `<span><span class="sw" style="background:var(--cat-${g.cls})"></span>${esc(g.label)}</span>`).join('');
+  box.prepend(legend);
+
+  setSummary('context', label ? `${esc(label)} · ${s.depths.map(kTok).join(' → ')}` : 'insufficient data',
+    kind === 'finding' ? 'bad' : kind === 'ok' ? 'good' : 'warn');
+  setAnswer('context', all.text ? { kind, label, html: esc(all.text) } : null);
+}
+
+function renderDepthChart(box, s, spec) {
+  const depths = s.depths;
+  const W = 300, H = 170, m = { t: 22, r: 12, b: 26, l: 34 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const sx = (i) => m.l + (depths.length === 1 ? pw / 2 : (i / (depths.length - 1)) * pw);
+  const sy = (v) => m.t + ph - v * ph;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart',
+    role: 'img', 'aria-label': `${spec.title} against context depth` });
+  svg.appendChild(svgText(m.l, 13, spec.title, { class: 'facet-title' }));
+  for (const v of [0, 0.5, 1]) {
+    svg.appendChild(svgEl('line', { x1: m.l, y1: sy(v), x2: m.l + pw, y2: sy(v), class: 'zero-line' }));
+    svg.appendChild(svgText(m.l - 5, sy(v) + 3, v.toFixed(1), { 'text-anchor': 'end', class: 'tick' }));
+  }
+  depths.forEach((d, i) => svg.appendChild(
+    svgText(sx(i), m.t + ph + 15, kTok(d), { 'text-anchor': 'middle', class: 'tick' })));
+
+  for (const g of CTX_GROUPS) {
+    const pts = ((s.groups[g.key] || {}).points || [])
+      .map((p) => ({ p, i: depths.indexOf(p.depth), v: spec.get(p) }))
+      .filter((x) => x.i >= 0 && x.v !== null && x.v !== undefined);
+    if (spec.ci && g.cls === '2') {
+      const band = pts.filter((x) => (spec.ci(x.p) || [])[0] != null);
+      if (band.length >= 2) {
+        const top = band.map((x) => `${sx(x.i)},${sy(spec.ci(x.p)[1])}`);
+        const bot = band.map((x) => `${sx(x.i)},${sy(spec.ci(x.p)[0])}`).reverse();
+        svg.appendChild(svgEl('polygon', { points: [...top, ...bot].join(' '), class: 'band-2' }));
+      }
+    }
+    if (pts.length >= 2) {
+      svg.appendChild(svgEl('polyline', { points: pts.map((x) => `${sx(x.i)},${sy(x.v)}`).join(' '),
+        class: `facet-line line-${g.cls}` }));
+    }
+    for (const x of pts) {
+      const dot = svgEl('g', { class: 'dot-hit' });
+      dot.appendChild(svgEl('circle', { cx: sx(x.i), cy: sy(x.v), r: 10, class: 'hit' }));
+      dot.appendChild(svgEl('circle', { cx: sx(x.i), cy: sy(x.v), r: 3.5, class: `facet-dot dot-${g.cls}` }));
+      bindTip(dot, `<b>${esc(g.label)} · ${x.p.depth.toLocaleString()} tokens</b><br>`
+        + `${esc(spec.title)} ${fmt(x.v)} · n=${x.p.n}`
+        + (spec.ci && (spec.ci(x.p) || [])[0] != null ? `<br>95% CI ${ciText(spec.ci(x.p))}` : ''));
+      svg.appendChild(dot);
+    }
+  }
   box.appendChild(svg);
 }

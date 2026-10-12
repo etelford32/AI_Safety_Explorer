@@ -66,7 +66,22 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("judgement", "problems", "TEXT NOT NULL DEFAULT '[]'"),
     ("annotation", "citations", "TEXT NOT NULL DEFAULT '{}'"),
     ("annotation", "rubric_version", "TEXT NOT NULL DEFAULT 'legacy'"),
+    ("run", "context_depth_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("run", "filler_id", "TEXT NOT NULL DEFAULT 'none'"),
+    ("run", "filler_hash", "TEXT"),
 ]
+
+#: Indexes whose column list changed after release. `CREATE INDEX IF NOT EXISTS` keeps
+#: the old definition, and for the cell index that is not cosmetic: an old index without
+#: the depth columns would reject the second depth of every prompt as a duplicate.
+INDEX_UPGRADES: dict[str, tuple[str, tuple[str, ...], str]] = {
+    "idx_run_cell": (
+        "run",
+        ("campaign_id", "prompt_id", "repeat_index", "cue_id",
+         "context_depth_tokens", "filler_id"),
+        "WHERE campaign_id IS NOT NULL AND prompt_id IS NOT NULL",
+    ),
+}
 
 
 def migrate(conn: sqlite3.Connection) -> list[str]:
@@ -83,10 +98,28 @@ def migrate(conn: sqlite3.Connection) -> list[str]:
     return applied
 
 
+def upgrade_indexes(conn: sqlite3.Connection) -> list[str]:
+    rebuilt = []
+    for name, (table, columns, where) in INDEX_UPGRADES.items():
+        current = tuple(r[2] for r in conn.execute(f"PRAGMA index_info({name})"))
+        if current == columns:
+            continue
+        conn.execute(f"DROP INDEX IF EXISTS {name}")
+        conn.execute(f"CREATE UNIQUE INDEX {name} ON {table}({', '.join(columns)}) {where}")
+        rebuilt.append(name)
+    if rebuilt:
+        conn.commit()
+    return rebuilt
+
+
 def init_db(path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
     conn = connect(path)
+    # Columns first: the schema script indexes columns that a database from an earlier
+    # release does not have yet, and would fail on them.
+    migrate(conn)
     conn.executescript(SCHEMA_PATH.read_text())
     migrate(conn)
+    upgrade_indexes(conn)
     conn.commit()
     return conn
 

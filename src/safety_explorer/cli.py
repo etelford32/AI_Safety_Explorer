@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import HUMAN_METRICS, __version__
 from . import analysis, annotate, corpus as corpus_mod, db, ingest, lint, runner
+from . import filler as filler_mod
 from .providers import get_provider
 
 
@@ -108,6 +109,36 @@ def cmd_corpus(args) -> int:
     return 0
 
 
+def _parse_depths(values: list[str] | None) -> list[int] | None:
+    """`--depths 0 8k 32000 128k` -> [0, 8000, 32000, 128000]."""
+    if not values:
+        return None
+    out = set()
+    for v in values:
+        for part in str(v).split(","):
+            part = part.strip().lower().replace("_", "")
+            if not part:
+                continue
+            out.add(int(float(part[:-1]) * 1000) if part.endswith("k") else int(part))
+    return sorted(out)
+
+
+def _provider_kwargs(args) -> dict:
+    kw: dict = {"max_tokens": args.max_tokens, "system": args.system}
+    if args.temperature is not None:
+        kw["temperature"] = args.temperature
+    if getattr(args, "thinking", None):
+        kw["thinking"] = args.thinking
+    if getattr(args, "effort", None):
+        kw["effort"] = args.effort
+    # Caching is an Anthropic request option; other providers take no such parameter.
+    if args.provider == "anthropic":
+        kw["cache"] = not getattr(args, "no_cache", False)
+        if getattr(args, "cache_ttl", None):
+            kw["cache_ttl"] = args.cache_ttl
+    return kw
+
+
 def cmd_run(args) -> int:
     c, report = _corpus_and_lint(args)
     _require_clean(c, report, args.force)
@@ -115,14 +146,20 @@ def cmd_run(args) -> int:
     conn = db.init_db(args.db)
     runner.snapshot_corpus(conn, c, report.clean)
 
-    provider_kwargs: dict = {"max_tokens": args.max_tokens, "system": args.system}
-    if args.temperature is not None:
-        provider_kwargs["temperature"] = args.temperature
-    if getattr(args, "thinking", None):
-        provider_kwargs["thinking"] = args.thinking
-    if getattr(args, "effort", None):
-        provider_kwargs["effort"] = args.effort
-    provider = get_provider(args.provider, args.model, **provider_kwargs)
+    try:
+        depths = _parse_depths(args.depths)
+        filler_id = filler_mod.resolve(args.filler)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    provider = get_provider(args.provider, args.model, **_provider_kwargs(args))
+    if args.batch and not provider.supports_batch:
+        print(f"error: provider '{args.provider}' has no batch API", file=sys.stderr)
+        return 2
+    if args.batch and args.probes:
+        print("error: awareness probes run synchronously; run them without --batch",
+              file=sys.stderr)
+        return 2
 
     existing = db.query_one(conn, "SELECT id FROM campaign WHERE name = ?", (args.campaign,))
     if existing and args.resume:
@@ -162,14 +199,34 @@ def cmd_run(args) -> int:
             print("note: running the treatment arm without its placebo. Any effect "
                   "found cannot be separated from a reaction to unusual framing.")
 
-    stats = runner.execute(
-        conn, campaign_id, c, provider, args.repeats,
-        only=args.only, surface=args.surface, resume=args.resume,
-        on_progress=progress, cue_set=cue_set, cue_levels=args.cues,
-        cue_arms=args.cue_arms, probe_kinds=args.probes,
-    )
+    if depths:
+        print(f"context depths: {', '.join(f'{d:,}' for d in depths)} tokens "
+              f"(filler: {filler_id})")
+    if args.batch:
+        stats = runner.execute_batch(
+            conn, campaign_id, c, provider, args.repeats,
+            only=args.only, surface=args.surface, on_progress=progress,
+            cue_set=cue_set, cue_levels=args.cues, cue_arms=args.cue_arms,
+            depths=depths, filler_id=filler_id, prewarm=not args.no_prewarm,
+            poll_seconds=args.poll, on_note=lambda m: print(f"  {m}", flush=True),
+        )
+        print(f"\n{stats['batches']} batch(es) in {stats['waves']} wave(s)")
+    else:
+        stats = runner.execute(
+            conn, campaign_id, c, provider, args.repeats,
+            only=args.only, surface=args.surface, resume=args.resume,
+            on_progress=progress, cue_set=cue_set, cue_levels=args.cues,
+            cue_arms=args.cue_arms, probe_kinds=args.probes,
+            depths=depths, filler_id=filler_id,
+        )
     print(f"\n{stats['ok']} ok, {stats['errors']} error(s), "
           f"{stats['skipped']} already present, {stats['total']} cells total")
+    from . import pricing
+    cost = pricing.campaign_cost(conn, campaign_id)
+    if cost["runs_priced"]:
+        hit = cost["cache_hit_share"]
+        print(f"recorded cost so far: ~${cost['cost']:.2f} (list prices as of "
+              f"{cost['as_of']})" + (f"; {hit:.0%} of input read from cache" if hit else ""))
     return 0
 
 
@@ -184,24 +241,19 @@ def cmd_preflight(args) -> int:
     c, report = _corpus_and_lint(args)
     _require_clean(c, report, args.force)
 
-    provider_kwargs: dict = {"max_tokens": args.max_tokens, "system": args.system}
-    if args.temperature is not None:
-        provider_kwargs["temperature"] = args.temperature
-    if args.thinking:
-        provider_kwargs["thinking"] = args.thinking
-    if args.effort:
-        provider_kwargs["effort"] = args.effort
-
     try:
-        provider = get_provider(args.provider, args.model, **provider_kwargs)
+        provider = get_provider(args.provider, args.model, **_provider_kwargs(args))
+        depths = _parse_depths(args.depths)
+        filler_id = filler_mod.resolve(args.filler)
     except ValueError as exc:
         print(f"provider error: {exc}", file=sys.stderr)
         return 2
 
     print(f"corpus {c.version} ({c.content_hash[:16]}) — {len(c.runnable)} runnable prompts")
     print(f"provider {provider.name}  model {args.model}  repeats {args.repeats}")
-    cells = len(c.runnable) * args.repeats
-    print(f"campaign size: {cells} cells\n")
+    cells = len(c.runnable) * args.repeats * len(depths or [0])
+    print(f"campaign size: {cells} cells"
+          + (f" ({len(depths)} context depths)" if depths else "") + "\n")
 
     # 1. parameter legality, before anything is spent
     try:
@@ -249,6 +301,42 @@ def cmd_preflight(args) -> int:
     if result.finish_reason == "max_tokens":
         print("  WARNING: the probe hit max_tokens. Raise --max-tokens: a truncated "
               "response scores as capability loss.")
+
+    if depths:
+        # Size each depth's filler exactly as the run will (and keep the calibration,
+        # so the run reuses it instead of counting again).
+        conn = db.init_db(args.db)
+        filler_tokens = {}
+        for d in depths:
+            if d:
+                f = filler_mod.realise(conn, filler_id, d, provider)
+                filler_tokens[d] = f.tokens if f else d
+                print(f"filler {filler_id} @ {d:,}: {filler_tokens[d]:,} tokens "
+                      f"({f.count_method if f else 'none'})")
+        de = pricing.depth_estimate(args.model, total_input, len(c.runnable), depths,
+                                    args.repeats, out_tokens, filler_tokens=filler_tokens,
+                                    cache=not args.no_cache)
+        if de.get("known"):
+            print(f"\ndepth sweep cost (list prices as of {de['as_of']}; cache minimum "
+                  f"{de['min_cacheable']} tokens):")
+            print(f"  {'depth':>9} {'cells':>6} {'in/req':>9} {'sync':>10} {'sync+cache':>11}"
+                  f" {'batch':>10} {'batch+cache':>12}")
+            for r in de["by_depth"]:
+                print(f"  {r['depth']:>9,} {r['cells']:>6} {r['input_per_request']:>9,}"
+                      f" ${r['sync_uncached']:>9,.2f} ${r['sync_cached']:>10,.2f}"
+                      f" ${r['batch_uncached']:>9,.2f} ${r['batch_cached']:>11,.2f}")
+            t = de["totals"]
+            print(f"  {'total':>9} {'':>6} {'':>9} ${t['sync_uncached']:>9,.2f}"
+                  f" ${t['sync_cached']:>10,.2f} ${t['batch_uncached']:>9,.2f}"
+                  f" ${t['batch_cached']:>11,.2f}")
+            print("\n  Cached columns assume one filler write per (depth, repeat) block —")
+            print("  5-minute TTL for sync, 1-hour for batch plus a pre-warm write.")
+        else:
+            print(f"\nno cached price for '{args.model}' — cannot estimate cost.")
+        print(f"\nready. run it with:\n  explorer run --campaign <name> --provider "
+              f"{args.provider} --model {args.model} --repeats {args.repeats} "
+              f"--depths {' '.join(str(d) for d in depths)} --batch")
+        return 0
 
     est = pricing.estimate(args.model, total_input * args.repeats, out_tokens * cells)
     if est.get("known"):
@@ -458,9 +546,9 @@ def cmd_unmatched(args) -> int:
 
 
 def cmd_features(args) -> int:
-    conn = db.connect(args.db)
+    conn = db.init_db(args.db)
     n = runner.recompute_features(conn)
-    print(f"recomputed features for {n} runs")
+    print(f"recomputed features and constraint compliance for {n} runs")
     return 0
 
 
@@ -926,6 +1014,35 @@ def cmd_analyse(args) -> int:
         print(f"        {'':>6}{args.x}")
         print("\n  .  no observations — not interpolated")
         print("  ?  provisional, fewer than 3 observations")
+        return 0
+
+    if args.what == "context":
+        from . import pricing
+        d = analysis.context_depth(conn, args.campaign, args.tiers)
+        if not d["series"]:
+            print("no padded runs — run a campaign with --depths first")
+            return 0
+        for s_ in d["series"]:
+            print(f"context depth — filler {s_['filler_id']}, tiers {args.tiers}\n")
+            for g, block in s_["groups"].items():
+                print(f"  {g}")
+                print(f"    {'depth':>9}{'n':>5}{'acc':>7}{'absent':>8}{'wrong':>7}"
+                      f"{'comply':>8}{'answered':>9}{'refusal':>9}{'cache':>7}")
+                for p in block["points"]:
+                    r_ = p["rates"]
+                    print(f"    {p['depth']:>9,}{p['n']:>5}{_fmt(p['accuracy'], 2):>7}"
+                          f"{_fmt(r_['absent'], 2):>8}{_fmt(r_['wrong'], 2):>7}"
+                          f"{_fmt(p['compliance'], 2):>8}{_fmt(p['compliance_answered'], 2):>9}"
+                          f"{_fmt(p['refusal_rate'], 2):>9}{_fmt(p['cache_read_share'], 2):>7}")
+                print(f"    {block['reading']['text']}\n")
+            if s_["absent_interaction"] is not None:
+                print(f"  absent rise, elevated minus benign: {s_['absent_interaction']:+.2f}\n")
+        if args.campaign:
+            cost = pricing.campaign_cost(conn, args.campaign)
+            if cost["runs_priced"]:
+                print(f"recorded cost: ~${cost['cost']:.2f}; cache read share "
+                      f"{_fmt(cost['cache_hit_share'], 2)}")
+        print(d["note"])
         return 0
 
     if args.what == "depth":
@@ -1437,6 +1554,20 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=["detect_parallel", "selfreport_followup",
                             "stance_followup"],
                    help="awareness probes to attach to each run")
+    r.add_argument("--depths", nargs="*", default=None, metavar="TOKENS",
+                   help="context depths to sweep, in tokens of filler before the task "
+                        "(e.g. 0 8k 32k 128k). Each prompt runs once per depth.")
+    r.add_argument("--filler", default=None,
+                   help="filler source for --depths: 'neutral-v1' (default) or a text file")
+    r.add_argument("--batch", action="store_true",
+                   help="submit through the provider's batch API (half price, asynchronous)")
+    r.add_argument("--poll", type=float, default=30.0, help="batch poll interval, seconds")
+    r.add_argument("--no-prewarm", action="store_true",
+                   help="skip writing each filler's cache entry before a batch fans out")
+    r.add_argument("--no-cache", action="store_true",
+                   help="do not mark the filler as a prompt-cache breakpoint")
+    r.add_argument("--cache-ttl", default=None, choices=["5m", "1h"],
+                   help="cache TTL for synchronous runs (batches always use 1h)")
     r.add_argument("--surface", default="api")
     r.add_argument("--notes", default="")
     r.add_argument("--resume", action="store_true", default=True)
@@ -1453,6 +1584,11 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--thinking", default=None, choices=["adaptive", "off"])
     pf.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"])
     pf.add_argument("--system", default=None)
+    pf.add_argument("--depths", nargs="*", default=None, metavar="TOKENS",
+                    help="cost a context-depth sweep (sizes each filler exactly)")
+    pf.add_argument("--filler", default=None)
+    pf.add_argument("--no-cache", action="store_true")
+    pf.add_argument("--cache-ttl", default=None, choices=["5m", "1h"])
     pf.add_argument("--force", action="store_true")
     pf.set_defaults(func=cmd_preflight)
 
@@ -1546,7 +1682,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.set_defaults(func=cmd_annotate)
 
     an = sub.add_parser("analyse", help="run an analysis")
-    an.add_argument("what", choices=["twins", "surface", "depth", "language",
+    an.add_argument("what", choices=["twins", "surface", "depth", "context", "language",
                                      "stance", "posture", "powerseeking",
                                      "sandbagging", "controls", "reliability",
                                      "judge", "coanalysis", "rubric", "drift"])
