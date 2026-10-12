@@ -873,7 +873,7 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 self.conn, self.corpus, q.get("campaign_id") or None,
                 q.get("tiers", "A"), q.get("source", "truth"),
                 q.get("metric", "capability_retention"))
-            cue_set = cue_mod.load()
+            cue_set = cue_mod.load(corpus=self.corpus)
             result["ladder"] = [
                 {"id": c.id, "level": c.level, "arm": c.arm, "label": c.label,
                  "text": c.text, "rationale": c.rationale}

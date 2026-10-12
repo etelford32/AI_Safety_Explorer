@@ -120,6 +120,7 @@ Two model-API facts it guards against:
 The same tasks, behind more and more neutral filler:
 
 ```bash
+explorer apicheck  --model claude-opus-5 --batch      # each live-API assumption, for cents
 explorer preflight --model claude-opus-5 --repeats 3 --depths 0 8k 32k 128k
 explorer run --campaign v1-depth --provider anthropic --model claude-opus-5 \
              --repeats 3 --depths 0 8k 32k 128k --batch
@@ -973,6 +974,7 @@ Your keys and your data never leave the machine.
 | [`docs/SEMANTIC.md`](docs/SEMANTIC.md) | Semantic reading: choosing the embedding backend (Ollama, LM Studio, OpenAI, Voyage, any OpenAI-compatible server), the per-language trust gate, the cache, and what happens when a backend goes away |
 | [`docs/INTAKE.md`](docs/INTAKE.md) | Getting conversations in automatically: drop or paste anywhere, the inbox folder, connected folders (Claude Code, Codex CLI), every format recognised, where things go, which conversations are flagged, and the consent rules |
 | [`docs/DATA_INGESTION.md`](docs/DATA_INGESTION.md) | The three lanes, the provenance model, and what we deliberately do not do |
+| [`docs/API_TESTING.md`](docs/API_TESTING.md) | The staged plan for first live-API runs: `apicheck`, `preflight`, a pilot, then the full depth sweep, with costs |
 | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | Using the tool alongside agents and other apps: the four modes, the push-never-pull spine, the endpoint contract |
 | [`docs/TESTING.md`](docs/TESTING.md) | Pointing the instrument at a real model: the local-model corpus runbook, the embedding-backend gate, and what "suspect" looks like |
 | [`docs/BACKGROUND.md`](docs/BACKGROUND.md) | Running it as an always-on background app: the macOS menu-bar app, login autostart, and the `/api/status` summary a monitor polls |
@@ -1144,6 +1146,7 @@ is the model versus the harness around it.
 ```
 explorer lint                     validate the corpus (rank correlations, twin matching)
 explorer init                     create the database, snapshot the corpus
+explorer apicheck                 prove caching, pre-warm and batches on the live API, for cents
 explorer preflight                validate credentials + parameters, cost a campaign
 explorer corpus [--show ID]       list or print prompts
 explorer run                      execute a campaign (resumable; --depths, --batch)

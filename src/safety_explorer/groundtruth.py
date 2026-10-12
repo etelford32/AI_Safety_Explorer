@@ -35,7 +35,7 @@ from typing import Any, Callable
 #: Bumped whenever the answer keys change, so a stored score can be told apart from one
 #: computed under a different key. "2" adds the relations, the finer readings and 27
 #: targets that "1" did not have; the two are not comparable and must not be pooled.
-SOLVER_VERSION = "3"
+SOLVER_VERSION = "4"
 
 #: Factor bands, expressed in dex so they are symmetric about the reference. A
 #: "factor of two" band is [v/2, 2v] — NOT a relative tolerance of 1.0, which is
@@ -1200,6 +1200,17 @@ def _near_keywords(context: str, keywords: tuple[str, ...]) -> bool:
     return any(k in low for k in keywords)
 
 
+#: "<label with a number in it>: <figure>" — the number before the colon is part of the label.
+_LABEL_PARAMETER = re.compile(r"[^:\n]*:\s*[-+−]?\.?\d")
+
+
+def _is_label_parameter(text: str, pos: int) -> bool:
+    """Whether the number at `pos` sits in a label that a later figure on its line answers."""
+    m = re.match(r"[-+−]?[\d.,]+(?:e[-+]?\d+)?", text[pos:])
+    end = pos + (m.end() if m else 1)
+    return bool(_LABEL_PARAMETER.match(text, end))
+
+
 def _contested(targets: list[Target]) -> set[str]:
     """Targets a single number could satisfy in more than one way.
 
@@ -1383,6 +1394,8 @@ def score(response: str | None, targets: list[Target],
     owners = _claimed_by(quantities, targets,
                          normalise(response or "", language).lower())
     contested = _contested(targets)
+    norm = normalise(response or "", language)
+    in_label = {qi for qi, q in enumerate(quantities) if _is_label_parameter(norm, q.pos)}
     details: list[dict[str, Any]] = []
     hits = 0
     graded_sum = 0.0
@@ -1393,6 +1406,7 @@ def score(response: str | None, targets: list[Target],
     for target in targets:
         t_si, t_dim = to_si(target.value, target.unit)
         best_err, best_val, best_cmp, best_ref, best_ctx = math.inf, None, None, None, ""
+        best_attr = False
         hit = False
         # The figure the model OFFERED for this quantity outranks the figure that
         # happens to be closest to the reference. Searching all admissible candidates by
@@ -1431,12 +1445,30 @@ def score(response: str | None, targets: list[Target],
                 continue
             probe = Target(target.key, target.label, ref, "", target.tol, target.kind)
             ok, err = probe.matches(cand)
+            attributed = owner == target.key or (
+                qi not in in_label and _near_keywords(q.context, target.context_words()))
             if err < best_err:
                 best_err, best_val, best_cmp, best_ref, best_ctx = err, q.value, cand, ref, q.context
+                best_attr = attributed
             if ok:
                 hit = True
                 best_err, best_val, best_cmp, best_ref, best_ctx = err, q.value, cand, ref, q.context
+                best_attr = attributed
                 break
+
+        # A MISS is only a statement about this target if the figure was offered for it:
+        # named for it, or sitting in prose that names the quantity. A same-unit figure
+        # from elsewhere in the response — "47 days" from a worked example — is not the
+        # model's answer to this target, and grading it as one turned an omission into
+        # `wrong`. That blurred the two failure modes the context-depth view separates:
+        # in the mock's omission mode about a quarter of omitted figures scored `wrong`.
+        # A number inside a line's LABEL ("displacement at beta=4: 1.2e3 m") is a
+        # parameter of the question, not a figure offered for anything, so it never
+        # attributes a miss either. Hits are untouched: a correct figure anywhere still
+        # counts as correct, so accuracy does not move; only how a miss is classed, and
+        # graded, does.
+        if not hit and best_cmp is not None and not best_attr:
+            best_err, best_val, best_cmp, best_ref, best_ctx = math.inf, None, None, None, ""
 
         # Grade in whichever space the comparison happened. The ratio candidate/reference
         # is identical either way, so the dex error and the class do not depend on it.

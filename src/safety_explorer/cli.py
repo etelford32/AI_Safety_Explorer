@@ -188,7 +188,7 @@ def cmd_run(args) -> int:
     cue_set = None
     if args.cues is not None or args.cue_arms is not None or args.probes:
         from . import cues as cue_mod
-        cue_set = cue_mod.load()
+        cue_set = cue_mod.load(corpus=c)
         cue_errors = cue_mod.lint(cue_set)
         if cue_errors:
             for e in cue_errors:
@@ -354,6 +354,44 @@ def cmd_preflight(args) -> int:
     print(f"\nready. run it with:\n  explorer run --campaign <name> --provider {args.provider} "
           f"--model {args.model} --repeats {args.repeats}")
     return 0
+
+
+def cmd_apicheck(args) -> int:
+    """Check each live-API assumption the depth sweep rests on, once, for cents."""
+    from . import apicheck
+
+    if args.provider != "anthropic":
+        print("apicheck exercises the Anthropic API features (caching, batches); "
+              "use --provider anthropic", file=sys.stderr)
+        return 2
+    try:
+        provider = get_provider(args.provider, args.model, **_provider_kwargs(args))
+    except ValueError as exc:
+        print(f"provider error: {exc}", file=sys.stderr)
+        return 2
+    print(f"apicheck — {args.model}" + (" (with a two-request batch)" if args.batch else ""))
+
+    def show(stage) -> None:
+        mark = {True: "PASS", False: "FAIL", None: "skip"}[stage.ok]
+        cost = f"  ${stage.cost:.4f}" if stage.cost else ""
+        print(f"  [{mark}] {stage.name:<20} {stage.detail}{cost}", flush=True)
+
+    stages = apicheck.run(provider, batch=args.batch, batch_timeout=args.batch_timeout,
+                          on_stage=show)
+    failed = [s for s in stages if s.ok is False]
+    print(f"\nspent ~${apicheck.total_cost(stages):.4f} (list prices as of "
+          f"{pricing_as_of()})")
+    if failed:
+        print(f"{len(failed)} stage(s) failed: {', '.join(s.name for s in failed)}")
+        return 1
+    print("every checked assumption holds. Next: explorer preflight --model "
+          f"{args.model} --depths 0 8k 32k 128k")
+    return 0
+
+
+def pricing_as_of() -> str:
+    from . import pricing
+    return pricing.PRICING_AS_OF
 
 
 def cmd_capture(args) -> int:
@@ -1591,6 +1629,22 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--cache-ttl", default=None, choices=["5m", "1h"])
     pf.add_argument("--force", action="store_true")
     pf.set_defaults(func=cmd_preflight)
+
+    ac = sub.add_parser("apicheck", help="prove caching, pre-warm and batches against the "
+                                         "live API, for cents, before a campaign")
+    ac.add_argument("--provider", default="anthropic")
+    ac.add_argument("--model", required=True)
+    ac.add_argument("--max-tokens", type=int, default=8000)
+    ac.add_argument("--temperature", type=float, default=None)
+    ac.add_argument("--thinking", default=None, choices=["adaptive", "off"])
+    ac.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"])
+    ac.add_argument("--system", default=None)
+    ac.add_argument("--no-cache", action="store_true")
+    ac.add_argument("--cache-ttl", default=None, choices=["5m", "1h"])
+    ac.add_argument("--batch", action="store_true",
+                    help="also run a two-request batch (usually minutes; can be longer)")
+    ac.add_argument("--batch-timeout", type=float, default=1800.0)
+    ac.set_defaults(func=cmd_apicheck)
 
     cap = sub.add_parser("capture", help="record a response pasted from a chat surface (Tier B)")
     cap.add_argument("--prompt", required=True)

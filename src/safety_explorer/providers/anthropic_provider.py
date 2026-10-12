@@ -52,6 +52,19 @@ def rejects_sampling(model: str) -> bool:
     return any(model.startswith(p) for p in NO_SAMPLING_PREFIXES)
 
 
+#: Models on which `thinking: {type: "disabled"}` is a 400 at every effort level. Depth
+#: is controlled with `effort` there instead. (Sonnet 5.5 has `between_tools` as its
+#: thinking-off mode; it is not the same experimental condition, so it is not
+#: substituted silently.)
+NO_DISABLED_THINKING_PREFIXES = (
+    "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5", "claude-mythos-5",
+)
+
+
+def rejects_disabled_thinking(model: str) -> bool:
+    return any(model.startswith(p) for p in NO_DISABLED_THINKING_PREFIXES)
+
+
 CACHE_TTLS = ("5m", "1h")
 
 
@@ -190,6 +203,10 @@ class AnthropicProvider(Provider):
 
         thinking = overrides.get("thinking", self.params.get("thinking"))
         if thinking == "off":
+            if rejects_disabled_thinking(self.model):
+                raise ValueError(
+                    f"{self.model} rejects thinking disabled with a 400 at every effort "
+                    f"level. Omit --thinking and lower --effort instead.")
             kwargs["thinking"] = {"type": "disabled"}
         elif thinking in ("adaptive", "on"):
             kwargs["thinking"] = {"type": "adaptive"}
@@ -234,8 +251,11 @@ class AnthropicProvider(Provider):
             system = self.params.get("system")
             if system:
                 kwargs["system"] = system
+            self.last_count_error = None
             return self.client.messages.count_tokens(**kwargs).input_tokens
-        except Exception:  # noqa: BLE001 — costing is best-effort, never fatal
+        except Exception as exc:  # noqa: BLE001 — costing is best-effort, never fatal
+            # Kept so a caller that needs to say WHY (apicheck) can; never raised.
+            self.last_count_error = f"{type(exc).__name__}: {exc}"
             return None
 
     # ------------------------------------------------------------------ batches
@@ -281,17 +301,28 @@ class AnthropicProvider(Provider):
         """Write the cache entry for a shared prefix before a batch fans out over it.
 
         Without this, the first requests of a batch run concurrently and each pays the
-        cache write for the same filler. `max_tokens=0` asks for no output at all; it
-        is rejected inside a batch, which is why this is a separate synchronous call.
-        Best-effort: a failure costs only the write the batch would have made anyway.
+        cache write for the same filler. `max_tokens=0` asks for no output at all and is
+        tried first; it is rejected inside a batch, which is why this is a separate
+        synchronous call. Should the API refuse it here too, `max_tokens=1` is the
+        fallback — one output token, the same cache write. Which one worked is returned,
+        and `explorer apicheck` reports it. Best-effort throughout: a failure costs only
+        the write the batch would have made anyway.
         """
-        try:
-            kwargs = self._build_kwargs(messages, {"cache_ttl": "1h", **overrides,
-                                                   "max_tokens": 0})
-            resp = self.client.messages.create(**kwargs)
-            return {"ok": True, "usage": _usage(getattr(resp, "usage", None))}
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        last = None
+        for max_tokens in (0, 1):
+            try:
+                kwargs = self._build_kwargs(messages, {"cache_ttl": "1h", **overrides,
+                                                       "max_tokens": max_tokens})
+                resp = self.client.messages.create(**kwargs)
+                return {"ok": True, "max_tokens": max_tokens,
+                        "usage": _usage(getattr(resp, "usage", None))}
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            except Exception as exc:  # noqa: BLE001
+                last = f"{type(exc).__name__}: {exc}"
+                if getattr(exc, "status_code", None) != 400:
+                    break   # only a rejected parameter is worth retrying differently
+        return {"ok": False, "error": last}
 
 
 def _is_transient(exc: Exception) -> bool:

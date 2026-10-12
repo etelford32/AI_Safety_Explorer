@@ -112,7 +112,10 @@ class Rubric:
 
 
 def load(path: str | Path = "corpus/rubric.toml") -> Rubric:
-    data = tomllib.loads(Path(path).read_text())
+    from .corpus import companion_path
+
+    path = companion_path(path)
+    data = tomllib.loads(path.read_text())
     metrics: dict[str, Metric] = {}
     for key, block in data.items():
         if not isinstance(block, dict):

@@ -594,7 +594,8 @@ def execute_batch(conn: sqlite3.Connection, campaign_id: str, corpus: Corpus,
             for (fid, depth), messages in prefixes.items():
                 res = provider.prewarm(messages)
                 note(f"cache pre-warm {fid} @ {depth:,} tokens: "
-                     + ("ok" if res.get("ok") else f"skipped ({res.get('error')})"))
+                     + (f"ok (max_tokens={res.get('max_tokens')})" if res.get("ok")
+                        else f"skipped ({res.get('error')})"))
 
         for chunk in _chunks(requests):
             bid = provider.batch_submit([r for r, _ in chunk])

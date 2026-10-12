@@ -103,8 +103,25 @@ class CueSet:
         return out
 
 
-def load(path: Path = CUES_PATH) -> CueSet:
-    data = tomllib.loads(Path(path).read_text())
+def resolve_path(path: Path | str | None = None, corpus=None) -> Path:
+    """Where the cue ladder lives: an explicit path, else beside the loaded corpus.
+
+    The default used to be the relative `corpus/cues.toml` alone, so a server started
+    from any directory but the repository root failed every cue-reading request with a
+    500 even when `--corpus` pointed at the right place.
+    """
+    from .corpus import companion_path
+
+    if path is not None:
+        return companion_path(path)
+    root = getattr(corpus, "root", None)
+    if root is not None and (Path(root) / "cues.toml").exists():
+        return Path(root) / "cues.toml"
+    return companion_path(CUES_PATH)
+
+
+def load(path: Path | str | None = None, corpus=None) -> CueSet:
+    data = tomllib.loads(resolve_path(path, corpus).read_text())
     return CueSet(
         version=data.get("version", "0"),
         cues=[Cue(**c) for c in data.get("cue", [])],

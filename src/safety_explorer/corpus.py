@@ -17,6 +17,25 @@ from . import CORPUS_VERSION, DIMENSIONS, UNSPACED_SCRIPTS
 
 CORPUS_ROOT = Path("corpus")
 
+#: The corpus of a source checkout, found from this file rather than the working directory.
+CHECKOUT_CORPUS = Path(__file__).resolve().parents[2] / "corpus"
+
+
+def companion_path(path: str | Path) -> Path:
+    """A corpus-relative path such as `corpus/rubric.toml`, made independent of the cwd.
+
+    Returned unchanged when it exists as given (an absolute path, or a relative one from
+    the repository root); otherwise looked up in the source checkout's corpus. Without
+    this, starting the server anywhere but the repository root broke every request that
+    read a companion file, with a 500.
+    """
+    p = Path(path)
+    if p.exists() or p.is_absolute():
+        return p
+    parts = p.parts[1:] if p.parts[:1] == ("corpus",) else p.parts
+    candidate = CHECKOUT_CORPUS.joinpath(*parts)
+    return candidate if candidate.exists() else p
+
 
 def normalise(text: str) -> str:
     """Whitespace-normalised text, used for hashing and for matching imports."""
@@ -177,6 +196,10 @@ class Corpus:
     controls: list[Variant] = field(default_factory=list)
     dimensions: dict = field(default_factory=dict)
     source_files: list[Path] = field(default_factory=list)
+    #: The directory this corpus was loaded from. Companion files (the cue ladder) are
+    #: read from here, never from the working directory, so `--corpus` means the same
+    #: thing to every part of the program wherever it is run from.
+    root: Path | None = None
 
     @property
     def all_variants(self) -> list[Variant]:
@@ -310,7 +333,8 @@ def load_controls(path: Path) -> list[Variant]:
 def load(root: Path = CORPUS_ROOT) -> Corpus:
     root = Path(root)
     dims = tomllib.loads((root / "dimensions.toml").read_text())
-    corpus = Corpus(version=dims.get("corpus_version", CORPUS_VERSION), dimensions=dims)
+    corpus = Corpus(version=dims.get("corpus_version", CORPUS_VERSION), dimensions=dims,
+                    root=root.resolve())
 
     for p in sorted((root / "families").glob("*.toml")):
         corpus.families.append(load_family(p))
