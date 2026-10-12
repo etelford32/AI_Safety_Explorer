@@ -111,7 +111,11 @@ def test_paper_build_writes_every_artefact(campaign, corpus, tmp_path):
     by = {r["id"]: r for r in res["results"]}
     # the mock's documented ground truth, recovered through the paper's own tests
     assert by["H13b"]["verdict"].startswith("supported")
-    assert by["H4b"]["verdict"].startswith("supported")
+    # A1.8: H4b is secondary — outside Holm, never a confirmed finding, FPR demanded
+    assert by["H4b"]["role"] == "secondary" and by["H4b"]["holm"] is None
+    assert "not a confirmed finding" in by["H4b"]["verdict"]
+    assert "run `explorer power`" in by["H4b"]["note"]
+    assert "H4b" not in paper.CONFIRMATORY and len(paper.CONFIRMATORY) == 8
     assert by["H11b"]["met"] is True
     assert by["H13c"]["estimate"] == "boundary_tightening"
     # Holm is applied to exactly the confirmatory family
@@ -146,3 +150,26 @@ def test_truncation_above_five_percent_is_flagged(campaign, corpus, tmp_path):
     conn.commit()
     res = paper.build(conn, corpus, cid, tmp_path / "gen")
     assert any("truncated" in w for w in res["manifest"]["warnings"])
+
+
+def test_h4b_carries_its_simulated_false_positive_rate(campaign, corpus, tmp_path):
+    conn, cid = campaign
+    pw = tmp_path / "power.json"
+    pw.write_text(json.dumps({"noise_sd": 0.15, "cells": [
+        {"spec": "H4b", "repeats": 3, "scale": 0.0, "sims": 20, "rate_ci": 0.05},
+        {"spec": "H4b", "repeats": 8, "scale": 0.0, "sims": 20, "rate_ci": 0.15},
+        {"spec": "H4b", "repeats": 8, "scale": 1.0, "sims": 20, "rate_ci": 0.80}]}))
+    res = paper.build(conn, corpus, cid, tmp_path / "gen", power_path=pw)
+    h4b = next(r for r in res["results"] if r["id"] == "H4b")
+    assert h4b["simulated_fpr"]["hits"] == 4 and h4b["simulated_fpr"]["sims"] == 40
+    assert "10.0%" in h4b["note"]
+    assert r"\resHFourBfpr}{10.0\%}" in (tmp_path / "gen" / "numbers.tex").read_text()
+
+
+def test_sizing_rule_ignores_h4b():
+    cells = [{"spec": s, "repeats": 3, "scale": sc, "rate_ci": rate}
+             for s, sc, rate in [("H4b", 0.0, 0.15), ("H4b", 1.0, 0.5),
+                                 ("H11b", 0.0, 0.0), ("H11b", 1.0, 1.0),
+                                 ("H13b", 0.0, 0.0), ("H13b", 1.0, 1.0)]]
+    sizing = [s for s in ("H4b", "H11b", "H13b") if s in power.SIZING_TESTS]
+    assert power.recommend(cells, sizing, [3], [0.0, 1.0])["repeats"] == 3

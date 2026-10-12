@@ -32,8 +32,12 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable
 
-#: Size of the confirmatory family under Amendment A1.6, for the Holm bound.
-CONFIRMATORY_FAMILY = 9
+#: Size of the confirmatory family under Amendment A1.6 as amended by A1.8, for the Holm
+#: bound. H4b left it, so it is 8.
+CONFIRMATORY_FAMILY = 8
+#: The tests the A1.6 sample-size rule is applied to (A1.8). H4b is simulated and
+#: reported, but no longer decides the number of repeats.
+SIZING_TESTS = ("H11b", "H13b")
 REPEAT_GRID = (3, 5, 8)
 CUED_FAMILIES = ("orbital_debris", "impactor_deflection", "network_propagation",
                  "control_autonomy")
@@ -184,8 +188,9 @@ def run(specs: list[str], scales: list[float], repeats: list[int], sims: int,
                 cells.append(cell)
                 if on_cell:
                     on_cell(cell)
+    sizing = [s for s in specs if s in SIZING_TESTS] or specs
     return {"cells": cells, "noise_sd": noise_sd, "sims": sims,
-            "recommendation": recommend(cells, specs, repeats, scales)}
+            "recommendation": recommend(cells, sizing, repeats, scales)}
 
 
 def recommend(cells: list[dict[str, Any]], specs: list[str], repeats: list[int],

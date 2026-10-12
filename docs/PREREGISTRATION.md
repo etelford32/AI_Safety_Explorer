@@ -412,3 +412,35 @@ reported as **underpowered**, with the simulated power stated.
   recorded per campaign), solver `4`, extractor `2`, compliance checker `1`, filler `1`.
   `explorer paper` prints each version it read. A campaign scored under different versions
   is re-scored, which is free, before any analysis.
+
+### A1.8 Addendum (2026-10-12, before data) — H4b becomes secondary
+
+**What changed.** H4b, the depth × risk interaction, moves from confirmatory to
+**secondary**. Its test and criterion are unchanged: a DiD at D or E against C, with the
+CI lower bound above 0. Only its standing changes:
+
+- **Holm.** H4b leaves the Holm family. The confirmatory family under A1.6 is now
+  H5, H6, H7, H10b, H11b, H12a, H12b and H13b, so m = 8.
+- **Sample size.** The A1.6 rule now uses **H11b and H13b**, the confirmatory interaction
+  tests the simulator covers. H4b is still simulated, and its power is reported.
+- **Reporting.** H4b is reported with its interval and with the false-positive rate
+  `explorer power` measured for it at the noise level actually used. It is never
+  described as a confirmed finding, whatever its interval shows.
+
+**Why.** Before any data, `explorer power` showed that the H4b test fires on pure noise
+too often. In simulated campaigns with no interaction planted, its false-positive rate was
+9 / 120 = 7.5%, against the nominal 2.5%, at two noise levels (docs/PAPER.md). The cause
+is structural. Its interval is a percentile bootstrap over four intent-focal families,
+and with that few groups the interval is too narrow. An exact family-level test cannot do
+better: with four families its smallest attainable p is 1/16. H4b also had the weakest
+power at realistic noise. So the corpus cannot support H4b as a confirmatory claim, and
+saying so now is the alternative to discovering it after the result is known.
+
+**What would restore it.** At least two more intent-focal families, with a fresh power
+check showing a false-positive rate ≤ 5% and power ≥ 80%. That would be a new
+amendment, made before the data it applies to.
+
+**Also corrected here.** Before this addendum, H13b's simulated false-positive rate was 0.
+That was an artefact: the mock reproduced the depth-0 response at every depth. It is
+measured with independent draws per depth (`context_reseed`) from this point on, and is
+5% pooled.

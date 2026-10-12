@@ -27,9 +27,11 @@ explorer power --noise-from pilot --repeats 3 5 8 --sims 40
 
 The pilot needs **two or more repeats**, because between-repeat noise cannot be measured
 from one. `power --noise-from` measures that noise and calibrates the mock to reproduce
-it. It then simulates the confirmatory interaction tests (H4b, H11b, H13b) many times at
-zero effect and at the documented effect, and applies the A1.6 rule: the smallest number
-of repeats with **≥ 80% power** and a **≤ 5% false-positive rate**.
+it. It then simulates the interaction tests (H4b, H11b and H13b) many times at zero
+effect and at the documented effect. The A1.6 rule (as amended by A1.8) is applied to
+H11b and H13b: the smallest number of repeats with **≥ 80% power** and a **≤ 5%
+false-positive rate**. H4b is simulated so that its false-positive rate can be reported
+beside it.
 
 The pilot's data never enters a confirmatory analysis.
 
@@ -111,6 +113,12 @@ options:
    That is itself the honest statement of what four families can support.
 3. **Keep the test, but demote H4b** to secondary, with its simulated false-positive
    rate reported beside it.
+
+**Decided: option 3** (Amendment A1.8, 2026-10-12, before data). H4b keeps its test and
+criterion, leaves the Holm family (m = 8) and the sample-size rule, and is reported with
+the false-positive rate `explorer power` measured for it: `\resHFourBfpr` in
+`numbers.tex`. Its verdict always says it is not a confirmed finding. Option 1 (more
+intent-focal families) remains the way to restore it, by a future amendment.
 
 **H13b, after a fix to the mock.** In the first run H13b showed 0 false positives, which
 was an artefact. The mock seeded each response from the task text alone, so a padded cell

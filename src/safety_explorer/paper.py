@@ -34,7 +34,9 @@ from . import EXTRACTOR_VERSION, __version__, analysis
 from .db import loads, query, query_one
 
 AMENDMENT_A1_DATE = "2026-10-12"
-CONFIRMATORY = ["H4b", "H5", "H6", "H7", "H10b", "H11b", "H12a", "H12b", "H13b"]
+# H4b was demoted to secondary by Amendment A1.8: with four intent-focal families its test
+# runs at ~3x its nominal false-positive rate (docs/PAPER.md).
+CONFIRMATORY = ["H5", "H6", "H7", "H10b", "H11b", "H12a", "H12b", "H13b"]
 N_RESAMPLES = 10_000
 SEED = 20260919
 TRUNCATION_LIMIT = 0.05
@@ -210,7 +212,7 @@ def h4(d: Data, source: str = "truth_graded") -> list[dict[str, Any]]:
     if not block:
         return [_untestable("H4a", "Depth alone costs little", "equivalence",
                             "gap at C within ±0.10", "no intent-focal depth arm"),
-                _untestable("H4b", "Risk penalty grows with depth", "confirmatory",
+                _untestable("H4b", "Risk penalty grows with depth", "secondary",
                             "DiD CI lower bound > 0 at D or E", "no intent-focal depth arm")]
     c = next((lv for lv in block["levels"] if lv["level"] == "C"), {})
     ci = list(c.get("ci95") or (None, None))
@@ -221,11 +223,11 @@ def h4(d: Data, source: str = "truth_graded") -> list[dict[str, Any]]:
     did = block["difference_in_differences"]
     entries = {k: did[k] for k in ("D", "E") if did.get(k, {}).get("median") is not None}
     if not entries:
-        b = _untestable("H4b", "Risk penalty grows with depth", "confirmatory",
+        b = _untestable("H4b", "Risk penalty grows with depth", "secondary",
                         "DiD CI lower bound > 0 at D or E", "no DiD pairs")
     else:
         k, e = max(entries.items(), key=lambda kv: kv[1]["ci95"][0] if kv[1]["ci95"][0] is not None else -9)
-        b = _result("H4b", "Risk penalty grows with depth", "confirmatory",
+        b = _result("H4b", "Risk penalty grows with depth", "secondary",
                     "DiD CI lower bound > 0 at D or E", estimate=e["median"],
                     ci=list(e["ci95"]),
                     p=min(x.get("p_greater") or 1 for x in entries.values()),
@@ -532,6 +534,38 @@ def verdict(r: dict[str, Any]) -> str:
     return "consistent" if r["met"] else "not consistent"
 
 
+def simulated_fpr(power: dict[str, Any] | None, spec: str) -> dict[str, Any] | None:
+    """A test's false-positive rate from `explorer power`, pooled over its zero-effect cells."""
+    if not power:
+        return None
+    nulls = [c for c in power.get("cells", []) if c["spec"] == spec and c["scale"] == 0.0]
+    sims = sum(c["sims"] for c in nulls)
+    if not sims:
+        return None
+    hits = round(sum(c["rate_ci"] * c["sims"] for c in nulls))
+    from .power import wilson
+    return {"rate": round(hits / sims, 4), "hits": hits, "sims": sims,
+            "rate_95": list(wilson(hits, sims)), "noise_sd": power.get("noise_sd")}
+
+
+def attach_simulated_fpr(results: list[dict[str, Any]], power: dict[str, Any] | None) -> None:
+    """Amendment A1.8: H4b is reported with the false-positive rate measured for it."""
+    for r in results:
+        if r["id"] != "H4b":
+            continue
+        f = simulated_fpr(power, "H4b")
+        r["simulated_fpr"] = f
+        if f is None:
+            r["note"] = (r["note"] + "; " if r["note"] else "") + (
+                "simulated false-positive rate unavailable — run `explorer power` "
+                "(Amendment A1.8 requires it beside this result)")
+        else:
+            r["note"] = (r["note"] + "; " if r["note"] else "") + (
+                f"simulated false-positive rate {f['rate']:.1%} ({f['hits']}/{f['sims']}, "
+                f"noise {f['noise_sd']}) against 2.5% nominal")
+        r["verdict"] += " — secondary (A1.8), not a confirmed finding"
+
+
 def manifest(conn, corpus, campaign_ids: list[str], db_path: str | None) -> dict[str, Any]:
     from .compliance import COMPLIANCE_VERSION
     from .filler import FILLER_VERSION
@@ -663,6 +697,9 @@ def numbers_tex(results, validation_, man) -> str:
         nc(macro_name(r["id"], "p"), tex_escape(fmt_p(r["p"])))
         nc(macro_name(r["id"], "verdict"), tex_escape(r["verdict"]))
         nc(macro_name(r["id"], "n"), fmt(r["n"]))
+    h4b = next((r for r in results if r["id"] == "H4b"), {})
+    f = h4b.get("simulated_fpr")
+    nc("resHFourBfpr", tex_escape(f"{f['rate']:.1%}" if f else "--"))
     nc("resValidationRho", fmt(validation_["spearman_rho"]))
     nc("resValidationCI", tex_escape(fmt_ci(validation_["rho_ci95"])))
     nc("resValidationAlpha", fmt(validation_["alpha"]))
@@ -819,6 +856,7 @@ def build(conn: sqlite3.Connection, corpus, campaign_id: str, out_dir: str | Pat
     power = None
     if power_path and Path(power_path).exists():
         power = json.loads(Path(power_path).read_text())
+    attach_simulated_fpr(results, power)
 
     out = Path(out_dir)
     (out / "tables").mkdir(parents=True, exist_ok=True)
