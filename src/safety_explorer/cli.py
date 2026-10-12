@@ -389,6 +389,84 @@ def cmd_apicheck(args) -> int:
     return 0
 
 
+def cmd_power(args) -> int:
+    """Power by simulation for the confirmatory interaction tests (Amendment A1.6)."""
+    from . import power
+
+    noise = args.noise
+    if args.noise_from:
+        conn = db.init_db(args.db)
+        cid = _resolve_campaign(conn, args.noise_from)
+        obs = power.observed_noise(conn, cid)
+        if not obs["mean_sd"]:
+            print(f"campaign '{args.noise_from}' has no prompt with two or more scored "
+                  f"repeats — run the pilot with --repeats 2 or more", file=sys.stderr)
+            return 2
+        print(f"pilot between-repeat SD of graded accuracy: {obs['mean_sd']} over "
+              f"{obs['cells']} prompts; calibrating the mock …", flush=True)
+        cal = power.calibrate_noise(obs["mean_sd"], args.corpus)
+        noise = cal["noise_sd"]
+        for pt in cal["curve"]:
+            print(f"  mock noise_sd {pt['noise_sd']:<5} -> simulated SD {pt['simulated_sd']}")
+        print(f"  using noise_sd = {noise}\n")
+    label = f"noise_sd {noise}" if noise is not None else "the mock's own noise (optimistic)"
+    n_jobs = len(args.tests) * len(args.scales) * len(args.repeats) * args.sims
+    print(f"power — {', '.join(args.tests)}; {args.sims} simulations per cell; {label}; "
+          f"{n_jobs} simulated campaigns\n", flush=True)
+    print(f"  {'test':<6}{'R':>3}{'effect':>8}{'detect (CI)':>14}{'95% range':>16}"
+          f"{'detect (Holm)':>15}{'mean est':>10}")
+
+    def show(c):
+        lo, hi = c["rate_ci_95"]
+        tag = " power" if c["scale"] == 1.0 else (" FPR" if c["scale"] == 0.0 else "")
+        print(f"  {c['spec']:<6}{c['repeats']:>3}{c['scale']:>8.2f}{c['rate_ci']:>14.2f}"
+              f"{f'[{lo}, {hi}]':>16}{c['rate_holm']:>15.2f}{str(c['mean_estimate']):>10}{tag}",
+              flush=True)
+
+    res = power.run(args.tests, args.scales, args.repeats, args.sims, args.corpus,
+                    noise_sd=noise, workers=args.workers, on_cell=show)
+    rec = res["recommendation"]
+    print(f"\nA1.6: R = {rec['repeats']} — {rec['reason']}")
+    if noise is None:
+        print("note: no noise calibration. Re-run with --noise-from <pilot> before "
+              "choosing R; the mock alone is far less noisy than a real model.")
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({**res, "tests": args.tests, "scales": args.scales,
+                               "repeats_grid": args.repeats}, indent=2))
+    print(f"saved {out}")
+    return 0
+
+
+def cmd_paper(args) -> int:
+    """Every number, table and figure in the paper, regenerated from the database."""
+    from . import paper
+
+    c, _ = _corpus_and_lint(args)
+    conn = db.init_db(args.db)
+    cid = _resolve_campaign(conn, args.campaign)
+    if not cid or not db.query_one(conn, "SELECT id FROM campaign WHERE id = ?", (cid,)):
+        print(f"no campaign '{args.campaign}'", file=sys.stderr)
+        return 2
+    depth = _resolve_campaign(conn, args.depth_campaign) if args.depth_campaign else None
+    cue = _resolve_campaign(conn, args.cue_campaign) if args.cue_campaign else None
+    res = paper.build(conn, c, cid, args.out, depth_campaign=depth, cue_campaign=cue,
+                      tiers=args.tiers, db_path=args.db, power_path=args.power)
+    for w in res["manifest"]["warnings"]:
+        print(f"warning: {w}")
+    print(f"{'ID':<6}{'role':<14}{'estimate':>22}{'95% CI':>20}{'p':>9}  verdict")
+    for r in res["results"]:
+        print(f"{r['id']:<6}{r['role']:<14}{paper.fmt(r['estimate']):>22.22}"
+              f"{paper.fmt_ci(r['ci95']):>20}{paper.fmt_p(r['p']):>9}  {r['verdict']}")
+    v = res["validation"]
+    print(f"\nvalidation: Spearman rho {paper.fmt(v['spearman_rho'])} "
+          f"{paper.fmt_ci(v['rho_ci95'])} over {v['n_runs']} runs; alpha {paper.fmt(v['alpha'])}"
+          + (f" — {v['flag']}" if v["flag"] else ""))
+    print(f"\nwrote {res['out']}/ (numbers.tex, tables/, figures/, results.json, "
+          f"MANIFEST.json, README.md)")
+    return 0
+
+
 def pricing_as_of() -> str:
     from . import pricing
     return pricing.PRICING_AS_OF
@@ -1645,6 +1723,34 @@ def build_parser() -> argparse.ArgumentParser:
                     help="also run a two-request batch (usually minutes; can be longer)")
     ac.add_argument("--batch-timeout", type=float, default=1800.0)
     ac.set_defaults(func=cmd_apicheck)
+
+    pw = sub.add_parser("power", help="power by simulation for the confirmatory tests "
+                                      "(Amendment A1.6)")
+    pw.add_argument("--tests", nargs="+", default=["H4b", "H11b", "H13b"],
+                    choices=["H4b", "H11b", "H13b"])
+    pw.add_argument("--scales", nargs="+", type=float, default=[0.0, 0.5, 1.0],
+                    help="planted effect as a fraction of the mock's documented size")
+    pw.add_argument("--repeats", nargs="+", type=int, default=[3, 5, 8])
+    pw.add_argument("--sims", type=int, default=20, help="simulations per cell")
+    pw.add_argument("--noise", type=float, default=None, help="mock noise_sd to use")
+    pw.add_argument("--noise-from", default=None, metavar="CAMPAIGN",
+                    help="calibrate noise to a real pilot's between-repeat variation")
+    pw.add_argument("--workers", type=int, default=None)
+    pw.add_argument("--out", default="data/power/power.json")
+    pw.set_defaults(func=cmd_power)
+
+    pp = sub.add_parser("paper", help="regenerate every number, table and figure for the "
+                                      "paper from the database (Amendment A1)")
+    pp.add_argument("--campaign", required=True, help="the main campaign")
+    pp.add_argument("--depth-campaign", default=None,
+                    help="campaign holding the context-depth sweep (default: --campaign)")
+    pp.add_argument("--cue-campaign", default=None,
+                    help="campaign holding the cued arm (default: --campaign)")
+    pp.add_argument("--tiers", default="A")
+    pp.add_argument("--power", default="data/power/power.json",
+                    help="power results to cite, if present")
+    pp.add_argument("--out", default="paper/generated")
+    pp.set_defaults(func=cmd_paper)
 
     cap = sub.add_parser("capture", help="record a response pasted from a chat surface (Tier B)")
     cap.add_argument("--prompt", required=True)

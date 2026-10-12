@@ -54,16 +54,17 @@ explorer --db data/api-tests.db preflight --model claude-opus-5-5 --repeats 3 \
 This sizes every filler exactly and keeps the calibration, so the run does not count tokens
 again. It then measures one real response and prints the four-way cost table.
 
-## 3. Pilot — about $1–2.50 sync, or $0.90–1.40 batch (Opus 5.5)
+## 3. Pilot — about $2–5 sync, or $1.80–2.80 batch (Opus 5.5)
 
-One family, one repeat, two depths. Run it both ways, so the batch path can be compared with
-the synchronous one on the same cells:
+One family, **two repeats** (power needs between-repeat noise, so one repeat is not enough),
+two depths. Run it both ways, so the batch path can be compared with the synchronous one on
+the same cells:
 
 ```bash
 explorer --db data/api-tests.db run --campaign pilot-sync  --provider anthropic \
-         --model claude-opus-5-5 --repeats 1 --only orbital_debris --depths 0 32k
+         --model claude-opus-5-5 --repeats 2 --only orbital_debris --depths 0 32k
 explorer --db data/api-tests.db run --campaign pilot-batch --provider anthropic \
-         --model claude-opus-5-5 --repeats 1 --only orbital_debris --depths 0 32k --batch
+         --model claude-opus-5-5 --repeats 2 --only orbital_debris --depths 0 32k --batch
 explorer --db data/api-tests.db analyse context --campaign pilot-sync
 explorer --db data/api-tests.db analyse context --campaign pilot-batch
 ```
@@ -71,7 +72,7 @@ explorer --db data/api-tests.db analyse context --campaign pilot-batch
 Check before going further:
 
 - **Cache hits.** The printed cache share at 32k should be well above zero for the synchronous
-  campaign: 17 of its 18 cells should read the filler.
+  campaign: in each 18-cell repeat block, every cell after the first should read the filler.
 - **Truncation.** Look for `stop_reason=max_tokens`. A truncated response is excluded as a
   corrupted measurement. If many cells are truncated, raise `--max-tokens`.
 - **Refusals.** Refusals show up as `finish_reason=refusal` with a category in
@@ -82,6 +83,15 @@ Check before going further:
   assumption is wrong for this model, so re-run `preflight`.
 - **Resume.** Stop the batch run while it is waiting (Ctrl-C), run the same command again,
   and check that it says `collecting batch …` rather than submitting a new one.
+
+Then set the number of repeats from the pilot's noise (Amendment A1.6). This runs locally
+and makes no API calls:
+
+```bash
+explorer --db data/api-tests.db power --noise-from pilot-sync --sims 40
+```
+
+Pilot data never enters a confirmatory analysis. See [PAPER.md](PAPER.md).
 
 ## 4. The full sweep
 

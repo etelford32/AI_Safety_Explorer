@@ -106,6 +106,40 @@ def bootstrap_ci(values: Sequence[float], groups: Sequence[Any] | None = None,
     return (round(lo, 3), round(hi, 3))
 
 
+def bootstrap_p(values: Sequence[float], groups: Sequence[Any] | None = None,
+                null: float = 0.0, alternative: str = "greater",
+                n_resamples: int = 10_000, seed: int = 20260919,
+                statistic: str = "median") -> float | None:
+    """One-sided bootstrap p-value from the SAME resampling `bootstrap_ci` uses.
+
+    p = (resampled statistics on the null side + 1) / (resamples + 1). Same seed, same
+    groups, same statistic as the interval, so "the 95% CI excludes zero" and "p < 0.025"
+    agree. Exists for Holm–Bonferroni across the confirmatory family (Amendment A1.6).
+    """
+    if not values:
+        return None
+    summarise = median if statistic == "median" else (lambda xs: sum(xs) / len(xs))
+    rng = random.Random(seed)
+    if groups is not None:
+        buckets: dict[Any, list[float]] = defaultdict(list)
+        for v, g in zip(values, groups):
+            buckets[g].append(v)
+        keys = list(buckets)
+        if len(keys) < 2:
+            return None
+        draw = lambda: summarise([x for k in [rng.choice(keys) for _ in keys]  # noqa: E731
+                                  for x in buckets[k]])
+    else:
+        n = len(values)
+        draw = lambda: summarise([rng.choice(values) for _ in range(n)])  # noqa: E731
+    on_null_side = 0
+    for _ in range(n_resamples):
+        stat = draw()
+        if (stat <= null) if alternative == "greater" else (stat >= null):
+            on_null_side += 1
+    return round((on_null_side + 1) / (n_resamples + 1), 5)
+
+
 def holm_bonferroni(pvalues: dict[str, float], alpha: float = 0.05) -> dict[str, dict[str, Any]]:
     """Holm-Bonferroni step-down correction across the pre-registered hypotheses."""
     items = sorted(pvalues.items(), key=lambda kv: kv[1])
@@ -336,6 +370,7 @@ def _gt_block(test: dict[str, Any], base: dict[str, Any],
         for name, _ in _GT_LAYERS:
             block[name] = None
         block["gt_test"] = block["gt_baseline"] = None
+        block["gt_graded_test"] = block["gt_graded_baseline"] = None
         return block
 
     t = test if shared is None else on_cover(test, shared)
@@ -345,6 +380,8 @@ def _gt_block(test: dict[str, Any], base: dict[str, Any],
         block[name] = (round(tv - bv, 3) if tv is not None and bv is not None else None)
     block["gt_test"] = t.get("gt_accuracy")
     block["gt_baseline"] = b.get("gt_accuracy")
+    block["gt_graded_test"] = t.get("gt_graded")
+    block["gt_graded_baseline"] = b.get("gt_graded")
     return block
 
 
@@ -449,6 +486,9 @@ def twin_deltas(conn: sqlite3.Connection, corpus, campaign_id: str | None = None
         out.append({
             "family_id": o["family_id"],
             "twin_group_id": o["twin_group_id"],
+            "prompt_id": o["prompt_id"],
+            "sub_arm": o.get("sub_arm"),
+            "language": o.get("language") or "en",
             "variant": o["variant"],
             "baseline_variant": base["variant"],
             "repeat_index": o["repeat_index"],
@@ -660,6 +700,7 @@ def depth_interaction(conn: sqlite3.Connection, corpus, campaign_id: str | None 
                     "median": round(median(vals), 3),
                     "mean": round(sum(vals) / len(vals), 3),
                     "ci95": bootstrap_ci(vals, fams),
+                    "p_greater": bootstrap_p(vals, fams),
                     "cliffs_delta": round(d, 3),
                     "effect": interpret_delta(d),
                     "provisional": len(vals) < 3 or len(set(fams)) < 2,
@@ -792,6 +833,7 @@ def sandbagging(conn: sqlite3.Connection, corpus, campaign_id: str | None = None
             "median": round(median(vals), 4),
             "mean": round(sum(vals) / len(vals), 4),
             "ci95": bootstrap_ci(vals, fams),
+            "p_greater": bootstrap_p(vals, fams),
             "cliffs_delta": round(d, 3), "effect": interpret_delta(d),
             "provisional": len(vals) < 3 or len(set(fams)) < 2,
         }
@@ -1018,6 +1060,7 @@ def language_effect(conn: sqlite3.Connection, corpus, campaign_id: str | None = 
                     "median": round(median(vals), 3),
                     "mean": round(sum(vals) / len(vals), 3),
                     "ci95": bootstrap_ci(vals, fams),
+                    "p_greater": bootstrap_p(vals, fams),
                     "cliffs_delta": round(d, 3), "effect": interpret_delta(d),
                     "provisional": len(vals) < 3 or len(set(fams)) < 2,
                 })
@@ -2004,6 +2047,71 @@ def _depth_reading(points: list[dict[str, Any]]) -> dict[str, Any]:
             "wrong_per_doubling": _per_doubling(pts, "wrong")}
 
 
+def _family_rate(rows: list[dict[str, Any]], cls: str) -> float | None:
+    from .groundtruth import ERROR_CLASSES  # noqa: F401 — documents where cls comes from
+    num = den = 0
+    for r in rows:
+        if (r.get("gt_total") or 0) <= 0:
+            continue
+        num += int((loads(r.get("gt_error_classes"), {}) or {}).get(cls, 0) or 0)
+        den += r["gt_total"]
+    return num / den if den else None
+
+
+def _mean_of(rows: list[dict[str, Any]], key: str) -> float | None:
+    vals = [r[key] for r in rows if r.get(key) is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _summary(vals: list[float], fams: list[str], alternative: str = "greater") -> dict[str, Any]:
+    if not vals:
+        return {"n_families": 0, "median": None, "ci95": [None, None], "p": None}
+    return {"n_families": len(set(fams)), "median": round(median(vals), 4),
+            "ci95": [_finite(x) for x in bootstrap_ci(vals, fams)],
+            "p": bootstrap_p(vals, fams, alternative=alternative),
+            "values": {f: round(v, 4) for f, v in zip(fams, vals)}}
+
+
+def _depth_tests(by_depth: dict[int, list[dict[str, Any]]]) -> dict[str, Any]:
+    """The pre-registered H13 contrasts, deepest depth against 0, one value per family.
+
+    Pairing within family is what makes the interaction a difference-in-differences: a
+    family's elevated and benign prompts share a reasoning core, so family difficulty
+    cancels. Families lacking either group at either depth contribute nothing.
+    """
+    depths = sorted(by_depth)
+    if len(depths) < 2:
+        return {}
+    lo, hi = depths[0], depths[-1]
+    fams = sorted({r["family_id"] for d in (lo, hi) for r in by_depth[d] if r.get("family_id")})
+    inter, bn_acc, comp = ([], []), ([], []), ([], [])
+    for fam in fams:
+        def pick(d, group):
+            return [r for r in by_depth[d] if r.get("family_id") == fam
+                    and DEPTH_GROUPS[group](r)]
+        a = {(d, g): _family_rate(pick(d, g), "absent") for d in (lo, hi)
+             for g in ("benign", "elevated")}
+        if None not in a.values():
+            inter[0].append((a[(hi, "elevated")] - a[(lo, "elevated")])
+                            - (a[(hi, "benign")] - a[(lo, "benign")]))
+            inter[1].append(fam)
+        acc = [_mean_of(pick(d, "benign"), "gt_graded") for d in (lo, hi)]
+        if None not in acc:
+            bn_acc[0].append(acc[1] - acc[0])
+            bn_acc[1].append(fam)
+        answered = [[r for r in pick(d, "all") if not _refused(r)] for d in (lo, hi)]
+        cm = [_mean_of(x, "compliance") for x in answered]
+        if None not in cm:
+            comp[0].append(cm[1] - cm[0])
+            comp[1].append(fam)
+    return {
+        "from_depth": lo, "to_depth": hi,
+        "absent_interaction": _summary(*inter),
+        "benign_graded_delta": _summary(*bn_acc),
+        "compliance_delta": _summary(*comp, alternative="less"),
+    }
+
+
 def context_depth(conn: sqlite3.Connection, campaign_id: str | None = None,
                   tiers: str = "A") -> dict[str, Any]:
     """Accuracy, error classes and constraint compliance against context depth.
@@ -2044,6 +2152,7 @@ def context_depth(conn: sqlite3.Connection, campaign_id: str | None = None,
             "filler_id": fid, "depths": sorted(by_depth), "groups": groups,
             "absent_interaction": (round(ab_el - ab_bn, 4)
                                    if ab_el is not None and ab_bn is not None else None),
+            "tests": _depth_tests(by_depth),
         })
     return {
         "campaign_id": campaign_id, "n_runs": len(rows),

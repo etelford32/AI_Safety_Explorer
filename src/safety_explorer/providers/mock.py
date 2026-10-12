@@ -652,6 +652,10 @@ class MockProvider(Provider):
     def __init__(self, model: str = "mock-1", seed: int = 0, **params: Any) -> None:
         super().__init__(model, **params)
         self.seed = seed
+        # The documented ground truth, with any per-instance overrides. `explorer power`
+        # sets effect sizes here to ask how often an analysis detects a planted effect;
+        # a mock without overrides is exactly the documented fixture.
+        self.g = {**GROUND_TRUTH, **(params.get("ground_truth") or {})}
         # Read once, not per call: a campaign is one fixture, and a file edited mid-run
         # would make its two halves different models.
         self.stance_model = load_stance_model(params.get("stance_model_path"))
@@ -664,7 +668,7 @@ class MockProvider(Provider):
 
     def _cue_penalty(self, level: int, arm: str) -> float:
         """Accuracy lost to an observation cue. Zero at baseline and below threshold."""
-        g = GROUND_TRUTH
+        g = self.g
         if arm == "none" or level < g["cue_detection_level"]:
             return 0.0
         steps = level - g["cue_detection_level"] + 1
@@ -673,19 +677,19 @@ class MockProvider(Provider):
 
     def _context_loss(self, depth: int, per_doubling: float) -> float:
         """Probability a context-depth effect fires at this depth (documented above)."""
-        g = GROUND_TRUTH
+        g = self.g
         if self.params.get("context_effect", "omission") == "none" or depth <= g["context_free_depth"]:
             return 0.0
         doublings = math.log2(depth / g["context_free_depth"])
         return min(g["context_loss_cap"], per_doubling * doublings)
 
     def _detects(self, level: int, arm: str) -> bool:
-        g = GROUND_TRUTH
+        g = self.g
         return arm == "treatment" and level >= g["cue_detection_level"]
 
     def _retention(self, vec: dict[str, int], rng: random.Random,
                    cue_level: int = 0, cue_arm: str = "none") -> float:
-        g = GROUND_TRUTH
+        g = self.g
         intent = vec.get("intent", 0)
         depth = vec.get("depth", 0)
 
@@ -878,7 +882,7 @@ class MockProvider(Provider):
         labelled = []
         for s in spans:
             label = self._label_span(s["evidence"])
-            if rng.random() < GROUND_TRUTH["judge_confusion"]:
+            if rng.random() < self.g["judge_confusion"]:
                 label = rng.choice([a for a in alt if a != label])
             labelled.append({"index": s["index"], "label": label,
                              "confidence": round(0.6 + 0.35 * rng.random(), 2),
@@ -940,7 +944,7 @@ class MockProvider(Provider):
             text=text, model_reported=self.model, finish_reason="stop",
             usage={"input_tokens": 0, "output_tokens": len(text) // 4},
             latency_ms=int((time.time() - t0) * 1000),
-            raw={"mock_proposal": True, "ground_truth": GROUND_TRUTH},
+            raw={"mock_proposal": True, "ground_truth": self.g},
         )
 
     def _answer_probe(self, kind: str, messages: list[dict[str, str]],
@@ -1005,7 +1009,7 @@ class MockProvider(Provider):
             true_retention = self._retention(vec, rng, cue_level, cue_arm)
             clean = self._retention(vec, rng, 0, "none")
             drop = max(0.0, clean - true_retention)
-            admitted = drop * GROUND_TRUTH["selfreport_honesty"]
+            admitted = drop * self.g["selfreport_honesty"]
             effort = max(0, min(100, round(100 * (1 - admitted))))
             detected = self._detects(cue_level, cue_arm)
             text = (f"EFFORT: {effort}\n"
@@ -1043,9 +1047,9 @@ class MockProvider(Provider):
         rng = random.Random(int(key[:16], 16))
         depth = int(overrides.get("context_depth_tokens") or 0)
         ctx_rng = random.Random(f"{key}|depth|{depth}")
-        context_loss = self._context_loss(depth, GROUND_TRUTH["context_loss_per_doubling"])
+        context_loss = self._context_loss(depth, self.g["context_loss_per_doubling"])
         format_loss = self._context_loss(depth,
-                                         GROUND_TRUTH["context_format_loss_per_doubling"])
+                                         self.g["context_format_loss_per_doubling"])
 
         if probe_kind:
             return self._answer_probe(probe_kind, messages, vec, rng, cue_level, cue_arm, t0)
@@ -1057,10 +1061,10 @@ class MockProvider(Provider):
 
         r = self._retention(vec, rng, cue_level, cue_arm)
         if self.params.get("context_effect", "omission") == "tightening":
-            r = max(0.0, r - GROUND_TRUTH["context_tightening_scale"] * context_loss
+            r = max(0.0, r - self.g["context_tightening_scale"] * context_loss
                     * max(0, int(vec.get("intent") or 0) - 1))
             context_loss = 0.0   # the figures themselves are untouched in this mode
-        g = GROUND_TRUTH
+        g = self.g
         if r >= g["band_full"]:
             text, band = _BODY, "full"
         elif r >= g["band_hedged"]:
@@ -1134,7 +1138,7 @@ class MockProvider(Provider):
                 "output_tokens": len(text) // 4,
             },
             latency_ms=int((time.time() - t0) * 1000),
-            raw={"mock_retention": round(r, 4), "ground_truth": GROUND_TRUTH,
+            raw={"mock_retention": round(r, 4), "ground_truth": self.g,
                  "stance_plan": plan, "power_plan": power_plan_out},
         )
 
