@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import HUMAN_METRICS, __version__
 from . import analysis, annotate, corpus as corpus_mod, db, ingest, lint, runner
+from . import filler as filler_mod
 from .providers import get_provider
 
 
@@ -108,6 +109,36 @@ def cmd_corpus(args) -> int:
     return 0
 
 
+def _parse_depths(values: list[str] | None) -> list[int] | None:
+    """`--depths 0 8k 32000 128k` -> [0, 8000, 32000, 128000]."""
+    if not values:
+        return None
+    out = set()
+    for v in values:
+        for part in str(v).split(","):
+            part = part.strip().lower().replace("_", "")
+            if not part:
+                continue
+            out.add(int(float(part[:-1]) * 1000) if part.endswith("k") else int(part))
+    return sorted(out)
+
+
+def _provider_kwargs(args) -> dict:
+    kw: dict = {"max_tokens": args.max_tokens, "system": args.system}
+    if args.temperature is not None:
+        kw["temperature"] = args.temperature
+    if getattr(args, "thinking", None):
+        kw["thinking"] = args.thinking
+    if getattr(args, "effort", None):
+        kw["effort"] = args.effort
+    # Caching is an Anthropic request option; other providers take no such parameter.
+    if args.provider == "anthropic":
+        kw["cache"] = not getattr(args, "no_cache", False)
+        if getattr(args, "cache_ttl", None):
+            kw["cache_ttl"] = args.cache_ttl
+    return kw
+
+
 def cmd_run(args) -> int:
     c, report = _corpus_and_lint(args)
     _require_clean(c, report, args.force)
@@ -115,14 +146,20 @@ def cmd_run(args) -> int:
     conn = db.init_db(args.db)
     runner.snapshot_corpus(conn, c, report.clean)
 
-    provider_kwargs: dict = {"max_tokens": args.max_tokens, "system": args.system}
-    if args.temperature is not None:
-        provider_kwargs["temperature"] = args.temperature
-    if getattr(args, "thinking", None):
-        provider_kwargs["thinking"] = args.thinking
-    if getattr(args, "effort", None):
-        provider_kwargs["effort"] = args.effort
-    provider = get_provider(args.provider, args.model, **provider_kwargs)
+    try:
+        depths = _parse_depths(args.depths)
+        filler_id = filler_mod.resolve(args.filler)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    provider = get_provider(args.provider, args.model, **_provider_kwargs(args))
+    if args.batch and not provider.supports_batch:
+        print(f"error: provider '{args.provider}' has no batch API", file=sys.stderr)
+        return 2
+    if args.batch and args.probes:
+        print("error: awareness probes run synchronously; run them without --batch",
+              file=sys.stderr)
+        return 2
 
     existing = db.query_one(conn, "SELECT id FROM campaign WHERE name = ?", (args.campaign,))
     if existing and args.resume:
@@ -151,7 +188,7 @@ def cmd_run(args) -> int:
     cue_set = None
     if args.cues is not None or args.cue_arms is not None or args.probes:
         from . import cues as cue_mod
-        cue_set = cue_mod.load()
+        cue_set = cue_mod.load(corpus=c)
         cue_errors = cue_mod.lint(cue_set)
         if cue_errors:
             for e in cue_errors:
@@ -162,14 +199,34 @@ def cmd_run(args) -> int:
             print("note: running the treatment arm without its placebo. Any effect "
                   "found cannot be separated from a reaction to unusual framing.")
 
-    stats = runner.execute(
-        conn, campaign_id, c, provider, args.repeats,
-        only=args.only, surface=args.surface, resume=args.resume,
-        on_progress=progress, cue_set=cue_set, cue_levels=args.cues,
-        cue_arms=args.cue_arms, probe_kinds=args.probes,
-    )
+    if depths:
+        print(f"context depths: {', '.join(f'{d:,}' for d in depths)} tokens "
+              f"(filler: {filler_id})")
+    if args.batch:
+        stats = runner.execute_batch(
+            conn, campaign_id, c, provider, args.repeats,
+            only=args.only, surface=args.surface, on_progress=progress,
+            cue_set=cue_set, cue_levels=args.cues, cue_arms=args.cue_arms,
+            depths=depths, filler_id=filler_id, prewarm=not args.no_prewarm,
+            poll_seconds=args.poll, on_note=lambda m: print(f"  {m}", flush=True),
+        )
+        print(f"\n{stats['batches']} batch(es) in {stats['waves']} wave(s)")
+    else:
+        stats = runner.execute(
+            conn, campaign_id, c, provider, args.repeats,
+            only=args.only, surface=args.surface, resume=args.resume,
+            on_progress=progress, cue_set=cue_set, cue_levels=args.cues,
+            cue_arms=args.cue_arms, probe_kinds=args.probes,
+            depths=depths, filler_id=filler_id,
+        )
     print(f"\n{stats['ok']} ok, {stats['errors']} error(s), "
           f"{stats['skipped']} already present, {stats['total']} cells total")
+    from . import pricing
+    cost = pricing.campaign_cost(conn, campaign_id)
+    if cost["runs_priced"]:
+        hit = cost["cache_hit_share"]
+        print(f"recorded cost so far: ~${cost['cost']:.2f} (list prices as of "
+              f"{cost['as_of']})" + (f"; {hit:.0%} of input read from cache" if hit else ""))
     return 0
 
 
@@ -184,24 +241,19 @@ def cmd_preflight(args) -> int:
     c, report = _corpus_and_lint(args)
     _require_clean(c, report, args.force)
 
-    provider_kwargs: dict = {"max_tokens": args.max_tokens, "system": args.system}
-    if args.temperature is not None:
-        provider_kwargs["temperature"] = args.temperature
-    if args.thinking:
-        provider_kwargs["thinking"] = args.thinking
-    if args.effort:
-        provider_kwargs["effort"] = args.effort
-
     try:
-        provider = get_provider(args.provider, args.model, **provider_kwargs)
+        provider = get_provider(args.provider, args.model, **_provider_kwargs(args))
+        depths = _parse_depths(args.depths)
+        filler_id = filler_mod.resolve(args.filler)
     except ValueError as exc:
         print(f"provider error: {exc}", file=sys.stderr)
         return 2
 
     print(f"corpus {c.version} ({c.content_hash[:16]}) — {len(c.runnable)} runnable prompts")
     print(f"provider {provider.name}  model {args.model}  repeats {args.repeats}")
-    cells = len(c.runnable) * args.repeats
-    print(f"campaign size: {cells} cells\n")
+    cells = len(c.runnable) * args.repeats * len(depths or [0])
+    print(f"campaign size: {cells} cells"
+          + (f" ({len(depths)} context depths)" if depths else "") + "\n")
 
     # 1. parameter legality, before anything is spent
     try:
@@ -250,6 +302,42 @@ def cmd_preflight(args) -> int:
         print("  WARNING: the probe hit max_tokens. Raise --max-tokens: a truncated "
               "response scores as capability loss.")
 
+    if depths:
+        # Size each depth's filler exactly as the run will (and keep the calibration,
+        # so the run reuses it instead of counting again).
+        conn = db.init_db(args.db)
+        filler_tokens = {}
+        for d in depths:
+            if d:
+                f = filler_mod.realise(conn, filler_id, d, provider)
+                filler_tokens[d] = f.tokens if f else d
+                print(f"filler {filler_id} @ {d:,}: {filler_tokens[d]:,} tokens "
+                      f"({f.count_method if f else 'none'})")
+        de = pricing.depth_estimate(args.model, total_input, len(c.runnable), depths,
+                                    args.repeats, out_tokens, filler_tokens=filler_tokens,
+                                    cache=not args.no_cache)
+        if de.get("known"):
+            print(f"\ndepth sweep cost (list prices as of {de['as_of']}; cache minimum "
+                  f"{de['min_cacheable']} tokens):")
+            print(f"  {'depth':>9} {'cells':>6} {'in/req':>9} {'sync':>10} {'sync+cache':>11}"
+                  f" {'batch':>10} {'batch+cache':>12}")
+            for r in de["by_depth"]:
+                print(f"  {r['depth']:>9,} {r['cells']:>6} {r['input_per_request']:>9,}"
+                      f" ${r['sync_uncached']:>9,.2f} ${r['sync_cached']:>10,.2f}"
+                      f" ${r['batch_uncached']:>9,.2f} ${r['batch_cached']:>11,.2f}")
+            t = de["totals"]
+            print(f"  {'total':>9} {'':>6} {'':>9} ${t['sync_uncached']:>9,.2f}"
+                  f" ${t['sync_cached']:>10,.2f} ${t['batch_uncached']:>9,.2f}"
+                  f" ${t['batch_cached']:>11,.2f}")
+            print("\n  Cached columns assume one filler write per (depth, repeat) block —")
+            print("  5-minute TTL for sync, 1-hour for batch plus a pre-warm write.")
+        else:
+            print(f"\nno cached price for '{args.model}' — cannot estimate cost.")
+        print(f"\nready. run it with:\n  explorer run --campaign <name> --provider "
+              f"{args.provider} --model {args.model} --repeats {args.repeats} "
+              f"--depths {' '.join(str(d) for d in depths)} --batch")
+        return 0
+
     est = pricing.estimate(args.model, total_input * args.repeats, out_tokens * cells)
     if est.get("known"):
         print(f"\nestimated cost (list prices as of {est['as_of']}):")
@@ -266,6 +354,122 @@ def cmd_preflight(args) -> int:
     print(f"\nready. run it with:\n  explorer run --campaign <name> --provider {args.provider} "
           f"--model {args.model} --repeats {args.repeats}")
     return 0
+
+
+def cmd_apicheck(args) -> int:
+    """Check each live-API assumption the depth sweep rests on, once, for cents."""
+    from . import apicheck
+
+    if args.provider != "anthropic":
+        print("apicheck exercises the Anthropic API features (caching, batches); "
+              "use --provider anthropic", file=sys.stderr)
+        return 2
+    try:
+        provider = get_provider(args.provider, args.model, **_provider_kwargs(args))
+    except ValueError as exc:
+        print(f"provider error: {exc}", file=sys.stderr)
+        return 2
+    print(f"apicheck — {args.model}" + (" (with a two-request batch)" if args.batch else ""))
+
+    def show(stage) -> None:
+        mark = {True: "PASS", False: "FAIL", None: "skip"}[stage.ok]
+        cost = f"  ${stage.cost:.4f}" if stage.cost else ""
+        print(f"  [{mark}] {stage.name:<20} {stage.detail}{cost}", flush=True)
+
+    stages = apicheck.run(provider, batch=args.batch, batch_timeout=args.batch_timeout,
+                          on_stage=show)
+    failed = [s for s in stages if s.ok is False]
+    print(f"\nspent ~${apicheck.total_cost(stages):.4f} (list prices as of "
+          f"{pricing_as_of()})")
+    if failed:
+        print(f"{len(failed)} stage(s) failed: {', '.join(s.name for s in failed)}")
+        return 1
+    print("every checked assumption holds. Next: explorer preflight --model "
+          f"{args.model} --depths 0 8k 32k 128k")
+    return 0
+
+
+def cmd_power(args) -> int:
+    """Power by simulation for the confirmatory interaction tests (Amendment A1.6)."""
+    from . import power
+
+    noise = args.noise
+    if args.noise_from:
+        conn = db.init_db(args.db)
+        cid = _resolve_campaign(conn, args.noise_from)
+        obs = power.observed_noise(conn, cid)
+        if not obs["mean_sd"]:
+            print(f"campaign '{args.noise_from}' has no prompt with two or more scored "
+                  f"repeats — run the pilot with --repeats 2 or more", file=sys.stderr)
+            return 2
+        print(f"pilot between-repeat SD of graded accuracy: {obs['mean_sd']} over "
+              f"{obs['cells']} prompts; calibrating the mock …", flush=True)
+        cal = power.calibrate_noise(obs["mean_sd"], args.corpus)
+        noise = cal["noise_sd"]
+        for pt in cal["curve"]:
+            print(f"  mock noise_sd {pt['noise_sd']:<5} -> simulated SD {pt['simulated_sd']}")
+        print(f"  using noise_sd = {noise}\n")
+    label = f"noise_sd {noise}" if noise is not None else "the mock's own noise (optimistic)"
+    n_jobs = len(args.tests) * len(args.scales) * len(args.repeats) * args.sims
+    print(f"power — {', '.join(args.tests)}; {args.sims} simulations per cell; {label}; "
+          f"{n_jobs} simulated campaigns\n", flush=True)
+    print(f"  {'test':<6}{'R':>3}{'effect':>8}{'detect (CI)':>14}{'95% range':>16}"
+          f"{'detect (Holm)':>15}{'mean est':>10}")
+
+    def show(c):
+        lo, hi = c["rate_ci_95"]
+        tag = " power" if c["scale"] == 1.0 else (" FPR" if c["scale"] == 0.0 else "")
+        print(f"  {c['spec']:<6}{c['repeats']:>3}{c['scale']:>8.2f}{c['rate_ci']:>14.2f}"
+              f"{f'[{lo}, {hi}]':>16}{c['rate_holm']:>15.2f}{str(c['mean_estimate']):>10}{tag}",
+              flush=True)
+
+    res = power.run(args.tests, args.scales, args.repeats, args.sims, args.corpus,
+                    noise_sd=noise, workers=args.workers, on_cell=show)
+    rec = res["recommendation"]
+    print(f"\nA1.6: R = {rec['repeats']} — {rec['reason']}")
+    if noise is None:
+        print("note: no noise calibration. Re-run with --noise-from <pilot> before "
+              "choosing R; the mock alone is far less noisy than a real model.")
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({**res, "tests": args.tests, "scales": args.scales,
+                               "repeats_grid": args.repeats}, indent=2))
+    print(f"saved {out}")
+    return 0
+
+
+def cmd_paper(args) -> int:
+    """Every number, table and figure in the paper, regenerated from the database."""
+    from . import paper
+
+    c, _ = _corpus_and_lint(args)
+    conn = db.init_db(args.db)
+    cid = _resolve_campaign(conn, args.campaign)
+    if not cid or not db.query_one(conn, "SELECT id FROM campaign WHERE id = ?", (cid,)):
+        print(f"no campaign '{args.campaign}'", file=sys.stderr)
+        return 2
+    depth = _resolve_campaign(conn, args.depth_campaign) if args.depth_campaign else None
+    cue = _resolve_campaign(conn, args.cue_campaign) if args.cue_campaign else None
+    res = paper.build(conn, c, cid, args.out, depth_campaign=depth, cue_campaign=cue,
+                      tiers=args.tiers, db_path=args.db, power_path=args.power)
+    for w in res["manifest"]["warnings"]:
+        print(f"warning: {w}")
+    print(f"{'ID':<6}{'role':<14}{'estimate':>22}{'95% CI':>20}{'p':>9}  verdict")
+    for r in res["results"]:
+        print(f"{r['id']:<6}{r['role']:<14}{paper.fmt(r['estimate']):>22.22}"
+              f"{paper.fmt_ci(r['ci95']):>20}{paper.fmt_p(r['p']):>9}  {r['verdict']}")
+    v = res["validation"]
+    print(f"\nvalidation: Spearman rho {paper.fmt(v['spearman_rho'])} "
+          f"{paper.fmt_ci(v['rho_ci95'])} over {v['n_runs']} runs; alpha {paper.fmt(v['alpha'])}"
+          + (f" — {v['flag']}" if v["flag"] else ""))
+    print(f"\nwrote {res['out']}/ (numbers.tex, tables/, figures/, results.json, "
+          f"MANIFEST.json, README.md)")
+    return 0
+
+
+def pricing_as_of() -> str:
+    from . import pricing
+    return pricing.PRICING_AS_OF
 
 
 def cmd_capture(args) -> int:
@@ -458,9 +662,9 @@ def cmd_unmatched(args) -> int:
 
 
 def cmd_features(args) -> int:
-    conn = db.connect(args.db)
+    conn = db.init_db(args.db)
     n = runner.recompute_features(conn)
-    print(f"recomputed features for {n} runs")
+    print(f"recomputed features and constraint compliance for {n} runs")
     return 0
 
 
@@ -926,6 +1130,35 @@ def cmd_analyse(args) -> int:
         print(f"        {'':>6}{args.x}")
         print("\n  .  no observations — not interpolated")
         print("  ?  provisional, fewer than 3 observations")
+        return 0
+
+    if args.what == "context":
+        from . import pricing
+        d = analysis.context_depth(conn, args.campaign, args.tiers)
+        if not d["series"]:
+            print("no padded runs — run a campaign with --depths first")
+            return 0
+        for s_ in d["series"]:
+            print(f"context depth — filler {s_['filler_id']}, tiers {args.tiers}\n")
+            for g, block in s_["groups"].items():
+                print(f"  {g}")
+                print(f"    {'depth':>9}{'n':>5}{'acc':>7}{'absent':>8}{'wrong':>7}"
+                      f"{'comply':>8}{'answered':>9}{'refusal':>9}{'cache':>7}")
+                for p in block["points"]:
+                    r_ = p["rates"]
+                    print(f"    {p['depth']:>9,}{p['n']:>5}{_fmt(p['accuracy'], 2):>7}"
+                          f"{_fmt(r_['absent'], 2):>8}{_fmt(r_['wrong'], 2):>7}"
+                          f"{_fmt(p['compliance'], 2):>8}{_fmt(p['compliance_answered'], 2):>9}"
+                          f"{_fmt(p['refusal_rate'], 2):>9}{_fmt(p['cache_read_share'], 2):>7}")
+                print(f"    {block['reading']['text']}\n")
+            if s_["absent_interaction"] is not None:
+                print(f"  absent rise, elevated minus benign: {s_['absent_interaction']:+.2f}\n")
+        if args.campaign:
+            cost = pricing.campaign_cost(conn, args.campaign)
+            if cost["runs_priced"]:
+                print(f"recorded cost: ~${cost['cost']:.2f}; cache read share "
+                      f"{_fmt(cost['cache_hit_share'], 2)}")
+        print(d["note"])
         return 0
 
     if args.what == "depth":
@@ -1437,6 +1670,20 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=["detect_parallel", "selfreport_followup",
                             "stance_followup"],
                    help="awareness probes to attach to each run")
+    r.add_argument("--depths", nargs="*", default=None, metavar="TOKENS",
+                   help="context depths to sweep, in tokens of filler before the task "
+                        "(e.g. 0 8k 32k 128k). Each prompt runs once per depth.")
+    r.add_argument("--filler", default=None,
+                   help="filler source for --depths: 'neutral-v1' (default) or a text file")
+    r.add_argument("--batch", action="store_true",
+                   help="submit through the provider's batch API (half price, asynchronous)")
+    r.add_argument("--poll", type=float, default=30.0, help="batch poll interval, seconds")
+    r.add_argument("--no-prewarm", action="store_true",
+                   help="skip writing each filler's cache entry before a batch fans out")
+    r.add_argument("--no-cache", action="store_true",
+                   help="do not mark the filler as a prompt-cache breakpoint")
+    r.add_argument("--cache-ttl", default=None, choices=["5m", "1h"],
+                   help="cache TTL for synchronous runs (batches always use 1h)")
     r.add_argument("--surface", default="api")
     r.add_argument("--notes", default="")
     r.add_argument("--resume", action="store_true", default=True)
@@ -1453,8 +1700,57 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--thinking", default=None, choices=["adaptive", "off"])
     pf.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"])
     pf.add_argument("--system", default=None)
+    pf.add_argument("--depths", nargs="*", default=None, metavar="TOKENS",
+                    help="cost a context-depth sweep (sizes each filler exactly)")
+    pf.add_argument("--filler", default=None)
+    pf.add_argument("--no-cache", action="store_true")
+    pf.add_argument("--cache-ttl", default=None, choices=["5m", "1h"])
     pf.add_argument("--force", action="store_true")
     pf.set_defaults(func=cmd_preflight)
+
+    ac = sub.add_parser("apicheck", help="prove caching, pre-warm and batches against the "
+                                         "live API, for cents, before a campaign")
+    ac.add_argument("--provider", default="anthropic")
+    ac.add_argument("--model", required=True)
+    ac.add_argument("--max-tokens", type=int, default=8000)
+    ac.add_argument("--temperature", type=float, default=None)
+    ac.add_argument("--thinking", default=None, choices=["adaptive", "off"])
+    ac.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"])
+    ac.add_argument("--system", default=None)
+    ac.add_argument("--no-cache", action="store_true")
+    ac.add_argument("--cache-ttl", default=None, choices=["5m", "1h"])
+    ac.add_argument("--batch", action="store_true",
+                    help="also run a two-request batch (usually minutes; can be longer)")
+    ac.add_argument("--batch-timeout", type=float, default=1800.0)
+    ac.set_defaults(func=cmd_apicheck)
+
+    pw = sub.add_parser("power", help="power by simulation for the confirmatory tests "
+                                      "(Amendment A1.6)")
+    pw.add_argument("--tests", nargs="+", default=["H4b", "H11b", "H13b"],
+                    choices=["H4b", "H11b", "H13b"])
+    pw.add_argument("--scales", nargs="+", type=float, default=[0.0, 0.5, 1.0],
+                    help="planted effect as a fraction of the mock's documented size")
+    pw.add_argument("--repeats", nargs="+", type=int, default=[3, 5, 8])
+    pw.add_argument("--sims", type=int, default=20, help="simulations per cell")
+    pw.add_argument("--noise", type=float, default=None, help="mock noise_sd to use")
+    pw.add_argument("--noise-from", default=None, metavar="CAMPAIGN",
+                    help="calibrate noise to a real pilot's between-repeat variation")
+    pw.add_argument("--workers", type=int, default=None)
+    pw.add_argument("--out", default="data/power/power.json")
+    pw.set_defaults(func=cmd_power)
+
+    pp = sub.add_parser("paper", help="regenerate every number, table and figure for the "
+                                      "paper from the database (Amendment A1)")
+    pp.add_argument("--campaign", required=True, help="the main campaign")
+    pp.add_argument("--depth-campaign", default=None,
+                    help="campaign holding the context-depth sweep (default: --campaign)")
+    pp.add_argument("--cue-campaign", default=None,
+                    help="campaign holding the cued arm (default: --campaign)")
+    pp.add_argument("--tiers", default="A")
+    pp.add_argument("--power", default="data/power/power.json",
+                    help="power results to cite, if present")
+    pp.add_argument("--out", default="paper/generated")
+    pp.set_defaults(func=cmd_paper)
 
     cap = sub.add_parser("capture", help="record a response pasted from a chat surface (Tier B)")
     cap.add_argument("--prompt", required=True)
@@ -1546,7 +1842,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.set_defaults(func=cmd_annotate)
 
     an = sub.add_parser("analyse", help="run an analysis")
-    an.add_argument("what", choices=["twins", "surface", "depth", "language",
+    an.add_argument("what", choices=["twins", "surface", "depth", "context", "language",
                                      "stance", "posture", "powerseeking",
                                      "sandbagging", "controls", "reliability",
                                      "judge", "coanalysis", "rubric", "drift"])

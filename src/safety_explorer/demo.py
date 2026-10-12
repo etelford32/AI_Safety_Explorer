@@ -166,7 +166,7 @@ def seed(conn, corpus, repeats: int = 3, cued: bool = True, with_sessions: bool 
     if cued:
         from . import cues as cue_mod
         campaign(CUED, "demo data — mock provider, observation-cue arm",
-                 only=CUED_FAMILIES, cue_set=cue_mod.load(), cue_levels=[1, 3, 5],
+                 only=CUED_FAMILIES, cue_set=cue_mod.load(corpus=corpus), cue_levels=[1, 3, 5],
                  probe_kinds=["detect_parallel", "selfreport_followup"])
 
     if with_sessions:

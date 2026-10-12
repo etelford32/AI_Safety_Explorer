@@ -115,6 +115,43 @@ Two model-API facts it guards against:
   `model_reported`, and a local pinned-weight model (`--provider local`) is the only
   true control for drift.
 
+### Context-depth sweeps
+
+The same tasks, behind more and more neutral filler:
+
+```bash
+explorer apicheck  --model claude-opus-5 --batch      # each live-API assumption, for cents
+explorer preflight --model claude-opus-5 --repeats 3 --depths 0 8k 32k 128k
+explorer run --campaign v1-depth --provider anthropic --model claude-opus-5 \
+             --repeats 3 --depths 0 8k 32k 128k --batch
+explorer analyse context --campaign v1-depth       # or the Context depth panel in Results
+```
+
+- **Depth is a factor of the cell, not a cue.** `run.context_depth_tokens` and
+  `run.filler_id` are part of the unique cell index; `cue_level` keeps meaning
+  observation-cue intensity, so padded cells never enter the sandbagging arm. Every other
+  analysis reads unpadded runs only.
+- **The filler is neutral and deterministic** (`neutral-v1`: procedural prose with no
+  digits, instructions, questions or safety language; or `--filler path/to/text.txt`). It is
+  sized with the provider's own `count_tokens` (recorded as `approx` where there is none),
+  calibrated once per depth and model, and stored once by content hash in `filler_text`;
+  runs carry a reference, never the text.
+- **Prompt caching.** The filler is the same for every prompt at a depth, so the Anthropic
+  provider marks it as a cache breakpoint and every cell after the first reads it from cache.
+  Batches use the 1-hour TTL and pre-warm each filler before fanning out. `preflight --depths`
+  prices the sweep four ways (sync / batch, cached / uncached); `--no-cache` turns it off.
+- **The Batch API** (`--batch`) halves the price. Multi-turn variants go in a second wave so
+  they replay their predecessor's real response. A batch still open when the process stops is
+  collected on resume, never paid for twice.
+- **Reading it.** Lost answers go somewhere: to *absent* (withheld or dropped) or to *wrong*
+  (stated, no longer right). Absent rising with refusal is the boundary tightening; wrong
+  rising is capability degrading. Benign and elevated prompts are read apart, because a
+  boundary that tightens moves the elevated ones only. Constraint compliance (Layer 1b — did
+  the response keep the requested format?) is plotted beside them.
+
+The mock models all four outcomes (`context_effect = omission | degradation | tightening |
+none`), and the tests check the reading recovers each.
+
 ## What is in v0.1
 
 | | |
@@ -937,6 +974,8 @@ Your keys and your data never leave the machine.
 | [`docs/SEMANTIC.md`](docs/SEMANTIC.md) | Semantic reading: choosing the embedding backend (Ollama, LM Studio, OpenAI, Voyage, any OpenAI-compatible server), the per-language trust gate, the cache, and what happens when a backend goes away |
 | [`docs/INTAKE.md`](docs/INTAKE.md) | Getting conversations in automatically: drop or paste anywhere, the inbox folder, connected folders (Claude Code, Codex CLI), every format recognised, where things go, which conversations are flagged, and the consent rules |
 | [`docs/DATA_INGESTION.md`](docs/DATA_INGESTION.md) | The three lanes, the provenance model, and what we deliberately do not do |
+| [`docs/PAPER.md`](docs/PAPER.md) | From campaign to paper: the amendment, pilot-based power, validation, and `explorer paper` |
+| [`docs/API_TESTING.md`](docs/API_TESTING.md) | The staged plan for first live-API runs: `apicheck`, `preflight`, a pilot, then the full depth sweep, with costs |
 | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | Using the tool alongside agents and other apps: the four modes, the push-never-pull spine, the endpoint contract |
 | [`docs/TESTING.md`](docs/TESTING.md) | Pointing the instrument at a real model: the local-model corpus runbook, the embedding-backend gate, and what "suspect" looks like |
 | [`docs/BACKGROUND.md`](docs/BACKGROUND.md) | Running it as an always-on background app: the macOS menu-bar app, login autostart, and the `/api/status` summary a monitor polls |
@@ -1108,9 +1147,12 @@ is the model versus the harness around it.
 ```
 explorer lint                     validate the corpus (rank correlations, twin matching)
 explorer init                     create the database, snapshot the corpus
+explorer apicheck                 prove caching, pre-warm and batches on the live API, for cents
+explorer power [--noise-from C]   power by simulation for the confirmatory tests (Amendment A1.6)
+explorer paper --campaign C       every number, table and figure for the paper, from the database
 explorer preflight                validate credentials + parameters, cost a campaign
 explorer corpus [--show ID]       list or print prompts
-explorer run                      execute a campaign (resumable)
+explorer run                      execute a campaign (resumable; --depths, --batch)
 explorer capture                  record a pasted chat response (Tier B)
 explorer import PATH...           import conversations — exports, agent logs, JSON, CSV,
                                   transcripts; the format is detected (--format jsonl|chatml
@@ -1119,7 +1161,7 @@ explorer sources                  find conversation logs and exports on this com
 explorer embed [test|use|pull|key] choose the semantic backend that reads register (Ollama,
                                   OpenAI, Voyage, …) — tested before use, trusted per language
 explorer unmatched                list imports that matched no prompt
-explorer features                 recompute automatic features from stored responses
+explorer features                 recompute automatic features and constraint compliance
 explorer truth [--targets]        score responses against computed answer keys
        truth --calibrate          measure the extractor's per-language floor
        truth --coherence          validate the internal-consistency identities
@@ -1131,7 +1173,7 @@ explorer analyse powerseeking     Layer 1.5: expressed agency vs the granted man
 explorer validate                 run every control; is the instrument sound today?
 explorer annotate                 queue responses for blinded annotation
 explorer propose [--rubric]       propose ratings + span labels for stored conversations
-explorer analyse {twins,surface,depth,language,stance,posture,powerseeking,sandbagging,
+explorer analyse {twins,surface,depth,context,language,stance,posture,powerseeking,sandbagging,
                   controls,reliability,judge,coanalysis,rubric,drift}
 explorer serve                    the Explorer UI (POST /api/session/turn to stream an agent in)
 explorer app                      the same UI in a native desktop window

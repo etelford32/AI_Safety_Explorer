@@ -117,6 +117,17 @@ CREATE TABLE IF NOT EXISTS run (
     cue_id           TEXT NOT NULL DEFAULT 'none',
     cue_level        INTEGER NOT NULL DEFAULT 0,
     cue_arm          TEXT NOT NULL DEFAULT 'none',   -- none | treatment | placebo
+    -- Context depth: how many tokens of neutral filler sit in front of the task. A design
+    -- factor of its own, deliberately NOT encoded as a cue: `cue_level` means
+    -- observation-cue intensity for the sandbagging arm, and reusing it for depth would
+    -- put padded cells into that analysis as if they were cued ones.
+    -- `filler_id` names the filler SOURCE (the factor level); `filler_hash` addresses
+    -- the exact text in `filler_text`, the way `prompt_hash` addresses a prompt. The
+    -- filler itself is never stored inline: a 128k-token `messages` field on every run
+    -- would make the database mostly copies of the same padding.
+    context_depth_tokens INTEGER NOT NULL DEFAULT 0,
+    filler_id        TEXT NOT NULL DEFAULT 'none',
+    filler_hash      TEXT,
     prompt_hash      TEXT,
     match_confidence REAL NOT NULL DEFAULT 1.0,
     captured_at      TEXT NOT NULL,
@@ -127,12 +138,75 @@ CREATE INDEX IF NOT EXISTS idx_run_campaign ON run(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_run_prompt   ON run(prompt_id);
 -- The cue is part of the cell identity. Without it, running the same prompt under a
 -- treatment and a placebo cue would collide and the second would be silently dropped —
--- which is the one comparison the sandbagging arm exists to make.
+-- which is the one comparison the sandbagging arm exists to make. Context depth and
+-- filler are part of it for the same reason: a depth sweep runs every prompt once per
+-- depth. (An existing database's index is rebuilt by `db.upgrade_indexes`, because
+-- IF NOT EXISTS leaves an index with the old column list in place.)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_run_cell
-    ON run(campaign_id, prompt_id, repeat_index, cue_id)
+    ON run(campaign_id, prompt_id, repeat_index, cue_id, context_depth_tokens, filler_id)
     WHERE campaign_id IS NOT NULL AND prompt_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_run_cue ON run(cue_level, cue_arm);
+CREATE INDEX IF NOT EXISTS idx_run_depth ON run(context_depth_tokens, filler_id);
+
+-- Filler text, content-addressed. Stored once however many runs sit behind it.
+CREATE TABLE IF NOT EXISTS filler_text (
+    hash        TEXT PRIMARY KEY,          -- sha256 of the text
+    text        TEXT NOT NULL,
+    n_chars     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+-- Which text realises a (source, depth) for a given tokenizer. Token counts belong to a
+-- tokenizer, not to a text, so the same source padded to the same depth for two models
+-- can be two different texts; the calibration records which, and how it was counted
+-- (`exact` from the provider's token counter, `approx` from a characters-per-token
+-- estimate where the provider has none).
+CREATE TABLE IF NOT EXISTS filler_calibration (
+    filler_id      TEXT NOT NULL,
+    target_tokens  INTEGER NOT NULL,
+    token_model    TEXT NOT NULL,
+    hash           TEXT NOT NULL REFERENCES filler_text(hash),
+    tokens         INTEGER NOT NULL,
+    count_method   TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    PRIMARY KEY (filler_id, target_tokens, token_model)
+);
+
+-- Layer 1b: constraint compliance. Did the response do what the prompt's output format
+-- asked for — equations in LaTeX, a worked estimate with units, a three-sentence note?
+-- Deterministic and recomputable from `run.response` and the prompt's `output_format`,
+-- so improving the checker never costs an API call. A format the checker has no rules
+-- for is stored with `compliance` NULL, never zero.
+CREATE TABLE IF NOT EXISTS compliance (
+    run_id             TEXT PRIMARY KEY REFERENCES run(id) ON DELETE CASCADE,
+    checker_version    TEXT NOT NULL,
+    format_kind        TEXT,
+    constraints_total  INTEGER NOT NULL DEFAULT 0,
+    constraints_met    INTEGER NOT NULL DEFAULT 0,
+    compliance         REAL,
+    details            TEXT NOT NULL DEFAULT '[]',
+    computed_at        TEXT NOT NULL
+);
+
+-- Message Batches submitted for a campaign. The request map is kept here so a process
+-- that dies while a batch is processing can collect it later instead of paying for the
+-- same cells twice: a batch is never resubmitted while one for the campaign is open.
+CREATE TABLE IF NOT EXISTS batch_job (
+    id               TEXT PRIMARY KEY,
+    campaign_id      TEXT NOT NULL REFERENCES campaign(id) ON DELETE CASCADE,
+    provider         TEXT NOT NULL,
+    model_id         TEXT NOT NULL,
+    provider_batch_id TEXT NOT NULL,
+    wave             INTEGER NOT NULL DEFAULT 0,
+    n_requests       INTEGER NOT NULL,
+    request_map      TEXT NOT NULL DEFAULT '{}',
+    status           TEXT NOT NULL DEFAULT 'submitted',  -- submitted | collected | failed
+    submitted_at     TEXT NOT NULL,
+    collected_at     TEXT,
+    counts           TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_batch_job_campaign ON batch_job(campaign_id, status);
 
 -- Layer 1: deterministic automatic features. Recomputable from `run.response`
 -- at any time, so improving the extractor never costs an API call.
