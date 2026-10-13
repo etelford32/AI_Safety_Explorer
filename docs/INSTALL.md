@@ -96,7 +96,7 @@ The app can only replace itself from a folder you can write to, such as Applicat
 opened straight from the disk image, or from Downloads without moving it, tells you about the
 new version and links to the download instead.
 
-Apps from v0.31.0 do not update themselves yet: download the new app once, and from then on
+Apps from v0.35.0 and earlier do not update themselves yet: download the new app once, and from then on
 it updates itself.
 
 ### Channels

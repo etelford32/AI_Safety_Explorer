@@ -9,6 +9,16 @@ an assumed 1,500–3,000 output tokens per response (adaptive thinking counts as
 
 **In one command:** `bash scripts/pilot.sh [MODEL]` runs stages 1–3 and the power step in
 order. It stops at the first failure, asks before the paid pilot, and logs to `data/`.
+`bash scripts/baseline.sh` runs the whole corpus against Opus, Sonnet and Haiku 5.5 and is
+safe to re-run: finished cells are skipped, so a second run costs nothing but the credential
+check and redoes the read-out.
+
+**Reading a finished run.** `explorer summary --prefix baseline- --out data/summary/baseline`
+puts the campaigns side by side: first how every call ended, then the readings. Read the run
+health first. Responses cut off at `max_tokens` are excluded from every analysis, so a model
+that truncates often is read on a skewed subset, and the summary says so. Thinking counts
+against `max_tokens`, so a higher `--effort` truncates more. `SUMMARY.md` and `summary.json`
+hold aggregates only, with no prompt or response text.
 
 ## 0. Setup
 

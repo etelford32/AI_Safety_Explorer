@@ -32,7 +32,7 @@ ex apicheck --model "${MODELS[0]}"
 for m in "${MODELS[@]}"; do
   echo; echo "== baseline-$m"
   ex run --campaign "baseline-$m" --provider anthropic --model "$m" \
-         --repeats 2 --effort high --batch --poll 60
+         --repeats 2 --effort high --batch --poll 60 --resume
 done
 
 echo; echo "== readings"
@@ -43,7 +43,13 @@ for m in "${MODELS[@]}"; do
   ex export --campaign "baseline-$m" --out "data/exports/baseline-$m.jsonl"
 done
 
+echo; echo "== summary: the models side by side (local, no API calls)"
+SUMMARY=()
+for m in "${MODELS[@]}"; do SUMMARY+=(--campaign "baseline-$m"); done
+ex summary "${SUMMARY[@]}" --out data/summary/baseline
+
 echo; echo "== repeats needed for the full study (local, no API calls)"
 ex power --noise-from "baseline-${MODELS[0]}" --sims 40 --out data/power/power.json
 
 echo; echo "log: $LOG · data: $DB · exports: data/exports/ · browse: explorer serve"
+echo "share: data/summary/baseline/SUMMARY.md holds aggregates only, no prompt or response text"

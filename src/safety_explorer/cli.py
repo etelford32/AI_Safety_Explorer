@@ -221,6 +221,16 @@ def cmd_run(args) -> int:
         )
     print(f"\n{stats['ok']} ok, {stats['errors']} error(s), "
           f"{stats['skipped']} already present, {stats['total']} cells total")
+    health = analysis.run_health(conn, campaign_id)
+    if health["truncated"]:
+        arms = ", ".join(f"{n} {a}" for a, n in sorted(health["truncated_by_arm"].items()))
+        print(f"{health['truncated']} of {health['runs']} response(s) were cut off at max_tokens "
+              f"({health['truncated_share']:.0%}; {arms}). They are excluded from every "
+              f"analysis, so this campaign is read on the rest. Thinking counts against "
+              f"--max-tokens: raise it and run the model again as a new campaign.")
+    if health["refusal_stops"]:
+        print(f"{health['refusal_stops']} response(s) ended with the API's refusal stop "
+              f"reason; they are kept, because a refusal is a result.")
     from . import pricing
     cost = pricing.campaign_cost(conn, campaign_id)
     if cost["runs_priced"]:
@@ -1089,16 +1099,26 @@ def cmd_analyse(args) -> int:
                  "truth_graded": "objective correctness, graded by distance",
                  "truth_weighted": "objective correctness, intermediates weighted half",
                  "truth_consistency": "internal consistency (no answer key)"}[args.source]
-        print(f"twin-pair deltas — {label}, tiers {args.tiers}\n")
-        print(f"  {'variant':<9}{'n':>4}{'fams':>6}{'median':>9}{'mean':>8}"
-              f"{'ci95':>18}{'effect':>12}")
+        print(f"twin-pair deltas — {label}, tiers {args.tiers}")
+        headings = {"ladder": "ladder: each rung against its twin (English)",
+                    "depth": "depth arm: introductory phrasing against the expert twin",
+                    "language": "language arm: the translation against its English twin"}
+        arm = None
         for row in summary:
+            if row["arm"] != arm:
+                arm = row["arm"]
+                print(f"\n  {headings.get(arm, arm)}")
+                print(f"  {'variant':<9}{'n':>4}{'fams':>6}{'median':>9}{'mean':>8}"
+                      f"{'ci95':>18}{'effect':>16}")
             ci = row["ci95"]
             ci_s = f"[{ci[0]}, {ci[1]}]" if ci[0] is not None else "—"
             prov = " *" if row.get("provisional") else ""
             print(f"  {str(row['variant']):<9}{row['n']:>4}{row.get('n_families',0):>6}"
                   f"{str(row['median']):>9}{str(row['mean']):>8}{ci_s:>18}"
-                  f"{str(row['effect']):>12}{prov}")
+                  f"{str(row['effect']):>16}{prov}")
+        if any(r["effect"] == "not comparable" for r in summary):
+            print("\n  not comparable: the pairs share no answer-key targets. Variant A states "
+                  "no parameters, so B against A has no Layer 0 reading (A1.4).")
         print("\n  * provisional: fewer than 3 observations or fewer than 2 families")
         print("  mean is reported because it is legible; the median and Cliff's delta "
               "are the values to cite.")
@@ -1597,7 +1617,20 @@ def _demo_stream(url: str, interval: float, once: bool) -> int:
 
 def cmd_export(args) -> int:
     conn = db.connect(args.db)
-    obs = analysis.observations(conn, args.campaign, args.tiers)
+    campaign_id = None
+    if args.campaign:
+        # The name a person typed at `run`, or the id: both mean the same campaign. The
+        # name used to be compared with the id, matched nothing, and wrote an empty file.
+        row = db.query_one(conn, "SELECT id FROM campaign WHERE name = ? OR id = ?",
+                           (args.campaign, args.campaign))
+        if row is None:
+            names = [r["name"] for r in db.query(
+                conn, "SELECT name FROM campaign ORDER BY created_at DESC LIMIT 10")]
+            print(f"error: no campaign named {args.campaign!r}. Known: "
+                  f"{', '.join(names) or '(none)'}", file=sys.stderr)
+            return 2
+        campaign_id = row["id"]
+    obs = analysis.observations(conn, campaign_id, args.tiers)
     # Escalated responses are excluded from exports by policy (CONTENT_POLICY.md).
     escalated = {
         r["run_id"] for r in db.query(conn, "SELECT run_id FROM annotation WHERE escalate = 1")
@@ -1610,6 +1643,32 @@ def cmd_export(args) -> int:
             fh.write(json.dumps(r) + "\n")
     print(f"wrote {len(rows)} rows to {out}"
           + (f" ({len(escalated)} escalated row(s) withheld)" if escalated else ""))
+    return 0
+
+
+def cmd_summary(args) -> int:
+    """Run health and the Layer 0 readings of several campaigns, side by side."""
+    from . import summary as summary_mod
+    conn = db.connect(args.db)
+    c, _ = _corpus_and_lint(args)
+    try:
+        camps = summary_mod.select(conn, args.campaign, args.prefix)
+    except LookupError as exc:
+        print(f"error: no campaign named {str(exc)!r}", file=sys.stderr)
+        return 2
+    if not camps:
+        print("no campaigns to summarise" + (f" with prefix {args.prefix!r}" if args.prefix
+                                             else ""), file=sys.stderr)
+        return 2
+    s = summary_mod.build(conn, c, camps, args.tiers)
+    if args.json:
+        print(json.dumps(s, indent=2))
+    else:
+        print(summary_mod.render_text(s))
+    if args.out:
+        j, m = summary_mod.write(s, Path(args.out))
+        print(f"\nwrote {m} and {j} (aggregates only: no prompt or response text)",
+              file=sys.stderr if args.json else sys.stdout)
     return 0
 
 
@@ -1890,6 +1949,17 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--campaign", default=None)
     e.add_argument("--tiers", default="A")
     e.set_defaults(func=cmd_export)
+
+    sm = sub.add_parser("summary", help="run health and readings of several campaigns, "
+                                        "side by side (aggregates only; safe to share)")
+    sm.add_argument("--campaign", action="append", default=None,
+                    help="a campaign name or id; repeat for several (default: all)")
+    sm.add_argument("--prefix", default=None, help="every campaign whose name starts with this")
+    sm.add_argument("--tiers", default="A")
+    sm.add_argument("--out", default=None,
+                    help="also write summary.json and SUMMARY.md into this folder")
+    sm.add_argument("--json", action="store_true", help="print the JSON instead of the table")
+    sm.set_defaults(func=cmd_summary)
 
     return p
 

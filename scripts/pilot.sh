@@ -55,6 +55,8 @@ step "3c. readings"
 ex analyse context --campaign pilot-sync
 ex analyse context --campaign pilot-batch
 
+ex summary --campaign pilot-sync --campaign pilot-batch --out data/summary/pilot
+
 step "4. power from the pilot's own noise (local, no API calls)"
 ex power --noise-from pilot-sync --sims 40 --out data/power/power.json
 

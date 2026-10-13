@@ -1181,6 +1181,7 @@ explorer serve                    the Explorer UI (POST /api/session/turn to str
 explorer app                      the same UI in a native desktop window
 explorer demo [--stream|--clear]  seed demo data (mock), stream a simulated agent, or remove it
 explorer export                   JSONL export (escalated responses withheld)
+explorer summary [--prefix P]     campaigns side by side: run health, then the readings (aggregates only, safe to share)
 ```
 
 ## Design notes

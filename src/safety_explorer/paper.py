@@ -590,9 +590,10 @@ def manifest(conn, corpus, campaign_ids: list[str], db_path: str | None) -> dict
         reported = sorted({r["model_reported"] for r in query(
             conn, "SELECT DISTINCT model_reported FROM run WHERE campaign_id = ?", (cid,))
             if r["model_reported"]})
-        trunc = query(conn, """SELECT context_depth_tokens d, COUNT(*) n,
-                               SUM(finish_reason = 'max_tokens') t FROM run
-                               WHERE campaign_id = ? GROUP BY d ORDER BY d""", (cid,))
+        cut = ",".join(f"'{r}'" for r in sorted(analysis.TRUNCATED))
+        trunc = query(conn, f"""SELECT context_depth_tokens d, COUNT(*) n,
+                                SUM(finish_reason IN ({cut})) t FROM run
+                                WHERE campaign_id = ? GROUP BY d ORDER BY d""", (cid,))
         for row in trunc:
             share = (row["t"] or 0) / row["n"]
             if share > TRUNCATION_LIMIT:
