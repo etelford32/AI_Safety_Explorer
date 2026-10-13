@@ -22,6 +22,8 @@ ex() { explorer --db "$DB" "$@"; }
 if [ -z "${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}" ]; then
   echo "No ANTHROPIC_API_KEY in the environment."; exit 2
 fi
+# An organisation-level key also needs: export ANTHROPIC_WORKSPACE_ID=wrkspc_...
+if [ -n "${ANTHROPIC_WORKSPACE_ID:-}" ]; then echo "workspace: ${ANTHROPIC_WORKSPACE_ID:0:10}…"; fi
 
 ex lint >/dev/null && ex init >/dev/null
 echo "== credentials and parameters (about \$0.05)"
