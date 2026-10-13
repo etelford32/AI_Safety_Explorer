@@ -170,7 +170,12 @@ class AnthropicProvider(Provider):
                 raise RuntimeError(
                     "the anthropic SDK is not installed: pip install 'safety-explorer[anthropic]'"
                 ) from exc
-            self._client = anthropic.Anthropic()
+            # An organisation-level key must name the workspace on every request; a
+            # workspace-scoped key needs nothing. ANTHROPIC_WORKSPACE_ID covers the first
+            # without the id ever appearing in a command line or a stored run.
+            workspace = os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
+            headers = {"anthropic-workspace-id": workspace} if workspace else None
+            self._client = anthropic.Anthropic(default_headers=headers)
         return self._client
 
     def describe(self) -> dict[str, Any]:

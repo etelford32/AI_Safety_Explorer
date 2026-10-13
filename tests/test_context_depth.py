@@ -588,3 +588,14 @@ def test_apicheck_stops_at_a_parameter_the_model_would_reject():
     from safety_explorer import apicheck
     stages = apicheck.run(caching_fake(thinking="off"))
     assert len(stages) == 1 and stages[0].ok is False
+
+
+def test_workspace_id_is_sent_when_set(monkeypatch):
+    pytest.importorskip("anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_test")
+    p = AnthropicProvider("claude-opus-5-5")
+    assert p.client.default_headers.get("anthropic-workspace-id") == "wrkspc_test"
+    monkeypatch.delenv("ANTHROPIC_WORKSPACE_ID")
+    q = AnthropicProvider("claude-opus-5-5")
+    assert "anthropic-workspace-id" not in q.client.default_headers

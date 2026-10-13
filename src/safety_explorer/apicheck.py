@@ -66,6 +66,9 @@ def run(provider, batch: bool = False, batch_timeout: float = 1800.0,
     n = provider.count_tokens([{"role": "user", "content": "Reply with the word ok."}])
     if n is None:
         why = getattr(provider, "last_count_error", None) or "no error recorded"
+        if "anthropic-workspace-id" in why:
+            why += (" — this key belongs to the organisation, not one workspace: "
+                    "export ANTHROPIC_WORKSPACE_ID=wrkspc_... and run again")
         add(Stage("credentials", False, f"count_tokens failed ({why}) — check "
                   f"ANTHROPIC_API_KEY, the model id, and network access to api.anthropic.com",
                   data=shown))
