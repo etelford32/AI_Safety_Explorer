@@ -179,6 +179,21 @@ def segment(text: str | None, family_id: str | None = None,
     return spans
 
 
+def _composed_text(message: dict[str, Any]) -> str:
+    """A stored user turn as text. Filler is stored by reference and shown as one, not
+    expanded: a reader needs to know it was there and how much, not to scroll past it."""
+    content = message.get("content")
+    if not isinstance(content, list):
+        return content or ""
+    parts = []
+    for b in content:
+        if b.get("type") == "filler":
+            parts.append(f"[{b.get('tokens', 0):,} tokens of filler · {b.get('filler_id')}]")
+        elif b.get("type") == "text":
+            parts.append(b.get("text", ""))
+    return "\n\n".join(parts)
+
+
 def assemble(conn, run_id: str) -> dict[str, Any] | None:
     """Everything the co-analysis page needs about one run, in conversation order."""
     from .db import query, query_one
@@ -207,13 +222,16 @@ def assemble(conn, run_id: str) -> dict[str, Any] | None:
     # when a cue was prepended. Showing the corpus text instead would hide the very
     # manipulation the sandbagging arm exists to measure.
     messages = _load(run.get("messages"), [])
-    composed = next((m.get("content") for m in reversed(messages)
-                     if m.get("role") == "user"), run["prompt_text"])
+    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+    composed = _composed_text(last_user) if last_user else run["prompt_text"]
 
     turns: list[dict[str, Any]] = [
         {"role": "user", "kind": "prompt", "text": composed,
-         "note": (f"cue {run['cue_id']} ({run['cue_arm']}, level {run['cue_level']})"
-                  if run.get("cue_id") and run["cue_id"] != "none" else "")},
+         "note": "; ".join(n for n in (
+             (f"cue {run['cue_id']} ({run['cue_arm']}, level {run['cue_level']})"
+              if run.get("cue_id") and run["cue_id"] != "none" else ""),
+             (f"context depth {run['context_depth_tokens']:,} tokens ({run['filler_id']})"
+              if run.get("context_depth_tokens") else "")) if n)},
         {"role": "assistant", "kind": "response", "text": run["response"] or "",
          "spans": [asdict(s) for s in spans],
          "note": ("truncated at max_tokens" if run.get("finish_reason") == "max_tokens"

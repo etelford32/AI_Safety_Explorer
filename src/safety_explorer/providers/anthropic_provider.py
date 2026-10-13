@@ -15,6 +15,14 @@ breaks a whole campaign rather than one call:
   string changing. The honest response is not to pretend otherwise but to record
   `model_reported` (what the server says it served) on every run and to treat a local
   pinned-weight model as the only true control for drift.
+
+Prompt caching is set here because it is the difference between an affordable depth
+sweep and an expensive one: every cell at a depth shares the same filler prefix, so the
+filler block is marked as a cache breakpoint and every cell after the first reads it at
+a tenth of the input price (less on some models). Nothing else is marked — a corpus
+prompt alone is shorter than the minimum cacheable prefix, so a marker there would buy
+nothing. Batches default to the 1-hour TTL: requests in a batch run in no particular
+order and over longer than five minutes, so a 5-minute entry would expire between them.
 """
 
 from __future__ import annotations
@@ -23,7 +31,7 @@ import os
 import time
 from typing import Any
 
-from .base import Completion, Provider
+from .base import BatchRequest, Completion, Provider
 
 MAX_RETRIES = 4
 BACKOFF = (2, 4, 8, 16)
@@ -44,18 +52,113 @@ def rejects_sampling(model: str) -> bool:
     return any(model.startswith(p) for p in NO_SAMPLING_PREFIXES)
 
 
+#: Models on which `thinking: {type: "disabled"}` is a 400 at every effort level. Depth
+#: is controlled with `effort` there instead. (Sonnet 5.5 has `between_tools` as its
+#: thinking-off mode; it is not the same experimental condition, so it is not
+#: substituted silently.)
+NO_DISABLED_THINKING_PREFIXES = (
+    "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5", "claude-mythos-5",
+)
+
+
+def rejects_disabled_thinking(model: str) -> bool:
+    return any(model.startswith(p) for p in NO_DISABLED_THINKING_PREFIXES)
+
+
+CACHE_TTLS = ("5m", "1h")
+
+
+def to_api_messages(messages: list[dict[str, Any]], cache: bool,
+                    ttl: str = "5m") -> list[dict[str, Any]]:
+    """Strip the instrument's block annotations and, if caching, mark the filler block.
+
+    The filler block carries a `filler` reference for storage; the API would reject an
+    unknown key, so it never leaves this function.
+    """
+    out = []
+    for m in messages:
+        content = m.get("content")
+        if not isinstance(content, list):
+            out.append({"role": m["role"], "content": content})
+            continue
+        blocks = []
+        for b in content:
+            block = {k: v for k, v in b.items() if k != "filler"}
+            if b.get("filler") and cache:
+                block["cache_control"] = ({"type": "ephemeral", "ttl": "1h"} if ttl == "1h"
+                                          else {"type": "ephemeral"})
+            blocks.append(block)
+        out.append({"role": m["role"], "content": blocks})
+    return out
+
+
+def _usage(usage: Any) -> dict[str, Any]:
+    created = getattr(usage, "cache_creation", None)
+    out = {
+        "input_tokens": getattr(usage, "input_tokens", None),
+        "output_tokens": getattr(usage, "output_tokens", None),
+        "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", None),
+        "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", None),
+    }
+    if created is not None:
+        out["cache_creation"] = {
+            "ephemeral_5m_input_tokens": getattr(created, "ephemeral_5m_input_tokens", None),
+            "ephemeral_1h_input_tokens": getattr(created, "ephemeral_1h_input_tokens", None),
+        }
+    return out
+
+
+def completion_from_message(resp: Any, latency_ms: int = 0, retries: int = 0,
+                            batch: bool = False) -> Completion:
+    text = "".join(
+        block.text for block in resp.content
+        if getattr(block, "type", "") == "text"
+    )
+
+    # A classifier-level refusal arrives as HTTP 200 with stop_reason="refusal" and a
+    # category. That is a categorically different event from the model declining in
+    # prose, and it is exactly the boundary this instrument exists to characterise —
+    # so capture it rather than flattening both into "the response was short".
+    details = getattr(resp, "stop_details", None)
+    raw: dict[str, Any] = {}
+    if details is not None:
+        raw["stop_details"] = {
+            "type": getattr(details, "type", None),
+            "category": getattr(details, "category", None),
+            "explanation": getattr(details, "explanation", None),
+        }
+    usage = _usage(getattr(resp, "usage", None))
+    if batch:
+        usage["batch"] = True
+    return Completion(
+        text=text,
+        model_reported=getattr(resp, "model", None),
+        finish_reason=getattr(resp, "stop_reason", None),
+        usage=usage,
+        latency_ms=latency_ms,
+        retries=retries,
+        raw=raw,
+    )
+
+
 class AnthropicProvider(Provider):
     name = "anthropic"
+    counts_tokens = True
+    supports_batch = True
 
     def __init__(self, model: str, max_tokens: int = 8000,
                  temperature: float | None = None, system: str | None = None,
                  thinking: str | None = None, effort: str | None = None,
+                 cache: bool = True, cache_ttl: str = "5m",
                  **params: Any) -> None:
         # `temperature=None` means "send nothing", which is both the safe default on
         # current models and an honest record: the run used the model's own sampling
         # behaviour rather than a value we chose.
+        if cache_ttl not in CACHE_TTLS:
+            raise ValueError(f"cache_ttl must be one of {CACHE_TTLS}, not {cache_ttl!r}")
         super().__init__(model, max_tokens=max_tokens, temperature=temperature,
-                         system=system, thinking=thinking, effort=effort, **params)
+                         system=system, thinking=thinking, effort=effort,
+                         cache=cache, cache_ttl=cache_ttl, **params)
         self._client = None
 
     @property
@@ -76,10 +179,12 @@ class AnthropicProvider(Provider):
         return d
 
     def _build_kwargs(self, messages: list[dict[str, str]], overrides: dict[str, Any]) -> dict[str, Any]:
+        cache = overrides.get("cache", self.params.get("cache", True))
+        ttl = overrides.get("cache_ttl", self.params.get("cache_ttl", "5m"))
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": overrides.get("max_tokens", self.params["max_tokens"]),
-            "messages": messages,
+            "messages": to_api_messages(messages, bool(cache), ttl),
         }
 
         temperature = overrides.get("temperature", self.params.get("temperature"))
@@ -98,6 +203,10 @@ class AnthropicProvider(Provider):
 
         thinking = overrides.get("thinking", self.params.get("thinking"))
         if thinking == "off":
+            if rejects_disabled_thinking(self.model):
+                raise ValueError(
+                    f"{self.model} rejects thinking disabled with a 400 at every effort "
+                    f"level. Omit --thinking and lower --effort instead.")
             kwargs["thinking"] = {"type": "disabled"}
         elif thinking in ("adaptive", "on"):
             kwargs["thinking"] = {"type": "adaptive"}
@@ -119,39 +228,8 @@ class AnthropicProvider(Provider):
             t0 = time.time()
             try:
                 resp = self.client.messages.create(**kwargs)
-                text = "".join(
-                    block.text for block in resp.content
-                    if getattr(block, "type", "") == "text"
-                )
-
-                # A classifier-level refusal arrives as HTTP 200 with
-                # stop_reason="refusal" and a category. That is a categorically
-                # different event from the model declining in prose, and it is exactly
-                # the boundary this instrument exists to characterise — so capture it
-                # rather than flattening both into "the response was short".
-                details = getattr(resp, "stop_details", None)
-                raw: dict[str, Any] = {}
-                if details is not None:
-                    raw["stop_details"] = {
-                        "type": getattr(details, "type", None),
-                        "category": getattr(details, "category", None),
-                        "explanation": getattr(details, "explanation", None),
-                    }
-
-                usage = getattr(resp, "usage", None)
-                return Completion(
-                    text=text,
-                    model_reported=getattr(resp, "model", None),
-                    finish_reason=getattr(resp, "stop_reason", None),
-                    usage={
-                        "input_tokens": getattr(usage, "input_tokens", None),
-                        "output_tokens": getattr(usage, "output_tokens", None),
-                        "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", None),
-                    },
-                    latency_ms=int((time.time() - t0) * 1000),
-                    retries=attempt,
-                    raw=raw,
-                )
+                return completion_from_message(
+                    resp, latency_ms=int((time.time() - t0) * 1000), retries=attempt)
             except ValueError:
                 raise
             except Exception as exc:  # noqa: BLE001 — transport errors are recorded, not raised
@@ -165,16 +243,86 @@ class AnthropicProvider(Provider):
         return Completion(text="", error=last_error, retries=MAX_RETRIES - 1,
                           finish_reason="error")
 
-    def count_tokens(self, messages: list[dict[str, str]]) -> int | None:
-        """Exact input token count, for costing a campaign before running it."""
+    def count_tokens(self, messages: list[dict[str, Any]]) -> int | None:
+        """Exact input token count, for costing a campaign and sizing filler."""
         try:
-            kwargs: dict[str, Any] = {"model": self.model, "messages": messages}
+            kwargs: dict[str, Any] = {"model": self.model,
+                                      "messages": to_api_messages(messages, cache=False)}
             system = self.params.get("system")
             if system:
                 kwargs["system"] = system
+            self.last_count_error = None
             return self.client.messages.count_tokens(**kwargs).input_tokens
-        except Exception:  # noqa: BLE001 — costing is best-effort, never fatal
+        except Exception as exc:  # noqa: BLE001 — costing is best-effort, never fatal
+            # Kept so a caller that needs to say WHY (apicheck) can; never raised.
+            self.last_count_error = f"{type(exc).__name__}: {exc}"
             return None
+
+    # ------------------------------------------------------------------ batches
+
+    def batch_submit(self, requests: list[BatchRequest]) -> str:
+        """Submit a Message Batch. Parameters are built exactly as a sync call builds
+        them, so an illegal parameter fails here, before anything is queued."""
+        body = []
+        for r in requests:
+            overrides = {"cache_ttl": "1h", **r.overrides}
+            body.append({"custom_id": r.custom_id,
+                         "params": self._build_kwargs(r.messages, overrides)})
+        batch = self.client.messages.batches.create(requests=body)
+        return batch.id
+
+    def batch_status(self, batch_id: str) -> dict[str, Any]:
+        b = self.client.messages.batches.retrieve(batch_id)
+        counts = getattr(b, "request_counts", None)
+        return {
+            "status": "ended" if b.processing_status == "ended" else "in_progress",
+            "processing_status": b.processing_status,
+            "counts": {k: getattr(counts, k, 0) for k in
+                       ("processing", "succeeded", "errored", "canceled", "expired")},
+        }
+
+    def batch_results(self, batch_id: str):
+        for item in self.client.messages.batches.results(batch_id):
+            kind = item.result.type
+            if kind == "succeeded":
+                yield item.custom_id, completion_from_message(item.result.message, batch=True)
+            elif kind == "errored":
+                err = getattr(getattr(item.result, "error", None), "error", None)
+                etype = getattr(err, "type", "error")
+                msg = getattr(err, "message", "")
+                yield item.custom_id, Completion(
+                    text="", error=f"batch {etype}: {msg}", finish_reason="error",
+                    usage={"batch": True})
+            else:
+                # Cancelled or expired: the request never ran. Not a measurement.
+                yield item.custom_id, None
+
+    def prewarm(self, messages: list[dict[str, Any]], **overrides: Any) -> dict[str, Any]:
+        """Write the cache entry for a shared prefix before a batch fans out over it.
+
+        Without this, the first requests of a batch run concurrently and each pays the
+        cache write for the same filler. `max_tokens=0` asks for no output at all and is
+        tried first; it is rejected inside a batch, which is why this is a separate
+        synchronous call. Should the API refuse it here too, `max_tokens=1` is the
+        fallback — one output token, the same cache write. Which one worked is returned,
+        and `explorer apicheck` reports it. Best-effort throughout: a failure costs only
+        the write the batch would have made anyway.
+        """
+        last = None
+        for max_tokens in (0, 1):
+            try:
+                kwargs = self._build_kwargs(messages, {"cache_ttl": "1h", **overrides,
+                                                       "max_tokens": max_tokens})
+                resp = self.client.messages.create(**kwargs)
+                return {"ok": True, "max_tokens": max_tokens,
+                        "usage": _usage(getattr(resp, "usage", None))}
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            except Exception as exc:  # noqa: BLE001
+                last = f"{type(exc).__name__}: {exc}"
+                if getattr(exc, "status_code", None) != 400:
+                    break   # only a rejected parameter is worth retrying differently
+        return {"ok": False, "error": last}
 
 
 def _is_transient(exc: Exception) -> bool:

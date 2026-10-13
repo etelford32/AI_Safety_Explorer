@@ -11,7 +11,7 @@ import os
 import time
 from typing import Any
 
-from .base import Completion, Provider
+from .base import Completion, Provider, flatten
 
 MAX_RETRIES = 4
 BACKOFF = (2, 4, 8, 16)
@@ -59,7 +59,7 @@ class OpenAIProvider(Provider):
 
     def complete(self, messages: list[dict[str, str]], **overrides: Any) -> Completion:
         system = overrides.get("system", self.params.get("system"))
-        msgs = ([{"role": "system", "content": system}] if system else []) + list(messages)
+        msgs = ([{"role": "system", "content": system}] if system else []) + flatten(messages)
 
         last_error: str | None = None
         for attempt in range(MAX_RETRIES):

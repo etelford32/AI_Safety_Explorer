@@ -363,6 +363,8 @@ const GLOSSARY = {
   fams: ['Families', 'How many independent families contribute. Intervals bootstrap over these, so this — not n — sets how much an estimate can be trusted.'],
   effect: ['Effect size (Cliff’s δ)', 'Rank-based magnitude of the difference: negligible < 0.147 ≤ small < 0.33 ≤ medium < 0.474 ≤ large. Robust to outliers and to the ordinal scales used here.'],
   provisional: ['Provisional', 'Fewer than three families or cells behind the number. Shown so it can be inspected, not claimed as a finding.'],
+  ctx_depth: ['Context depth', 'Tokens of neutral filler placed in front of an unchanged task. A factor of the cell of its own, never encoded as a cue. Lost answers that go to absent mean withheld or dropped; lost answers that go to wrong mean capability degrading.'],
+  compliance: ['Constraint compliance', 'Share of the output format’s constraints the response met — LaTeX equations, an estimate with units, a three-sentence note. Deterministic, recomputed from stored text. “Answered” leaves out refusals, which fail any format trivially.'],
   did: ['Difference-in-differences', 'The expert-vs-introductory gap at a risk level, minus the same gap at level C. Positive means expert phrasing is penalised MORE as the framing gets riskier — the depth interaction H4 asks about.'],
   gap: ['Median gap', 'Introductory score minus expert score at the same level. Positive means the expert phrasing fared worse.'],
   h4: ['H4 — depth interaction', 'Pre-registered: expert-level phrasing is disproportionately constrained as the focal risk dimension rises. Supported only where the DiD interval clears zero.'],

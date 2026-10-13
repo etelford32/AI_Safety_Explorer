@@ -862,6 +862,10 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 q.get("source", "human"),
             )
 
+        if path == "/api/context_depth":
+            return analysis.context_depth(
+                self.conn, q.get("campaign_id") or None, q.get("tiers", "A"))
+
         if path == "/api/sandbagging":
             from . import cues as cue_mod
 
@@ -869,7 +873,7 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                 self.conn, self.corpus, q.get("campaign_id") or None,
                 q.get("tiers", "A"), q.get("source", "truth"),
                 q.get("metric", "capability_retention"))
-            cue_set = cue_mod.load()
+            cue_set = cue_mod.load(corpus=self.corpus)
             result["ladder"] = [
                 {"id": c.id, "level": c.level, "arm": c.arm, "label": c.label,
                  "text": c.text, "rationale": c.rationale}
@@ -1124,7 +1128,17 @@ class ExplorerHandler(BaseHTTPRequestHandler):
         temp = body.get("temperature")
         if temp not in (None, ""):
             kw["temperature"] = float(temp)
+        if str(body.get("cache", "")).lower() in ("0", "false", "off", "no"):
+            kw["cache"] = False
         return kw
+
+    @staticmethod
+    def _depths(value: Any) -> list[int] | None:
+        """`8000,32000` or a list -> sorted ints; empty -> None (no depth factor)."""
+        if value in (None, "", []):
+            return None
+        items = value if isinstance(value, list) else str(value).replace(" ", "").split(",")
+        return sorted({int(str(x).replace("_", "").replace("k", "000")) for x in items if str(x)})
 
     def _preflight(self, q: dict[str, str]) -> dict[str, Any]:
         """Cost and validate before spending. Makes no model call — that is the CLI's job.
@@ -1155,20 +1169,28 @@ class ExplorerHandler(BaseHTTPRequestHandler):
         runnable = self.corpus.runnable
         approx_in = sum(len(v.text) // 4 for v in runnable) * repeats
         cells = len(runnable) * repeats
+        try:
+            depths = self._depths(q.get("depths"))
+        except ValueError:
+            return {"ok": False, "error": "depths must be integers, e.g. 0,8000,32000"}
+        if depths:
+            cells *= len(depths)
         est = pricing.estimate(model, approx_in, 700 * cells)
         batch = pricing.estimate(model, approx_in, 700 * cells, batch=True)
+        depth_est = (pricing.depth_estimate(model, approx_in // max(1, repeats), len(runnable),
+                                            depths, repeats, 700) if depths else None)
         return {
             "ok": True, "params": params, "cells": cells,
             "prompts": len(runnable), "repeats": repeats,
             "alias_risk": provider.alias_risk(),
-            "estimate": est, "batch_estimate": batch,
+            "estimate": est, "batch_estimate": batch, "depth_estimate": depth_est,
             "note": ("Estimate only — assumes ~700 output tokens per response. "
                      "Run `explorer preflight` for an exact count plus a real probe call."),
         }
 
     def _start_run(self, body: dict[str, Any]) -> dict[str, Any]:
         from .providers import get_provider
-        from .runner import create_campaign, execute, snapshot_corpus
+        from .runner import create_campaign, execute, execute_batch, snapshot_corpus
 
         if jobs.RUNNER.busy():
             return {"ok": False, "error": "a job is already running"}
@@ -1191,6 +1213,15 @@ class ExplorerHandler(BaseHTTPRequestHandler):
 
         repeats = int(body.get("repeats") or 3)
         only = body.get("only") or None
+        try:
+            depths = self._depths(body.get("depths"))
+            from .filler import resolve as resolve_filler
+            filler_id = resolve_filler(body.get("filler") or None)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        batch = bool(body.get("batch"))
+        if batch and not getattr(provider, "supports_batch", False):
+            return {"ok": False, "error": f"{provider.name} has no batch API"}
         corpus = self.corpus
         db_path = self.db_path
 
@@ -1210,7 +1241,7 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                                                   body.get("notes", ""))
                     job.note(f"created campaign '{name}'")
 
-                job.total = len(corpus.runnable) * repeats
+                job.total = len(corpus.runnable) * repeats * len(depths or [0])
 
                 def progress(i: int, total: int, variant, status: str) -> None:
                     job.done = i
@@ -1222,10 +1253,19 @@ class ExplorerHandler(BaseHTTPRequestHandler):
                         job.errors += 1
                         job.note(f"{variant.id}: {status[:120]}")
 
-                stats = execute(conn, campaign_id, corpus, provider, repeats,
-                                only=only, surface=body.get("surface", "api"),
-                                resume=True, on_progress=progress,
-                                should_stop=lambda: job.cancelled)
+                if batch:
+                    stats = execute_batch(conn, campaign_id, corpus, provider, repeats,
+                                          only=only, surface=body.get("surface", "api"),
+                                          on_progress=progress,
+                                          should_stop=lambda: job.cancelled,
+                                          depths=depths, filler_id=filler_id,
+                                          on_note=job.note)
+                else:
+                    stats = execute(conn, campaign_id, corpus, provider, repeats,
+                                    only=only, surface=body.get("surface", "api"),
+                                    resume=True, on_progress=progress,
+                                    should_stop=lambda: job.cancelled,
+                                    depths=depths, filler_id=filler_id)
                 job.skipped = stats.get("skipped", 0)
                 job.note(f"finished: {stats['ok']} ok, {stats['errors']} error(s), "
                          f"{stats['skipped']} already present")
