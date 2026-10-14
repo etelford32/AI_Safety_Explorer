@@ -107,7 +107,7 @@ def test_paper_build_writes_every_artefact(campaign, corpus, tmp_path):
         assert (out / f).exists(), f
     ids = [r["id"] for r in res["results"]]
     assert ids == ["H1", "H2", "H3", "H4a", "H4b", "H5", "H6", "H7", "H9", "H10a", "H10b",
-                   "H11b", "H12a", "H12b", "H13a", "H13b", "H13c", "H13d"]
+                   "H11b", "H12a", "H12b", "H13a", "H13b", "H13c", "H13d", "H14", "H15"]
     by = {r["id"]: r for r in res["results"]}
     # the mock's documented ground truth, recovered through the paper's own tests
     assert by["H13b"]["verdict"].startswith("supported")
@@ -115,7 +115,7 @@ def test_paper_build_writes_every_artefact(campaign, corpus, tmp_path):
     assert by["H4b"]["role"] == "secondary" and by["H4b"]["holm"] is None
     assert "not a confirmed finding" in by["H4b"]["verdict"]
     assert "run `explorer power`" in by["H4b"]["note"]
-    assert "H4b" not in paper.CONFIRMATORY and len(paper.CONFIRMATORY) == 8
+    assert "H4b" not in paper.CONFIRMATORY and len(paper.CONFIRMATORY) == 10   # A1.8, A1.9
     assert by["H11b"]["met"] is True
     assert by["H13c"]["estimate"] == "boundary_tightening"
     # Holm is applied to exactly the confirmatory family
@@ -173,3 +173,65 @@ def test_sizing_rule_ignores_h4b():
                                  ("H13b", 0.0, 0.0), ("H13b", 1.0, 1.0)]]
     sizing = [s for s in ("H4b", "H11b", "H13b") if s in power.SIZING_TESTS]
     assert power.recommend(cells, sizing, [3], [0.0, 1.0])["repeats"] == 3
+
+
+# --------------------------------------------------------------------------- A1.9: two parts
+
+def _stop(conn, cid, where: str, params=()):
+    conn.execute("UPDATE run SET finish_reason = 'refusal' WHERE campaign_id = ? AND prompt_id IN "
+                 f"(SELECT id FROM prompt WHERE {where})", (cid, *params))
+    conn.commit()
+
+
+def test_the_api_stop_is_part_one_and_correctness_is_read_where_answered(campaign, corpus,
+                                                                          tmp_path):
+    """The pattern of the first live baseline: stops that rise with risk, a follow-up that is
+    stopped more than its cold twin, and one family stopped on every call."""
+    conn, cid = campaign
+    _stop(conn, cid, "variant IN ('E', 'F') AND sub_arm = 'ladder' AND family_id != ?",
+          ("network_propagation",))
+    _stop(conn, cid, "family_id = ?", ("network_propagation",))
+    res = paper.build(conn, corpus, cid, tmp_path / "gen")
+    by = {r["id"]: r for r in res["results"]}
+
+    # Part 1: both stop hypotheses are tested on every call, blocked family included.
+    assert by["H14"]["met"] is True and by["H14"]["estimate"] > 0.5
+    assert by["H15"]["met"] is True and by["H15"]["reading"] == paper.PART1
+    assert "level E vs C" in by["H14"]["note"]
+    assert res["stop_rates"]["E"]["rate"] == 1.0 and res["stop_rates"]["C"]["rate"] < 0.5
+
+    # Part 2: the blocked family is named and left out; stopped pairs never enter.
+    assert by["H6"]["reading"] == paper.PART2
+    assert by["H6"]["blocked_families"] == ["network_propagation"]
+    assert "not testable" in by["H6"]["note"]          # every F was stopped: nothing to read
+    assert by["H6"]["all_pairs"]["estimate"] is not None   # stops scored as they fell
+    warnings = " ".join(res["manifest"]["warnings"])
+    assert "network_propagation (6/6 benign calls stopped)" in warnings   # A-C x 2 repeats
+    readme = (tmp_path / "gen" / "README.md").read_text()
+    assert "## Part 1" in readme and "| H14 | 1 |" in readme and "| H6 | 2 |" in readme
+
+
+def test_answered_only_drops_stopped_runs_and_blocked_families(campaign, corpus):
+    from safety_explorer import analysis
+    conn, cid = campaign
+    _stop(conn, cid, "variant = 'E' AND sub_arm = 'ladder'")
+    every = analysis.observations(conn, cid)
+    with analysis.answered_only({"structural_failure"}):
+        kept = analysis.observations(conn, cid)
+        deltas = analysis.twin_deltas(conn, corpus, cid)
+    assert not any(analysis.is_stopped(o) for o in kept)
+    assert not any(o["family_id"] == "structural_failure" for o in kept)
+    assert len(kept) < len(every)
+    assert not any(d["variant"] == "E" and d["sub_arm"] == "ladder" for d in deltas)
+    assert len(analysis.observations(conn, cid)) == len(every)       # the switch is scoped
+
+
+def test_a_family_is_blocked_only_on_its_benign_rungs(campaign):
+    from safety_explorer import analysis
+    conn, cid = campaign
+    _stop(conn, cid, "family_id = ? AND variant IN ('D', 'E', 'F')", ("orbital_debris",))
+    assert analysis.blocked_families(conn, cid) == {}      # risky rungs alone do not block
+    _stop(conn, cid, "family_id = ? AND variant IN ('A', 'B', 'C') AND sub_arm = 'ladder'",
+          ("orbital_debris",))
+    blocked = analysis.blocked_families(conn, cid)
+    assert list(blocked) == ["orbital_debris"] and blocked["orbital_debris"]["stopped"] > 0

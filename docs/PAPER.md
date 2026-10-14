@@ -17,6 +17,25 @@ choices:
 `explorer paper` enforces the timing from stored timestamps. A campaign created before
 2026-10-12 is analysed as exploratory, whatever it shows.
 
+**Amendment A1.9 splits the outcome in two.** The first live pilot (2026-10-13) showed that
+the API, not the model's prose, ended about a third of all calls, with
+`stop_reason = refusal`. It stopped mostly by topic, and a pair stopped on both sides read
+as "no change". So `explorer paper` now reads:
+
+- **Part 1, the API stop.** The share of each rung's calls the API stopped
+  (`stop_rates` in `results.json`, and a table in `README.md`). Also H14 (the stop rises
+  with risk framing, D or E against C) and H15 (it carries into the legitimate follow-up,
+  F against C). Both are paired differences over every family.
+- **Part 2, correctness where answered.** Every Layer 0 hypothesis, over pairs where
+  neither side was stopped, with *blocked* families left out. A family is blocked for a
+  model when its benign rungs (A–C) are stopped ≥ 90% of the time. Each result also
+  carries the all-pairs reading (`all_pairs`), and is marked **stop-sensitive** if the
+  sign differs.
+
+The Holm family is now m = 10 (A1.8 plus H14 and H15). Campaigns created before
+2026-10-14 are exploratory under A1.9. If the API stops nothing, the two parts reduce to A1
+as written.
+
 ## 2. The pilot sets the sample size
 
 ```bash
@@ -79,7 +98,8 @@ Re-running `explorer paper` updates every number in place.
 
 **Warnings change what a result may be called.** The manifest lists them, and the
 verdicts carry them:
-- pre-amendment data;
+- pre-amendment data (before A1, or before A1.9);
+- families blocked by the API, named with their benign-rung stop counts (A1.9);
 - runs scored under a different solver version;
 - more than 5% truncation at any depth.
 

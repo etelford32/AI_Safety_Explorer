@@ -17,6 +17,8 @@ dependency would cost more than it saves.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import math
 import random
 import sqlite3
@@ -252,6 +254,61 @@ def is_truncated(finish_reason: str | None) -> bool:
     return finish_reason in TRUNCATED
 
 
+# ---------------------------------------------------------------------------
+# Amendment A1.9: the API stop, and correctness where the model answered
+# ---------------------------------------------------------------------------
+
+#: A family is *blocked* for a model when the API stops at least this share of its calls
+#: on the benign rungs (A–C, English, uncued, unpadded). For that model, its framing cannot
+#: move the stop and it carries no correctness information (A1.9).
+BLOCKED_SHARE = 0.90
+BENIGN_RUNGS = "ABC"
+
+_ANSWERED: contextvars.ContextVar[frozenset | None] = contextvars.ContextVar(
+    "answered_only", default=None)
+
+
+def is_stopped(row: dict[str, Any]) -> bool:
+    """The API ended the response with its refusal stop reason. That is not a decline in
+    prose, and its text, usually none, is not a measurement of the model's answer."""
+    return row.get("finish_reason") == "refusal"
+
+
+@contextlib.contextmanager
+def answered_only(blocked_families=()):
+    """Read correctness where the model answered (A1.9, part 2).
+
+    Inside this block `observations` drops every run the API stopped, and every run in a
+    family blocked for this model. Every analysis built on `observations` then reads only
+    answered runs: twin deltas, the depth, language and cue arms, and context depth. A
+    twin pair survives only when neither side was stopped. Outside the block nothing
+    changes.
+    """
+    token = _ANSWERED.set(frozenset(blocked_families))
+    try:
+        yield
+    finally:
+        _ANSWERED.reset(token)
+
+
+def blocked_families(conn: sqlite3.Connection, campaign_id: str) -> dict[str, dict[str, int]]:
+    """Families the API stops on at least BLOCKED_SHARE of their benign-rung calls (A1.9).
+
+    Returns {family: {"calls": n, "stopped": k}} for the blocked families only."""
+    rows = query(conn, f"""
+        SELECT p.family_id AS family, COUNT(*) AS calls,
+               SUM(r.finish_reason = 'refusal') AS stopped
+        FROM run r JOIN prompt p ON p.id = r.prompt_id
+        WHERE r.campaign_id = ? AND p.arm = 'family' AND p.sub_arm = 'ladder'
+          AND COALESCE(p.language, 'en') = 'en'
+          AND p.variant IN ({",".join("?" * len(BENIGN_RUNGS))})
+          AND COALESCE(r.context_depth_tokens, 0) = 0 AND COALESCE(r.cue_id, 'none') = 'none'
+          AND COALESCE(r.finish_reason, '') NOT IN ({",".join("?" * len(TRUNCATED))})
+        GROUP BY 1""", (campaign_id, *BENIGN_RUNGS, *sorted(TRUNCATED)))
+    return {r["family"]: {"calls": r["calls"], "stopped": r["stopped"] or 0} for r in rows
+            if r["calls"] and (r["stopped"] or 0) / r["calls"] >= BLOCKED_SHARE}
+
+
 def run_health(conn: sqlite3.Connection, campaign_id: str) -> dict[str, Any]:
     """How a campaign's calls ended: finished, cut off, refused by the API, or errored.
 
@@ -367,6 +424,9 @@ def observations(conn: sqlite3.Connection, campaign_id: str | None = None,
 
     if not include_truncated:
         rows = [r for r in rows if not is_truncated(r.get("finish_reason"))]
+    blocked = _ANSWERED.get()
+    if blocked is not None:                     # A1.9, part 2: where the model answered
+        rows = [r for r in rows if not is_stopped(r) and r.get("family_id") not in blocked]
 
     for r in rows:
         r["truncated"] = is_truncated(r.get("finish_reason"))

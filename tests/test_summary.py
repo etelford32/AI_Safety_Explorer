@@ -143,7 +143,9 @@ def test_summary_puts_the_campaigns_side_by_side_and_says_what_differs(campaigns
     out_dir = tmp_path / "summary"
     assert run(["summary", "--prefix", "baseline-", "--out", str(out_dir)], campaigns) == 0
     text = capsys.readouterr().out
-    for heading in ("run health", "ladder:", "depth arm:", "language arm:", "controls:"):
+    for heading in ("run health", "API refusal stops by family", "part 1 · the API stop",
+                    "part 1 · change in the stop", "part 2 · where answered", "all pairs",
+                    "controls:"):
         assert heading in text
     assert "baseline-mock-a" in text and "baseline-mock-b" in text
     assert "F vs C  follow-up after E (recovery)" in text
@@ -151,8 +153,11 @@ def test_summary_puts_the_campaigns_side_by_side_and_says_what_differs(campaigns
     s = json.loads((out_dir / "summary.json").read_text())
     assert [c["name"] for c in s["campaigns"]] == ["baseline-mock-a", "baseline-mock-b"]
     a = s["campaigns"][0]
-    assert a["health"]["usable"] == 218 and a["ladder"]["C"]["n"] == 16
-    assert a["ladder"]["F"]["n"] and set(a["language"]) == {"es", "fr", "ja"}
+    assert a["health"]["usable"] == 218 and a["part2"]["ladder"]["C"]["n"] == 16
+    assert a["part2"]["ladder"]["F"]["n"] and set(a["part2"]["language"]) == {"es", "fr", "ja"}
+    assert a["part1"]["changes"]["E"] == {"n": 16, "n_families": 8, "mean": 0.0,
+                                          "ci95": [0.0, 0.0]}      # the mock never stops
+    assert a["blocked_families"] == {}
     assert (out_dir / "SUMMARY.md").read_text().startswith("# Summary: baseline-mock-a")
 
 
@@ -210,15 +215,23 @@ def test_the_summary_shows_what_a_zero_delta_is_made_of(campaigns):
     assert c["stops_by_family"]["orbital_debris"] == {"calls": 36, "stopped": 4}
     assert c["stops_by_family"]["structural_failure"]["stopped"] == 0
     assert list(c["stops_by_family"])[-1] == "controls"
-    assert c["levels"]["C"]["api_refusal_stops"] == 6 and c["levels"]["C"]["runs"] == 16
-    assert c["levels"]["A"]["mean_graded"] is None             # A has no answer key
-    ja = c["ties"]["lang:ja"]
+    rates = c["part1"]["rates"]
+    assert rates["C"] == {"runs": 16, "api_refusal_stops": 6}
+    # Part 1: C was stopped and D was not, so the paired change in the stop at D is negative.
+    assert c["part1"]["changes"]["D"]["mean"] < 0
+    # Part 2: the stopped C runs and every pair they are in are gone; the rest remain.
+    assert c["part2"]["levels"]["C"]["scored"] == 10
+    assert c["part2"]["levels"]["A"]["mean_graded"] is None       # A has no answer key
+    assert c["part2"]["ladder"]["D"]["n"] == 10
+    assert c["part2"]["language"]["ja"]["n"] == 12                # D.ja and E.ja pairs only
+    # All pairs (robustness): the Japanese C pairs tie at zero, both sides stopped.
+    ja = c["all_pairs"]["ties"]["lang:ja"]
     assert ja["both_stopped"] == 6 and ja["both_zero"] >= 6
     text = summary.render_text(s)
-    assert "pairs tied at zero" in text and "6/16 stopped" in text
+    assert "pairs tied at 0" in text and "6/16 (38%)" in text
     assert "cyber 12" in text
     md = summary.render_markdown(s)
-    assert "each rung on its own" in md
+    assert "part 2 · where answered" in md
     s["campaigns"][0]["health"]["refusal_stops"] = 120          # as in the first live baseline
     assert any("the API stopped 120 of 218 calls" in w for w in summary.warnings(s["campaigns"]))
 
@@ -231,6 +244,12 @@ def test_a_family_the_api_blocks_wholesale_is_named(campaigns):
     conn.commit()
     from safety_explorer import corpus as corpus_mod
     s = summary.build(conn, corpus_mod.load(ROOT / "corpus"), summary.select(conn, ["baseline-mock-a"]))
-    assert any("stopped 36 of 36 calls in network_propagation" in w for w in s["warnings"])
-    assert "API refusal stops by family" in summary.render_text(s)
-    assert "36/36 (100%)" in summary.render_text(s)
+    c = s["campaigns"][0]
+    assert c["blocked_families"] == {"network_propagation": {"calls": 6, "stopped": 6}}
+    assert any("network_propagation is blocked: the API stopped 6 of 6 of its benign calls"
+               in w for w in s["warnings"])
+    text = summary.render_text(s)
+    assert "36/36 (100%) blocked" in text
+    # Part 1 keeps it (the topic is part of the boundary); part 2 leaves it out.
+    assert c["part1"]["rates"]["A"]["api_refusal_stops"] == 2
+    assert c["part2"]["ladder"]["C"]["n_families"] == 7
