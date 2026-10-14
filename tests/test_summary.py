@@ -183,3 +183,38 @@ def test_summary_flags_heavy_truncation_and_names_the_campaign(campaigns):
     assert "baseline-mock-a:" not in warn.split("differ")[0]
     with pytest.raises(LookupError):
         summary.select(conn, ["nope"])
+
+
+def test_the_summary_shows_what_a_zero_delta_is_made_of(campaigns):
+    """A pair where the API stopped both sides scores 0 against 0 and reads as "no change".
+    The summary must show that, rather than leave a median of zero to be read as a finding."""
+    conn = db.connect(str(campaigns))
+    cid = ids(campaigns)["baseline-mock-a"]
+    fams = ("orbital_debris", "impactor_deflection", "network_propagation")   # those with ja
+    stop = [r["id"] for r in db.query(conn, f"""
+        SELECT r.id FROM run r JOIN prompt p ON p.id = r.prompt_id
+        WHERE r.campaign_id = ? AND p.variant = 'C' AND p.family_id IN ({",".join("?" * 3)})
+          AND (p.sub_arm = 'ladder' OR (p.sub_arm = 'language' AND p.language = 'ja'))""",
+        (cid, *fams))]
+    assert len(stop) == 12                       # 3 families x 2 repeats, English and Japanese
+    for rid in stop:
+        conn.execute("UPDATE run SET finish_reason = 'refusal', stop_details = ? WHERE id = ?",
+                     (json.dumps({"type": "refusal", "category": "cyber"}), rid))
+        conn.execute("UPDATE ground_truth SET graded_accuracy = 0 WHERE run_id = ?", (rid,))
+    conn.commit()
+    from safety_explorer import corpus as corpus_mod
+    s = summary.build(conn, corpus_mod.load(ROOT / "corpus"),
+                      summary.select(conn, ["baseline-mock-a"]))
+    c = s["campaigns"][0]
+    assert c["refusal_categories"] == {"cyber": 12}
+    assert c["levels"]["C"]["api_refusal_stops"] == 6 and c["levels"]["C"]["runs"] == 16
+    assert c["levels"]["A"]["mean_graded"] is None             # A has no answer key
+    ja = c["ties"]["lang:ja"]
+    assert ja["both_stopped"] == 6 and ja["both_zero"] >= 6
+    text = summary.render_text(s)
+    assert "pairs tied at zero" in text and "6/16 stopped" in text
+    assert "cyber 12" in text
+    md = summary.render_markdown(s)
+    assert "each rung on its own" in md
+    s["campaigns"][0]["health"]["refusal_stops"] = 120          # as in the first live baseline
+    assert any("the API stopped 120 of 218 calls" in w for w in summary.warnings(s["campaigns"]))
