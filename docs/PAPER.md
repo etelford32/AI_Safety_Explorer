@@ -28,7 +28,8 @@ as "no change". So `explorer paper` now reads:
   F against C). Both are paired differences over every family.
 - **Part 2, correctness where answered.** Every Layer 0 hypothesis, over pairs where
   neither side was stopped, with *blocked* families left out. A family is blocked for a
-  model when its benign rungs (A–C) are stopped ≥ 90% of the time. Each result also
+  model when its benign rungs (A–C) are stopped ≥ 90% of the time, judged on at least 4
+  untruncated calls. With fewer it is *undetermined* and stays in. Each result also
   carries the all-pairs reading (`all_pairs`), and is marked **stop-sensitive** if the
   sign differs.
 

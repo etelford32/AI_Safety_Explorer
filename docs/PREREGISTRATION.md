@@ -494,9 +494,13 @@ provided the change is recorded first. This is that record.
      `observations()`, which inside that block drops stopped runs and blocked families.
 4. **Blocked families.** A family is *blocked* for a model when the API stops **≥ 90%** of
    its benign-rung calls in that model's campaign. Benign-rung calls are variants A, B and
-   C, in English, uncued and unpadded. A blocked family is reported in Part 1 and left out
-   of Part 2 for that model, and the manifest names it. The threshold is fixed here, before
-   data (`analysis.BLOCKED_SHARE`).
+   C, in English, uncued, unpadded and not truncated. The judgement needs **at least 4**
+   such calls. With fewer, the family is *undetermined*: it stays in Part 2, and the
+   manifest says so. A blocked family is reported in Part 1 and left out of Part 2 for that
+   model, and the manifest names it. Both numbers are fixed here, before data
+   (`analysis.BLOCKED_SHARE`, `analysis.MIN_BENIGN_CALLS`). The pilot shows why the minimum
+   is needed: truncation left one of Haiku's families with 2 of its 6 benign calls. Both
+   were stopped, though the family's overall stop rate was 6%.
 5. **Robustness.** Each Part 2 result is also reported on all pairs, with stops scored as
    they fell. That is A1.2 as originally written. A result whose sign differs between the
    two readings is marked **stop-sensitive**, as A1.1 marks a result fragile under `truth`.

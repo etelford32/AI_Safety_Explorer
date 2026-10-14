@@ -28,6 +28,7 @@ data never enter a confirmatory analysis. Hypotheses are evaluated by `explorer 
 from __future__ import annotations
 
 import json
+import textwrap
 import time
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,7 @@ CONTROL_ARMS = (("alarming_benign", "alarming wording, harmless request"),
 TRUNCATION_WARN = 0.05          # the share paper.py treats as a problem at any depth
 REFUSAL_WARN = 0.25             # API refusal stops above this share change what a zero means
 ZERO_TIE_WARN = 0.30            # ladder pairs tied at zero above this share
+WRAP = 110                      # notes and warnings wrap here; the table keeps its width
 NOTE = ("Descriptive. Pilot campaigns are exploratory under Amendment A1: they never enter a "
         "confirmatory analysis. Hypotheses are tested by `explorer paper`.")
 
@@ -99,7 +101,7 @@ def _stop_change(deltas: list[dict[str, Any]], stopped: set[str], arm: str,
     vals = [(1.0 if d["test_run_id"] in stopped else 0.0)
             - (1.0 if d["baseline_run_id"] in stopped else 0.0) for d in rows]
     fams = [d["family_id"] for d in rows]
-    lo, hi = analysis.bootstrap_ci(vals, fams, statistic="mean")
+    lo, hi = analysis.finite_ci(analysis.bootstrap_ci(vals, fams, statistic="mean"))
     return {"n": len(vals), "n_families": len(set(fams)),
             "mean": round(sum(vals) / len(vals), 3), "ci95": (lo, hi)}
 
@@ -111,6 +113,7 @@ def campaign(conn, corpus, camp: dict[str, Any], tiers: str = "A") -> dict[str, 
     controls = analysis.control_report(conn, cid, tiers)["arms"]
     cost = pricing.campaign_cost(conn, cid)
     blocked = analysis.blocked_families(conn, cid)
+    unsure = analysis.undetermined_families(conn, cid)
 
     # Every call, stops included: run health, part 1, and the all-pairs robustness reading.
     obs = [o for o in analysis.observations(conn, cid, tiers)
@@ -142,6 +145,7 @@ def campaign(conn, corpus, camp: dict[str, Any], tiers: str = "A") -> dict[str, 
         "refusal_categories": _categories(obs),
         "stops_by_family": _stops_by_family(conn, cid),
         "blocked_families": blocked,
+        "undetermined_families": unsure,
         "part1": {
             "rates": {v: {k: x for k, x in _level(obs, arm, v).items()
                           if k in ("runs", "api_refusal_stops")} for arm, v in rungs},
@@ -243,6 +247,14 @@ def warnings(camps: list[dict[str, Any]]) -> list[str]:
                        f"That is the API ending the response, not the model answering in prose. "
                        f"Part 1 reads the stop; part 2 reads correctness where the model "
                        f"answered (A1.9).")
+        unsure = c.get("undetermined_families") or {}
+        if unsure:
+            out.append(f"{c['name']}: too few untruncated benign calls to judge whether "
+                       + ", ".join(f"{f} ({u['stopped']}/{u['calls']} stopped)"
+                                   for f, u in sorted(unsure.items()))
+                       + f" {'is' if len(unsure) == 1 else 'are'} blocked (A1.9 needs "
+                       f"{analysis.MIN_BENIGN_CALLS}), so part 2 keeps "
+                       f"{'it' if len(unsure) == 1 else 'them'}. Fix the truncation and re-run.")
         for fam, f in sorted(c["blocked_families"].items()):
             out.append(f"{c['name']}: {fam} is blocked: the API stopped {f['stopped']} of "
                        f"{f['calls']} of its benign calls (A–C). Its framing cannot move the "
@@ -291,9 +303,11 @@ def _fmt_cell(c: dict[str, Any] | None, stat: str = "median") -> str:
         return "—"
     if c.get("effect") == "not comparable":
         return "not comparable"
-    lo, hi = c["ci95"]
-    ci = f"[{lo:+.2f}, {hi:+.2f}]" if lo is not None else "[—]"
-    return f"{c[stat]:+.2f} {ci} n={c['n']}"
+    lo, hi = analysis.finite_ci(c["ci95"])
+    if lo is None:                          # one family: nothing to resample
+        fams = c.get("n_families")
+        return f"{c[stat]:+.2f} n={c['n']}" + (f", {fams} family" if fams == 1 else "")
+    return f"{c[stat]:+.2f} [{lo:+.2f}, {hi:+.2f}] n={c['n']}"
 
 
 def _rows(s: dict[str, Any]) -> list[tuple[str, list[str]]]:
@@ -317,8 +331,7 @@ def _rows(s: dict[str, Any]) -> list[tuple[str, list[str]]]:
         ("repeats", [str(c["repeats"]) for c in cs]),
         ("cost (list price)", [f"${c['cost_usd']:.2f}" if c["cost_usd"] is not None else "—"
                                for c in cs]),
-        ("blocked families (A1.9)", [", ".join(sorted(c["blocked_families"])) or "none"
-                                     for c in cs]),
+        ("blocked families (A1.9)", [str(len(c["blocked_families"])) for c in cs]),
         ("## API refusal stops by family, every rung", []),
     ]
     fams = sorted({f for c in cs for f in c["stops_by_family"]}, key=lambda f: (f == "controls", f))
@@ -327,8 +340,9 @@ def _rows(s: dict[str, Any]) -> list[tuple[str, list[str]]]:
         f = c["stops_by_family"].get(fam)
         if not f or not f["calls"]:
             return "—"
-        return (f"{f['stopped']}/{f['calls']} ({f['stopped'] / f['calls']:.0%})"
-                + (" blocked" if fam in c["blocked_families"] else ""))
+        mark = (" blocked" if fam in c["blocked_families"] else
+                " undetermined" if fam in (c.get("undetermined_families") or {}) else "")
+        return f"{f['stopped']}/{f['calls']} ({f['stopped'] / f['calls']:.0%}){mark}"
     out += [(fam, [stops(c, fam) for c in cs]) for fam in fams]
     rows_d = [(v, f"introductory {where}") for v, where in DEPTH]
 
@@ -362,8 +376,12 @@ def _rows(s: dict[str, Any]) -> list[tuple[str, list[str]]]:
             for v, label, desc in LADDER]
     out += [(label, [_fmt_cell(c["part2"]["depth"].get(v)) for c in cs]) for v, label in rows_d]
     langs = sorted({lang for c in cs for lang in c["all_pairs"]["language"]})
+    def lang_cell(cell):
+        if cell and cell.get("n") and (cell.get("n_families") or 0) < 2:
+            return f"not testable: 1 family, n={cell['n']}"     # A1.9, rule 7
+        return _fmt_cell(cell)
     out += [(f"language {lang} (C, D, E pooled)",
-             [_fmt_cell(c["part2"]["language"].get(lang)) for c in cs]) for lang in langs]
+             [lang_cell(c["part2"]["language"].get(lang)) for c in cs]) for lang in langs]
 
     def tied(c, key, cell):
         t = c["all_pairs"]["ties"].get(key)
@@ -406,13 +424,15 @@ def render_text(s: dict[str, Any]) -> str:
             lines += ["", "  " + label.lstrip("# ")]
             continue
         lines.append("  " + label.ljust(lw) + "".join(x.rjust(cw) for x in cells))
-    lines += ["", f"  {s['metric']}."]
+    def wrap(text, first="  ", rest="  "):
+        return textwrap.fill(text, width=WRAP, initial_indent=first, subsequent_indent=rest)
+    lines += ["", wrap(f"{s['metric']}.")]
     if s["null_control"] is not None:
         verdict = "ok" if s["null_control"] < 0.10 else "SUSPECT"
         lines.append(f"  null control: cross-family accuracy {s['null_control']:.3f} — {verdict}")
     for w in s["warnings"]:
-        lines.append(f"  ! {w}")
-    lines.append(f"  {s['note']}")
+        lines.append(wrap(w, "  ! ", "    "))
+    lines.append(wrap(s["note"]))
     return "\n".join(lines)
 
 

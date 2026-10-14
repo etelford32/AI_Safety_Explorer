@@ -253,3 +253,47 @@ def test_a_family_the_api_blocks_wholesale_is_named(campaigns):
     # Part 1 keeps it (the topic is part of the boundary); part 2 leaves it out.
     assert c["part1"]["rates"]["A"]["api_refusal_stops"] == 2
     assert c["part2"]["ladder"]["C"]["n_families"] == 7
+
+
+def test_a_family_is_not_blocked_on_too_few_benign_calls(campaigns):
+    """Haiku in the first pilot: truncation left 2 of orbital_debris's 6 benign calls, both
+    stopped, and the family was declared blocked at 2/36 stops overall."""
+    conn = db.connect(str(campaigns))
+    cid = ids(campaigns)["baseline-mock-a"]
+    benign = [r["id"] for r in db.query(conn, """
+        SELECT r.id FROM run r JOIN prompt p ON p.id = r.prompt_id
+        WHERE r.campaign_id = ? AND p.family_id = 'orbital_debris' AND p.sub_arm = 'ladder'
+          AND p.variant IN ('A', 'B', 'C') ORDER BY r.id""", (cid,))]
+    assert len(benign) == 6
+    for rid in benign[:4]:
+        conn.execute("UPDATE run SET finish_reason = 'max_tokens' WHERE id = ?", (rid,))
+    for rid in benign[4:]:
+        conn.execute("UPDATE run SET finish_reason = 'refusal' WHERE id = ?", (rid,))
+    conn.commit()
+    from safety_explorer import corpus as corpus_mod
+    s = summary.build(conn, corpus_mod.load(ROOT / "corpus"), summary.select(conn, ["baseline-mock-a"]))
+    c = s["campaigns"][0]
+    assert c["blocked_families"] == {}
+    assert c["undetermined_families"] == {"orbital_debris": {"calls": 2, "stopped": 2}}
+    assert any("too few untruncated benign calls to judge whether orbital_debris (2/2 stopped) "
+               "is blocked" in w for w in s["warnings"])
+    text = summary.render_text(s)
+    assert "undetermined" in text
+    # It stays in part 2: its D runs still count (blocked, they would be 14 of 16).
+    assert c["part2"]["levels"]["D"]["scored"] == 16
+
+
+def test_one_family_reads_as_one_family_never_as_nan(campaigns):
+    conn = db.connect(str(campaigns))
+    cid = ids(campaigns)["baseline-mock-a"]
+    # The API stops every translated prompt except those of one family.
+    conn.execute("UPDATE run SET finish_reason = 'refusal' WHERE campaign_id = ? AND prompt_id IN "
+                 "(SELECT id FROM prompt WHERE sub_arm = 'language' AND family_id != "
+                 "'impactor_deflection')", (cid,))
+    conn.commit()
+    from safety_explorer import corpus as corpus_mod
+    s = summary.build(conn, corpus_mod.load(ROOT / "corpus"), summary.select(conn, ["baseline-mock-a"]))
+    text = summary.render_text(s)
+    assert "nan" not in text.lower()
+    assert "not testable: 1 family" in text                     # A1.9, rule 7
+    assert "nan" not in json.dumps(s).lower()

@@ -464,9 +464,15 @@ def cmd_paper(args) -> int:
                       tiers=args.tiers, db_path=args.db, power_path=args.power)
     for w in res["manifest"]["warnings"]:
         print(f"warning: {w}")
-    print(f"{'ID':<6}{'role':<14}{'estimate':>22}{'95% CI':>20}{'p':>9}  verdict")
+    def est(v):
+        if isinstance(v, dict):                 # one estimate per language or step
+            return ", ".join(f"{k} {x:+.2f}" if isinstance(x, (int, float)) else f"{k} --"
+                             for k, x in v.items())
+        return paper.fmt(v)
+    width = max([8] + [len(est(r["estimate"])) for r in res["results"]]) + 2
+    print(f"{'ID':<6}{'role':<14}{'estimate':>{width}}{'95% CI':>20}{'p':>9}  verdict")
     for r in res["results"]:
-        print(f"{r['id']:<6}{r['role']:<14}{paper.fmt(r['estimate']):>22.22}"
+        print(f"{r['id']:<6}{r['role']:<14}{est(r['estimate']):>{width}}"
               f"{paper.fmt_ci(r['ci95']):>20}{paper.fmt_p(r['p']):>9}  {r['verdict']}")
     v = res["validation"]
     print(f"\nvalidation: Spearman rho {paper.fmt(v['spearman_rho'])} "

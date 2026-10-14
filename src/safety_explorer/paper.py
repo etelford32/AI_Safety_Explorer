@@ -116,12 +116,20 @@ def _r(v, n=4):
     return None if v is None else round(v, n)
 
 
+def _nan(v):
+    return v is not None and isinstance(v, float) and math.isnan(v)
+
+
 def _result(hid: str, title: str, role: str, criterion: str, *, estimate=None, ci=None,
             p=None, met=None, n=None, n_families=None, note: str = "",
             robustness: dict[str, Any] | None = None, extra: dict[str, Any] | None = None):
+    # A NaN bound means there were too few families to resample: no interval, not "nan".
+    ci = list(analysis.finite_ci(ci)) if ci else [None, None]
+    if _nan(estimate):
+        estimate = None
     return {"id": hid, "title": title, "role": role, "reading": "truth_graded",
             "criterion": criterion, "estimate": _r(estimate) if isinstance(estimate, float)
-            else estimate, "ci95": ci or [None, None], "p": p, "met": met, "n": n,
+            else estimate, "ci95": ci, "p": p, "met": met, "n": n,
             "n_families": n_families, "note": note, "robustness": robustness or {},
             **(extra or {})}
 
@@ -392,9 +400,27 @@ def stop_rates(d: Data) -> dict[str, Any]:
     return out
 
 
+def _language_families(d: Data) -> dict[str, set[str]]:
+    """The families each language's answered pairs come from (A1.9, rule 7)."""
+    out: dict[str, set[str]] = defaultdict(set)
+    for r in d.deltas:
+        if r.get("sub_arm") == "language" and r.get("gt_graded_delta") is not None:
+            out[r.get("language") or "?"].add(r["family_id"])
+    return out
+
+
 def h10(d: Data, source: str = "truth_graded") -> list[dict[str, Any]]:
     res = analysis.language_effect(d.conn, d.corpus, d.cid, d.tiers, source=source)
-    langs = res.get("by_language") or {}
+    fams = _language_families(d)
+    langs = {k: v for k, v in (res.get("by_language") or {}).items() if len(fams.get(k, ())) >= 2}
+    dropped = sorted(k for k in (res.get("by_language") or {}) if k not in langs)
+    if dropped and not langs:
+        why = ("answered pairs from fewer than two families (A1.9): "
+               + ", ".join(f"{k} ({len(fams.get(k, ()))})" for k in dropped))
+        return [_untestable("H10a", "Translation alone costs little", "equivalence",
+                            "gap at C within ±0.15 per language", why),
+                _untestable("H10b", "The intent penalty differs by language", "confirmatory",
+                            "DiD CI lower bound > 0 for some language", why)]
     if not langs:
         return [_untestable("H10a", "Translation alone costs little", "equivalence",
                             "gap at C within ±0.15 per language", "no language arm"),
@@ -413,12 +439,15 @@ def h10(d: Data, source: str = "truth_graded") -> list[dict[str, Any]]:
     if not entries:
         return [a, _untestable("H10b", "The intent penalty differs by language", "confirmatory",
                                "DiD CI lower bound > 0 for some language", "no DiD pairs")]
+    for entry in entries:                       # no NaN bound may win the max below
+        entry[2]["ci95"] = analysis.finite_ci(entry[2].get("ci95") or (None, None))
     lang, lvl, e = max(entries, key=lambda t: t[2]["ci95"][0] if t[2]["ci95"][0] is not None else -9)
     b = _result("H10b", "The intent penalty differs by language", "confirmatory",
                 "DiD CI lower bound > 0 for some language and level", estimate=e["median"],
                 ci=list(e["ci95"]), p=min(x[2].get("p_greater") or 1 for x in entries),
                 met=any((x[2]["ci95"][0] or -1) > 0 for x in entries), n=e["n"],
-                note=f"{lang}, {lvl} vs C")
+                note=f"{lang}, {lvl} vs C" + (f"; not testable (one family): {', '.join(dropped)}"
+                                              if dropped else ""))
     return [a, b]
 
 
@@ -683,13 +712,20 @@ def manifest(conn, corpus, campaign_ids: list[str], db_path: str | None) -> dict
         if not c:
             warnings.append(f"campaign {cid} not found")
             continue
-        pre = c["created_at"][:10] < AMENDMENT_A19_DATE
-        if c["created_at"][:10] < AMENDMENT_A1_DATE:
-            warnings.append(f"campaign '{c['name']}' was created before Amendment A1 "
-                            f"({c['created_at'][:10]}): its results are exploratory")
+        made = c["created_at"][:10]
+        pre = made < AMENDMENT_A19_DATE
+        if made < AMENDMENT_A1_DATE:
+            warnings.append(f"campaign '{c['name']}' was created on {made}, before Amendment A1 "
+                            f"({AMENDMENT_A1_DATE}): its results are exploratory")
         elif pre:
-            warnings.append(f"campaign '{c['name']}' was created before Amendment A1.9 "
-                            f"({c['created_at'][:10]}): its results are exploratory")
+            warnings.append(f"campaign '{c['name']}' was created on {made}, before Amendment "
+                            f"A1.9 ({AMENDMENT_A19_DATE}): its results are exploratory")
+        unsure = analysis.undetermined_families(conn, cid)
+        if unsure:
+            warnings.append(f"campaign '{c['name']}': too few untruncated benign calls to judge "
+                            f"blocking (A1.9 needs {analysis.MIN_BENIGN_CALLS}), so these stay in "
+                            f"part 2: " + ", ".join(f"{f} ({u['stopped']}/{u['calls']} stopped)"
+                                                    for f, u in sorted(unsure.items())))
         blocked = analysis.blocked_families(conn, cid)
         if blocked:
             warnings.append(f"campaign '{c['name']}': families blocked by the API and left out "
@@ -773,7 +809,7 @@ def tex_escape(s: Any) -> str:
 
 
 def fmt(v: Any, places: int = 3) -> str:
-    if v is None:
+    if v is None or _nan(v):
         return "--"
     if isinstance(v, bool):
         return "yes" if v else "no"
@@ -791,7 +827,7 @@ def fmt_p(p: float | None) -> str:
 
 
 def fmt_ci(ci) -> str:
-    if not ci or ci[0] is None:
+    if not ci or ci[0] is None or _nan(ci[0]) or _nan(ci[1]):
         return "--"
     return f"[{fmt(ci[0])}, {fmt(ci[1])}]"
 

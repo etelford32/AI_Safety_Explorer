@@ -235,3 +235,26 @@ def test_a_family_is_blocked_only_on_its_benign_rungs(campaign):
           ("orbital_debris",))
     blocked = analysis.blocked_families(conn, cid)
     assert list(blocked) == ["orbital_debris"] and blocked["orbital_debris"]["stopped"] > 0
+
+
+def test_h10_needs_answered_pairs_from_two_families(campaign, corpus, tmp_path):
+    """A1.9, rule 7: a language whose answered pairs come from one family is not testable,
+    and no interval is ever printed as nan."""
+    conn, cid = campaign
+    _stop(conn, cid, "sub_arm = 'language' AND family_id != ?", ("impactor_deflection",))
+    res = paper.build(conn, corpus, cid, tmp_path / "gen")
+    by = {r["id"]: r for r in res["results"]}
+    assert by["H10b"]["met"] is None and "fewer than two families" in by["H10b"]["note"]
+    assert by["H10a"]["met"] is None
+    blob = (tmp_path / "gen" / "results.json").read_text() + (tmp_path / "gen" / "README.md").read_text()
+    assert "nan" not in blob.lower().replace("nanosecond", "")
+    assert all(r["ci95"] == [None, None] or None not in r["ci95"] for r in res["results"])
+
+
+def test_pre_amendment_warning_names_both_dates(campaign, corpus, tmp_path):
+    conn, cid = campaign
+    conn.execute("UPDATE campaign SET created_at = '2026-10-13T11:21:28+00:00' WHERE id = ?", (cid,))
+    conn.commit()
+    res = paper.build(conn, corpus, cid, tmp_path / "gen")
+    assert any("was created on 2026-10-13, before Amendment A1.9 (2026-10-14)" in w
+               for w in res["manifest"]["warnings"])
