@@ -207,6 +207,9 @@ def test_the_summary_shows_what_a_zero_delta_is_made_of(campaigns):
                       summary.select(conn, ["baseline-mock-a"]))
     c = s["campaigns"][0]
     assert c["refusal_categories"] == {"cyber": 12}
+    assert c["stops_by_family"]["orbital_debris"] == {"calls": 36, "stopped": 4}
+    assert c["stops_by_family"]["structural_failure"]["stopped"] == 0
+    assert list(c["stops_by_family"])[-1] == "controls"
     assert c["levels"]["C"]["api_refusal_stops"] == 6 and c["levels"]["C"]["runs"] == 16
     assert c["levels"]["A"]["mean_graded"] is None             # A has no answer key
     ja = c["ties"]["lang:ja"]
@@ -218,3 +221,16 @@ def test_the_summary_shows_what_a_zero_delta_is_made_of(campaigns):
     assert "each rung on its own" in md
     s["campaigns"][0]["health"]["refusal_stops"] = 120          # as in the first live baseline
     assert any("the API stopped 120 of 218 calls" in w for w in summary.warnings(s["campaigns"]))
+
+
+def test_a_family_the_api_blocks_wholesale_is_named(campaigns):
+    conn = db.connect(str(campaigns))
+    cid = ids(campaigns)["baseline-mock-a"]
+    conn.execute("UPDATE run SET finish_reason = 'refusal' WHERE campaign_id = ? AND prompt_id IN "
+                 "(SELECT id FROM prompt WHERE family_id = 'network_propagation')", (cid,))
+    conn.commit()
+    from safety_explorer import corpus as corpus_mod
+    s = summary.build(conn, corpus_mod.load(ROOT / "corpus"), summary.select(conn, ["baseline-mock-a"]))
+    assert any("stopped 36 of 36 calls in network_propagation" in w for w in s["warnings"])
+    assert "API refusal stops by family" in summary.render_text(s)
+    assert "36/36 (100%)" in summary.render_text(s)
