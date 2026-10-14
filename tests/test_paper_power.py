@@ -258,3 +258,137 @@ def test_pre_amendment_warning_names_both_dates(campaign, corpus, tmp_path):
     res = paper.build(conn, corpus, cid, tmp_path / "gen")
     assert any("was created on 2026-10-13, before Amendment A1.9 (2026-10-14)" in w
                for w in res["manifest"]["warnings"])
+
+
+# --------------------------------------------------------------------------- A1.9: the stop in the simulator
+
+FAMILIES = ["control_autonomy", "impactor_deflection", "network_propagation", "orbital_debris",
+            "persuasion_targeting", "physiological_limits", "privacy_aggregation",
+            "structural_failure"]
+
+
+def _counts(**rungs):
+    """Pilot-shaped counts: the same [calls, stopped] per rung in every family."""
+    return {f: {v: list(rungs.get(v, [4, 0])) for v in "ABCDEF"} for f in FAMILIES}
+
+
+def test_the_mock_stop_is_drawn_apart_from_the_answer(corpus):
+    from safety_explorer.runner import _overrides, RunPlan
+    v = next(x for x in corpus.runnable if x.id == "orbital_debris.C")
+    plain = get_provider("mock", "mock-1", seed=3)
+    half = get_provider("mock", "mock-1", seed=3, ground_truth={"api_stop": {"*": {"C": 0.5}}})
+    stopped = answered = 0
+    for repeat in range(12):
+        over = _overrides(RunPlan(v, repeat, None, 0, "none"))
+        msgs = [{"role": "user", "content": v.text}]
+        a, b = plain.complete(msgs, **over), half.complete(msgs, **over)
+        assert a.finish_reason == "stop"
+        if b.finish_reason == "refusal":
+            stopped += 1
+            assert b.text == "" and b.raw["stop_details"]["category"] == "cyber"
+        else:
+            answered += 1
+            assert b.text == a.text, "an answered call must not depend on the stop"
+    assert stopped and answered
+    assert GROUND_TRUTH["api_stop"] == {}, "the documented fixture is never stopped"
+    always = get_provider("mock", "mock-1", ground_truth={"api_stop": {"*": {"C": 1.0}}})
+    ctrl = next(x for x in corpus.runnable if x.arm == "control")
+    over = _overrides(RunPlan(ctrl, 0, None, 0, "none"))
+    assert always.complete([{"role": "user", "content": ctrl.text}], **over).finish_reason == "stop"
+
+
+def test_the_stop_model_separates_topic_from_framing():
+    counts = _counts(C=[4, 0], D=[4, 1], E=[4, 3], F=[4, 3])
+    counts["network_propagation"] = {v: [4, 4] for v in "ABCDEF"}
+    m = power.fit_stops(counts, source="pilot")
+    full, null = power.stop_table(m, 1.0), power.stop_table(m, 0.0)
+    assert full["network_propagation"]["A"] > 0.85, "a family stopped on every call is topic"
+    assert full["*"]["E"] > full["*"]["D"] > full["*"]["C"]
+    for f in [*FAMILIES, "*"]:
+        assert all(null[f][v] == pytest.approx(null[f]["C"]) for v in "DEF")
+        assert full[f]["C"] == pytest.approx(null[f]["C"])
+    assert m["stopped"] == 4 * 6 + 7 * (1 + 3 + 3) and json.dumps(m)
+
+
+def test_a_pilot_with_no_stop_models_none():
+    m = power.fit_stops(_counts(), source="pilot")
+    assert m["none"] and power.stop_table(m) == {}
+
+
+def test_h14_and_h15_detect_a_planted_stop_rise_and_not_a_null():
+    m = power.fit_stops(_counts(C=[4, 0], D=[4, 2], E=[4, 4], F=[4, 4]))
+    for spec in ("H14", "H15"):
+        null = power.simulate((spec, 0.0, 2, 1001, None, "corpus", m))
+        full = power.simulate((spec, 1.0, 2, 1001, None, "corpus", m))
+        assert not null["detected_ci"], spec
+        assert full["detected_ci"] and full["detected_holm"] and full["n_families"] == 8, spec
+    with pytest.raises(ValueError, match="stop model"):
+        power.simulate(("H14", 1.0, 2, 1001, None, "corpus"))
+
+
+def test_part2_power_is_read_where_the_model_answered():
+    counts = _counts()
+    counts["network_propagation"] = {v: [4, 4] for v in "ABCDEF"}       # blocked
+    m = power.fit_stops(counts)
+    plain = power.simulate(("H11b", 1.0, 2, 1001, None, "corpus"))
+    stopped = power.simulate(("H11b", 1.0, 2, 1001, None, "corpus", m))
+    assert plain["n_families"] == 4 and stopped["n_families"] == 3
+
+
+def test_observed_noise_ignores_stopped_runs(conn, corpus):
+    p = get_provider("mock", "mock-1", ground_truth={"noise_sd": 0.2,
+                                                     "api_stop": {"*": {"C": 1.0}}})
+    cid = runner.create_campaign(conn, "n", p, corpus, 2)
+    runner.execute(conn, cid, corpus, p, 2, only=["orbital_debris.C", "orbital_debris.D"])
+    obs = power.observed_noise(conn, cid)
+    assert obs["cells"] == 1 and obs["answered_only"], "C scored 0 and 0: no information"
+
+
+def test_holm_family_size_matches_the_paper():
+    assert power.CONFIRMATORY_FAMILY == len(paper.CONFIRMATORY) == 10
+
+
+def test_power_cli_needs_a_stop_model_for_h14(tmp_path, conn, corpus, capsys):
+    from safety_explorer import cli
+    db_path = str(tmp_path / "t.db")
+    assert cli.main(["--db", db_path, "power", "--tests", "H14", "--sims", "1"]) == 2
+    assert "--stops-from" in capsys.readouterr().err
+    p = get_provider("mock", "mock-1", ground_truth={"api_stop": {"*": {"E": 1.0}}})
+    cid = runner.create_campaign(conn, "pilot", p, corpus, 1)
+    runner.execute(conn, cid, corpus, p, 1, only=[v.id for v in corpus.runnable
+                                                  if v.sub_arm == "ladder" and v.language == "en"])
+    conn.commit()
+    out = tmp_path / "power.json"
+    assert cli.main(["--db", db_path, "power", "--stops-from", "pilot", "--tests", "H15",
+                     "--repeats", "2", "--scales", "1", "--sims", "1",
+                     "--out", str(out)]) == 0
+    text = capsys.readouterr().out
+    assert "API stop in 'pilot': 8 of 48" in text and "(average family)" in text
+    res = json.loads(out.read_text())
+    assert res["stops"]["source"] == "pilot" and res["recommendation"]["stops_modelled"]
+    assert res["cells"][0]["min_families"] == 8
+
+
+def test_paper_readme_says_whether_power_modelled_the_stop(campaign, corpus, tmp_path):
+    conn, cid = campaign
+    pw = tmp_path / "power.json"
+    pw.write_text(json.dumps({"noise_sd": 0.15, "sims": 20, "cells": [],
+                              "recommendation": {"repeats": 3, "reason": "x"}}))
+    paper.build(conn, corpus, cid, tmp_path / "gen", power_path=pw)
+    assert "API stop not modelled" in (tmp_path / "gen" / "README.md").read_text()
+
+
+def test_power_cli_on_a_pilot_the_api_never_stopped(tmp_path, conn, corpus, capsys):
+    """A1.9 reduces to A1.2: nothing to model, so H14 and H15 are not added by default."""
+    from safety_explorer import cli
+    p = get_provider("mock", "mock-1")
+    cid = runner.create_campaign(conn, "clean", p, corpus, 1)
+    runner.execute(conn, cid, corpus, p, 1, only=[v.id for v in corpus.runnable
+                                                  if v.sub_arm == "ladder" and v.language == "en"])
+    conn.commit()
+    out = tmp_path / "power.json"
+    assert cli.main(["--db", str(tmp_path / "t.db"), "power", "--stops-from", "clean",
+                     "--repeats", "2", "--scales", "1", "--sims", "1", "--out", str(out)]) == 0
+    text = capsys.readouterr().out
+    assert "API stop: none in 'clean'" in text and "not modelled" not in text
+    assert json.loads(out.read_text())["tests"] == ["H4b", "H11b", "H13b"]

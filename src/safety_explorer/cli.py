@@ -399,9 +399,50 @@ def cmd_apicheck(args) -> int:
     return 0
 
 
-def cmd_power(args) -> int:
-    """Power by simulation for the confirmatory interaction tests (Amendment A1.6)."""
+def _print_stop_model(m: dict) -> None:
+    """The pilot's stop counts beside the rates the fitted model gives the simulator."""
     from . import power
+    if m.get("none"):
+        print(f"API stop: none in '{m['source']}' ({m['calls']} English ladder calls). "
+              f"Nothing to model; A1.9 reduces to A1.2.\n")
+        return
+    table = power.stop_table(m)
+    print(f"API stop in '{m['source']}': {m['stopped']} of {m['calls']} English ladder calls. "
+          f"Fitted: logit p = family + rung (prior SD {m['prior_sd']})")
+    print(f"  {'family':<24}" + "".join(f"{v:>11}" for v in power.RUNGS))
+    for fam, row in m["counts"].items():
+        cells = []
+        for v in power.RUNGS:
+            n, k = row.get(v, [0, 0])
+            cells.append(f"{k}/{n} {table[fam][v]:.2f}" if n else f"- {table[fam][v]:.2f}")
+        print(f"  {fam:<24}" + "".join(f"{c:>11}" for c in cells))
+    print(f"  {'(average family)':<24}" + "".join(f"{table['*'][v]:>11.2f}" for v in power.RUNGS))
+    print("  each cell: stopped/calls in the pilot, then the fitted rate the simulator uses\n",
+          flush=True)
+
+
+def cmd_power(args) -> int:
+    """Power by simulation for the confirmatory tests (Amendment A1.6, with A1.9's stop)."""
+    from . import power
+
+    stops = None
+    if args.stops_from:
+        conn = db.init_db(args.db)
+        cid = _resolve_campaign(conn, args.stops_from)
+        counts = power.stop_counts(conn, cid) if cid else {}
+        if not counts:
+            print(f"campaign '{args.stops_from}' has no English ladder calls to read the "
+                  f"API stop from", file=sys.stderr)
+            return 2
+        stops = power.fit_stops(counts, source=args.stops_from)
+        _print_stop_model(stops)
+    modelled = bool(stops) and not stops.get("none")
+    tests = args.tests or (["H4b", "H11b", "H13b"] + (list(power.STOP_TESTS) if modelled else []))
+    needs = [t for t in tests if t in power.STOP_TESTS]
+    if needs and not modelled:
+        print(f"{', '.join(needs)} read the API stop, so they need a pilot that has one: "
+              f"--stops-from <pilot campaign>", file=sys.stderr)
+        return 2
 
     noise = args.noise
     if args.noise_from:
@@ -409,40 +450,57 @@ def cmd_power(args) -> int:
         cid = _resolve_campaign(conn, args.noise_from)
         obs = power.observed_noise(conn, cid)
         if not obs["mean_sd"]:
-            print(f"campaign '{args.noise_from}' has no prompt with two or more scored "
-                  f"repeats — run the pilot with --repeats 2 or more", file=sys.stderr)
+            print(f"campaign '{args.noise_from}' has no prompt with two or more answered, "
+                  f"scored repeats — run the pilot with --repeats 2 or more", file=sys.stderr)
             return 2
-        print(f"pilot between-repeat SD of graded accuracy: {obs['mean_sd']} over "
-              f"{obs['cells']} prompts; calibrating the mock …", flush=True)
+        blocked = obs.get("blocked_families") or []
+        print(f"pilot between-repeat SD of graded accuracy, where the model answered: "
+              f"{obs['mean_sd']} over {obs['cells']} prompts"
+              + (f" ({', '.join(blocked)} blocked, left out)" if blocked else "")
+              + "; calibrating the mock …", flush=True)
         cal = power.calibrate_noise(obs["mean_sd"], args.corpus)
         noise = cal["noise_sd"]
         for pt in cal["curve"]:
             print(f"  mock noise_sd {pt['noise_sd']:<5} -> simulated SD {pt['simulated_sd']}")
         print(f"  using noise_sd = {noise}\n")
     label = f"noise_sd {noise}" if noise is not None else "the mock's own noise (optimistic)"
-    n_jobs = len(args.tests) * len(args.scales) * len(args.repeats) * args.sims
-    print(f"power — {', '.join(args.tests)}; {args.sims} simulations per cell; {label}; "
-          f"{n_jobs} simulated campaigns\n", flush=True)
+    n_jobs = len(tests) * len(args.scales) * len(args.repeats) * args.sims
+    stop_label = (f"API stop from '{args.stops_from}'" if modelled
+                  else "no API stop in the pilot" if stops else "API stop not modelled")
+    print(f"power — {', '.join(tests)}; {args.sims} simulations per cell; {label}; "
+          f"{stop_label}; {n_jobs} simulated campaigns\n", flush=True)
     print(f"  {'test':<6}{'R':>3}{'effect':>8}{'detect (CI)':>14}{'95% range':>16}"
-          f"{'detect (Holm)':>15}{'mean est':>10}")
+          f"{'detect (Holm)':>15}{'mean est':>10}{'families':>10}")
 
     def show(c):
         lo, hi = c["rate_ci_95"]
         tag = " power" if c["scale"] == 1.0 else (" FPR" if c["scale"] == 0.0 else "")
+        fams = "-" if c.get("min_families") is None else f"≥{c['min_families']}"
+        if c.get("unread"):
+            fams += f" ({c['unread']} unread)"
         print(f"  {c['spec']:<6}{c['repeats']:>3}{c['scale']:>8.2f}{c['rate_ci']:>14.2f}"
-              f"{f'[{lo}, {hi}]':>16}{c['rate_holm']:>15.2f}{str(c['mean_estimate']):>10}{tag}",
-              flush=True)
+              f"{f'[{lo}, {hi}]':>16}{c['rate_holm']:>15.2f}{str(c['mean_estimate']):>10}"
+              f"{fams:>10}{tag}", flush=True)
 
-    res = power.run(args.tests, args.scales, args.repeats, args.sims, args.corpus,
-                    noise_sd=noise, workers=args.workers, on_cell=show)
+    res = power.run(tests, args.scales, args.repeats, args.sims, args.corpus,
+                    noise_sd=noise, workers=args.workers, on_cell=show, stops=stops)
     rec = res["recommendation"]
     print(f"\nA1.6: R = {rec['repeats']} — {rec['reason']}")
     if noise is None:
         print("note: no noise calibration. Re-run with --noise-from <pilot> before "
               "choosing R; the mock alone is far less noisy than a real model.")
+    if not stops:
+        print("note: the API stop is not modelled. A1.9 (rule 9) sizes a confirmatory "
+              "campaign only with it: add --stops-from <pilot>.")
+    thin = sorted({c["spec"] for c in res["cells"]
+                   if c.get("min_families") is not None and c["min_families"] < 3})
+    if thin:
+        print(f"note: {', '.join(thin)} were read on fewer than 3 families in some "
+              f"simulations. A family-resampled interval over so few is nearly degenerate, "
+              f"so treat their rates with care.")
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({**res, "tests": args.tests, "scales": args.scales,
+    out.write_text(json.dumps({**res, "tests": tests, "scales": args.scales,
                                "repeats_grid": args.repeats}, indent=2))
     print(f"saved {out}")
     return 0
@@ -1790,16 +1848,21 @@ def build_parser() -> argparse.ArgumentParser:
     ac.set_defaults(func=cmd_apicheck)
 
     pw = sub.add_parser("power", help="power by simulation for the confirmatory tests "
-                                      "(Amendment A1.6)")
-    pw.add_argument("--tests", nargs="+", default=["H4b", "H11b", "H13b"],
-                    choices=["H4b", "H11b", "H13b"])
+                                      "(Amendment A1.6, with A1.9's API stop)")
+    pw.add_argument("--tests", nargs="+", default=None,
+                    choices=["H4b", "H11b", "H13b", "H14", "H15"],
+                    help="default: H4b H11b H13b, plus H14 H15 with --stops-from")
     pw.add_argument("--scales", nargs="+", type=float, default=[0.0, 0.5, 1.0],
                     help="planted effect as a fraction of the mock's documented size")
     pw.add_argument("--repeats", nargs="+", type=int, default=[3, 5, 8])
     pw.add_argument("--sims", type=int, default=20, help="simulations per cell")
     pw.add_argument("--noise", type=float, default=None, help="mock noise_sd to use")
     pw.add_argument("--noise-from", default=None, metavar="CAMPAIGN",
-                    help="calibrate noise to a real pilot's between-repeat variation")
+                    help="calibrate noise to a real pilot's between-repeat variation, "
+                         "where the model answered")
+    pw.add_argument("--stops-from", default=None, metavar="CAMPAIGN",
+                    help="model the API stop as a pilot showed it, by family and rung "
+                         "(A1.9, rule 9)")
     pw.add_argument("--workers", type=int, default=None)
     pw.add_argument("--out", default="data/power/power.json")
     pw.set_defaults(func=cmd_power)

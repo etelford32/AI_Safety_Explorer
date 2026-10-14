@@ -996,9 +996,15 @@ def readme(results, val, man, power: dict[str, Any] | None,
               "", f"**{val['flag']}**" if val["flag"] else "Validation criterion met.", ""]
     if power:
         rec = power.get("recommendation", {})
+        stops = power.get("stops")
+        stop_s = ("API stop not modelled, so this run cannot size a confirmatory campaign "
+                  "(A1.9, rule 9)" if not stops else
+                  f"no API stop in pilot '{stops.get('source')}'" if stops.get("none") else
+                  f"API stop modelled from pilot '{stops.get('source')}' "
+                  f"({stops.get('stopped')} of {stops.get('calls')} ladder calls)")
         lines += ["## Power (A1.6)", "",
-                  f"Noise sd {power.get('noise_sd')}; {power.get('sims')} simulations per cell. "
-                  f"Repeats: {rec.get('repeats')} — {rec.get('reason')}", ""]
+                  f"Noise sd {power.get('noise_sd')}; {power.get('sims')} simulations per cell; "
+                  f"{stop_s}. Repeats: {rec.get('repeats')} — {rec.get('reason')}", ""]
     lines += ["## Campaigns", ""]
     for c in man["campaigns"]:
         lines.append(f"- **{c['name']}** — {c['provider']} `{c['model_id']}` "

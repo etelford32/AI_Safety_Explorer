@@ -1150,7 +1150,7 @@ is the model versus the harness around it.
 explorer lint                     validate the corpus (rank correlations, twin matching)
 explorer init                     create the database, snapshot the corpus
 explorer apicheck                 prove caching, pre-warm and batches on the live API, for cents
-explorer power [--noise-from C]   power by simulation for the confirmatory tests (Amendment A1.6)
+explorer power [--stops-from C]   power by simulation, with the API stop (A1.6, A1.9)
 explorer paper --campaign C       every number, table and figure for the paper, from the database
 explorer preflight                validate credentials + parameters, cost a campaign
 explorer corpus [--show ID]       list or print prompts

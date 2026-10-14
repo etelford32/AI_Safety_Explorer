@@ -42,16 +42,33 @@ as written.
 ```bash
 explorer run --campaign pilot --provider anthropic --model claude-opus-5-5 \
              --repeats 2 --only orbital_debris impactor_deflection --depths 0 32k
-explorer power --noise-from pilot --repeats 3 5 8 --sims 40
+explorer power --noise-from pilot --stops-from pilot --repeats 3 5 8 --sims 40
 ```
 
 The pilot needs **two or more repeats**, because between-repeat noise cannot be measured
-from one. `power --noise-from` measures that noise and calibrates the mock to reproduce
-it. It then simulates the interaction tests (H4b, H11b and H13b) many times at zero
-effect and at the documented effect. The A1.6 rule (as amended by A1.8) is applied to
-H11b and H13b: the smallest number of repeats with **≥ 80% power** and a **≤ 5%
-false-positive rate**. H4b is simulated so that its false-positive rate can be reported
-beside it.
+from one. `power --noise-from` measures that noise where the model answered, and
+calibrates the mock to reproduce it. It then simulates the interaction tests (H4b, H11b
+and H13b) many times at zero effect and at the documented effect. The A1.6 rule (as
+amended by A1.8) is applied to H11b and H13b: the smallest number of repeats with
+**≥ 80% power** and a **≤ 5% false-positive rate**. H4b is simulated so that its
+false-positive rate can be reported beside it.
+
+**The API stop is part of the simulation (A1.9, rule 9).** `--stops-from` fits the pilot's
+stops by family and rung (logit P(stop) = family offset + rung effect) and has the mock
+stop calls at those rates. It prints the pilot's counts beside the fitted rates. Every
+Part 2 test is then read where the model answered, as the paper reads it, so a stopped
+pair or a blocked family costs the power it will cost in the real campaign. H14 and H15
+are simulated too, by planting the stop's rise from C to D, E and F. The table's
+`families` column gives the fewest families each test was read on. Without `--stops-from`
+the run says the stop was not modelled, and A1.9 does not let it size a confirmatory
+campaign. The pilot must cover every family, which the baseline does
+(`scripts/baseline.sh` runs this once per model); the full campaign uses the largest R any
+model needs.
+
+The simulated stop is drawn apart from the answer. So the simulator measures what the
+stop costs in power, not any bias it brings: if the API stops the calls a model would have
+answered worst, Part 2 is biased, not merely smaller. The stop-sensitive reading is the
+check on that.
 
 The pilot's data never enters a confirmatory analysis.
 

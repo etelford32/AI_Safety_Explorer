@@ -104,6 +104,11 @@ and makes no API calls:
 explorer --db data/api-tests.db power --noise-from pilot-sync --sims 40
 ```
 
+This checks the mechanics. It cannot size the confirmatory campaign: A1.9 requires the API
+stop to be modelled, and the stop varies by family, so it is fitted to a pilot that covers
+every family. `scripts/baseline.sh` is that pilot, and it runs
+`power --noise-from baseline-<model> --stops-from baseline-<model>` for each model.
+
 Pilot data never enters a confirmatory analysis. See [PAPER.md](PAPER.md).
 
 ## 4. The full sweep

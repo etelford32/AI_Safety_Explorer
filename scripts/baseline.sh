@@ -6,8 +6,8 @@
 #
 # Batch API (half price), 2 repeats, effort pinned to `high` so the models are compared
 # at the same setting rather than at their different defaults. About $5-10 for all
-# three. Doubles as the pilot: `explorer power --noise-from baseline-<model>` sizes the
-# full study from it. Exploratory by Amendment A1 (pilot data never enters a
+# three. Doubles as the pilot: `explorer power --noise-from baseline-<model>
+# --stops-from baseline-<model>` sizes the full study from it. Exploratory by Amendment A1 (pilot data never enters a
 # confirmatory analysis). Resumable: re-run the same command after any interruption.
 set -euo pipefail
 
@@ -48,8 +48,14 @@ SUMMARY=()
 for m in "${MODELS[@]}"; do SUMMARY+=(--campaign "baseline-$m"); done
 ex summary "${SUMMARY[@]}" --out data/summary/baseline
 
-echo; echo "== repeats needed for the full study (local, no API calls)"
-ex power --noise-from "baseline-${MODELS[0]}" --sims 40 --out data/power/power.json
+echo; echo "== repeats needed for the full study, per model (local, no API calls)"
+# A1.9, rule 9: noise where the model answered, and the API stop as this model's baseline
+# showed it. The full campaign uses the largest R any model needs.
+for m in "${MODELS[@]}"; do
+  echo; echo "--- $m"
+  ex power --noise-from "baseline-$m" --stops-from "baseline-$m" --sims 40 \
+           --out "data/power/power-$m.json"
+done
 
 echo; echo "log: $LOG · data: $DB · exports: data/exports/ · browse: explorer serve"
 echo "share: data/summary/baseline/SUMMARY.md holds aggregates only, no prompt or response text"

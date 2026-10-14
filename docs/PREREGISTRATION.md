@@ -526,7 +526,24 @@ provided the change is recorded first. This is that record.
 9. **Sample size.** The pilot noise estimate (A1.6, step 1) is deflated, because pairs where
    both repeats were stopped have zero variance. Before the full campaign, A1.6 is re-run
    with noise taken from Part 2, answered pairs only, and with the stop represented in the
-   simulator. No confirmatory campaign is created until that is done.
+   simulator. No confirmatory campaign is created until that is done. Concretely:
+   - **Noise** is the between-repeat SD of graded accuracy over answered runs, with blocked
+     families left out (`explorer power --noise-from <pilot>`).
+   - **The stop** is fitted to the same model's pilot (`--stops-from <pilot>`), over its
+     English ladder: logit P(stop) = intercept + family offset + rung effect, with a normal
+     prior of SD 2.5 on each offset and effect (`power.STOP_PRIOR_SD`). Each simulated call
+     is stopped with its fitted probability, drawn apart from the answer. So the simulator
+     measures what the stop costs in power, not any bias it brings: it treats stops as
+     missing at random within family and rung. The stop-sensitive reading (rule 5) is the
+     check on that assumption.
+   - **Each Part 2 test** is read as the paper reads it, inside
+     `analysis.answered_only(blocked)`, and the simulator reports the fewest families it was
+     read on.
+   - **H14 and H15** are simulated by planting the stop's rise itself: the rung effects of
+     D, E and F over C, scaled from 0 (a stop that follows topic alone) to 1 (the pilot's
+     fitted rise). Their power is reported; the A1.6 rule still uses H11b and H13b (A1.8).
+   - **A1.6 is run once per model**, since each model's API stops differently. The full
+     campaign uses the largest R any model needs, so the models stay comparable.
 10. **Timing.** `explorer paper` marks any campaign created before 2026-10-14
     (`AMENDMENT_A19_DATE`) as exploratory under this amendment.
 

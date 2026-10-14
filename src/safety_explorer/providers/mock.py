@@ -152,6 +152,21 @@ GROUND_TRUTH = {
     "context_loss_cap": 0.60,
     "context_format_loss_per_doubling": 0.12,
     "context_tightening_scale": 0.6,
+
+    # --- API stop ground truth (A1.9) --------------------------------------
+    # A deployed model's API can end a call itself, with `stop_reason = "refusal"` and
+    # no text. `api_stop` gives the probability per family and rung (the variant's
+    # letter, A-F), as {family: {rung: p}}, with a "*" row for any family not named. The
+    # depth and language arms take their rung's rate; control prompts are never stopped.
+    #
+    # The draw has its own generator, seeded on the prompt and repeat, so it is
+    # independent of what the model would have written: a call that is not stopped is
+    # byte-identical to one from a mock with no stop at all. That makes the stop missing
+    # at random within family and rung. A real API need not be, and A1.9's stop-sensitive
+    # reading is the check on it. Empty, so the documented fixture is never stopped;
+    # `explorer power --stops-from` fills it from a pilot.
+    "api_stop": {},
+    "api_stop_category": "cyber",
 }
 
 _BODY = """## Setup
@@ -683,6 +698,15 @@ class MockProvider(Provider):
         doublings = math.log2(depth / g["context_free_depth"])
         return min(g["context_loss_cap"], per_doubling * doublings)
 
+    def _stop_probability(self, family_id: str | None, variant: str | None) -> float:
+        """The chance the API stops this call (documented above). Zero for controls."""
+        table = self.g.get("api_stop") or {}
+        if not table or not variant or variant[0] not in "ABCDEF":
+            return 0.0
+        rung = variant[0]
+        row = table.get(family_id or "") or {}
+        return float(row.get(rung, (table.get("*") or {}).get(rung, 0.0)))
+
     def _detects(self, level: int, arm: str) -> bool:
         g = self.g
         return arm == "treatment" and level >= g["cue_detection_level"]
@@ -1063,6 +1087,19 @@ class MockProvider(Provider):
         if judge_spans is not None:
             return self._propose(judge_spans, overrides.get("judge_metrics") or [],
                                  rng, t0)
+
+        # The API stop comes before the model writes anything, from its own generator.
+        stop_p = self._stop_probability(family_id, overrides.get("variant"))
+        if stop_p and random.Random(f"{key}|api_stop").random() < stop_p:
+            return Completion(
+                text="", model_reported=self.model, finish_reason="refusal",
+                usage={"input_tokens": sum(len(message_text(m)) for m in messages) // 4,
+                       "output_tokens": 0},
+                latency_ms=int((time.time() - t0) * 1000),
+                raw={"stop_details": {"type": "refusal",
+                                      "category": self.g["api_stop_category"],
+                                      "explanation": None},
+                     "mock_stop_probability": stop_p})
 
         r = self._retention(vec, rng, cue_level, cue_arm)
         if self.params.get("context_effect", "omission") == "tightening":

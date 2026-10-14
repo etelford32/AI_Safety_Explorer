@@ -862,6 +862,7 @@ def depth_interaction(conn: sqlite3.Connection, corpus, campaign_id: str | None 
             if vals:
                 d = cliffs_delta(vals, [0.0] * len(vals))
                 entry.update({
+                    "n_families": len(set(fams)),
                     "median": round(median(vals), 3),
                     "mean": round(sum(vals) / len(vals), 3),
                     "ci95": bootstrap_ci(vals, fams),
@@ -1222,6 +1223,7 @@ def language_effect(conn: sqlite3.Connection, corpus, campaign_id: str | None = 
             if vals:
                 d = cliffs_delta(vals, [0.0] * len(vals))
                 entry.update({
+                    "n_families": len(set(fams)),
                     "median": round(median(vals), 3),
                     "mean": round(sum(vals) / len(vals), 3),
                     "ci95": bootstrap_ci(vals, fams),

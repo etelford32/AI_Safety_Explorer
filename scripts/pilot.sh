@@ -57,6 +57,8 @@ ex analyse context --campaign pilot-batch
 
 ex summary --campaign pilot-sync --campaign pilot-batch --out data/summary/pilot
 
+# The API stop is not modelled here: this pilot covers one family, and the stop varies by
+# family. scripts/baseline.sh covers them all and models it (A1.9, rule 9).
 step "4. power from the pilot's own noise (local, no API calls)"
 ex power --noise-from pilot-sync --sims 40 --out data/power/power.json
 
