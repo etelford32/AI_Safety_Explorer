@@ -486,7 +486,7 @@ def cmd_power(args) -> int:
     print(f"power — {', '.join(tests)}; {args.sims} simulations per cell; {label}; "
           f"{stop_label}; {n_jobs} simulated campaigns\n", flush=True)
     print(f"  {'test':<6}{'R':>3}{'effect':>8}{'detect (CI)':>14}{'95% range':>16}"
-          f"{'detect (Holm)':>15}{'mean est':>10}{'families':>10}")
+          f"{'detect (Holm)':>15}{'mean est':>10}  {'families':<18}")
 
     def show(c):
         lo, hi = c["rate_ci_95"]
@@ -496,7 +496,7 @@ def cmd_power(args) -> int:
             fams += f" ({c['unread']} unread)"
         print(f"  {c['spec']:<6}{c['repeats']:>3}{c['scale']:>8.2f}{c['rate_ci']:>14.2f}"
               f"{f'[{lo}, {hi}]':>16}{c['rate_holm']:>15.2f}{str(c['mean_estimate']):>10}"
-              f"{fams:>10}{tag}", flush=True)
+              f"  {fams:<18}{tag}", flush=True)
 
     res = power.run(tests, args.scales, args.repeats, args.sims, args.corpus,
                     noise_sd=noise, workers=args.workers, on_cell=show, stops=stops)
