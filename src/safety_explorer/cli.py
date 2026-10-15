@@ -425,11 +425,26 @@ def cmd_power(args) -> int:
     """Power by simulation for the confirmatory tests (Amendment A1.6, with A1.9's stop)."""
     from . import power
 
+    def pilot(name):
+        # A pilot must be named exactly. Falling back to every campaign, as `analyse` does,
+        # would size the study on whatever the database holds, the demo included.
+        conn = db.init_db(args.db)
+        row = db.query_one(conn, "SELECT id FROM campaign WHERE name = ? OR id = ?",
+                           (name, name))
+        if not row:
+            names = [r["name"] for r in db.query(
+                conn, "SELECT name FROM campaign ORDER BY created_at DESC LIMIT 10")]
+            print(f"no campaign named '{name}' in {args.db} (it has: "
+                  f"{', '.join(names) or 'none'}). Run from the folder the pilot ran in, "
+                  f"or pass --db <path>.", file=sys.stderr)
+        return conn, (row["id"] if row else None)
+
     stops = None
     if args.stops_from:
-        conn = db.init_db(args.db)
-        cid = _resolve_campaign(conn, args.stops_from)
-        counts = power.stop_counts(conn, cid) if cid else {}
+        conn, cid = pilot(args.stops_from)
+        if not cid:
+            return 2
+        counts = power.stop_counts(conn, cid)
         if not counts:
             print(f"campaign '{args.stops_from}' has no English ladder calls to read the "
                   f"API stop from", file=sys.stderr)
@@ -446,8 +461,9 @@ def cmd_power(args) -> int:
 
     noise = args.noise
     if args.noise_from:
-        conn = db.init_db(args.db)
-        cid = _resolve_campaign(conn, args.noise_from)
+        conn, cid = pilot(args.noise_from)
+        if not cid:
+            return 2
         obs = power.observed_noise(conn, cid)
         if not obs["mean_sd"]:
             print(f"campaign '{args.noise_from}' has no prompt with two or more answered, "

@@ -392,3 +392,13 @@ def test_power_cli_on_a_pilot_the_api_never_stopped(tmp_path, conn, corpus, caps
     text = capsys.readouterr().out
     assert "API stop: none in 'clean'" in text and "not modelled" not in text
     assert json.loads(out.read_text())["tests"] == ["H4b", "H11b", "H13b"]
+
+
+def test_power_refuses_an_unknown_pilot(tmp_path, capsys):
+    """A typo must not size the study on every campaign in the database."""
+    from safety_explorer import cli
+    db_path = str(tmp_path / "t.db")
+    for flag in ("--noise-from", "--stops-from"):
+        assert cli.main(["--db", db_path, "power", flag, "baseline-typo", "--sims", "1"]) == 2
+        err = capsys.readouterr().err
+        assert "no campaign named 'baseline-typo'" in err and "--db" in err
