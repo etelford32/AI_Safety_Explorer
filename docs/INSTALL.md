@@ -5,15 +5,53 @@ Two ways in: **the app** (for testers — download once, it keeps itself up to d
 
 ---
 
-## The app (macOS, Apple Silicon)
+## The app (macOS 11 or later, Intel or Apple Silicon)
 
-1. Download **`AI-Safety-Explorer-macOS.zip`** from the repository's
-   [Releases](https://github.com/etelford32/AI_Safety_Explorer/releases) page and unzip it.
-2. Drag **AI Safety Explorer.app** into **Applications**.
-3. The first time, **right-click the app → Open → Open**. The app is not signed with an
-   Apple developer certificate, so a plain double-click is refused on first launch with
-   "Apple could not verify…". Right-click → Open tells macOS you trust it; after that it opens
-   normally. (Alternatively: System Settings → Privacy & Security → *Open Anyway*.)
+**[Download AI Safety Explorer for Mac](https://github.com/etelford32/AI_Safety_Explorer/releases/latest/download/AI-Safety-Explorer-macOS.dmg)**
+(`.dmg`). This link always serves the newest release.
+
+1. Open the downloaded **AI-Safety-Explorer-macOS.dmg** and drag **AI Safety Explorer** onto
+   **Applications**.
+2. Open it from Applications. The first time only, macOS asks you to confirm it, because the app
+   is not yet signed with an Apple Developer ID (see below).
+
+That is the whole install. From then on the app keeps itself up to date.
+
+### The first launch
+
+macOS refuses apps from outside the App Store unless Apple has notarized them. Until this one
+is notarized ([SIGNING.md](SIGNING.md)), you approve it once.
+
+**macOS 15 (Sequoia) and later:**
+
+1. Double-click the app. macOS says *"AI Safety Explorer" Not Opened*. Click **Done**.
+2. Open **System Settings → Privacy & Security**, and scroll down to *Security*. It says
+   *"AI Safety Explorer" was blocked to protect your Mac*. Click **Open Anyway**, and confirm
+   with your password or Touch ID.
+3. Click **Open Anyway** once more in the dialog that follows.
+
+**macOS 14 (Sonoma) and earlier:** right-click the app, choose **Open**, then click **Open**.
+
+After that the app opens normally, including after it updates itself. Updates change the
+Explorer code the app runs, not the app you approved.
+
+**If macOS says the app "is damaged and can't be opened":** the app's signature no longer
+matches its files. This usually means a download was cut short, or a third-party unzip tool
+changed the bundle. It is not the missing Developer ID. Download the `.dmg` again. If the message persists, run this in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/AI Safety Explorer.app"
+```
+
+It removes the "downloaded from the internet" mark, so Gatekeeper no longer checks the app.
+Do this only for a copy you downloaded from this repository's Releases page.
+
+**Checking the download (optional).** Each release lists a `.sha256` beside the file.
+`shasum -a 256 ~/Downloads/AI-Safety-Explorer-macOS.dmg` should print the same value.
+
+**Prefer a zip?** `AI-Safety-Explorer-macOS.zip` holds the same app
+([latest](https://github.com/etelford32/AI_Safety_Explorer/releases/latest/download/AI-Safety-Explorer-macOS.zip)).
+Unzip it, then move the app to Applications.
 
 ### What happens at launch
 
@@ -31,8 +69,35 @@ version that worked; if none does, it starts the copy built into the app, which 
 You are never left with nothing to run.
 
 While you work, the app checks for updates every half hour. A new version is downloaded and
-verified in the background and announced in the Explorer; it takes effect at the next launch
+verified in the background and announced in the Explorer. It takes effect at the next launch
 (or **Updates → Restart**), never in the middle of a session.
+
+### The app updates itself, too
+
+The steps above keep the Explorer *code* current. The app around it changes less often. It
+holds the launcher, its Python, and the packages it carries, such as the Anthropic and OpenAI
+SDKs. When a release ships a newer app, your copy replaces itself:
+
+1. **Found.** The app compares its own version with the app in the latest release, shortly
+   after it starts and then every half hour.
+2. **Downloaded and checked in the background.** The download must match the size and SHA-256
+   the release publishes. It must also carry this app's identity and a code signature that
+   verifies. When the app is signed with a Developer ID, the new one must come from the same
+   developer.
+3. **Installed when you quit**, or at once with **Updates → Restart**. A few seconds after the
+   app closes, the new app takes its place. If that fails, the old app is put back and the
+   next launch tells you why.
+
+Your data, settings and installed Explorer versions are untouched, because they live in the
+data folder and not in the app. **Updates → Check for Updates Now** checks for both kinds of
+update.
+
+The app can only replace itself from a folder you can write to, such as Applications. A copy
+opened straight from the disk image, or from Downloads without moving it, tells you about the
+new version and links to the download instead.
+
+Apps from v0.35.0 and earlier do not update themselves yet: download the new app once, and from then on
+it updates itself.
 
 ### Channels
 

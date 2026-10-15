@@ -38,9 +38,11 @@ entry point, or the `EXPLORER_*` path variables), raise `[tool.explorer-loader] 
 
 A release is a merged pull request. Bump `__version__` in `src/safety_explorer/__init__.py`,
 set `version` and `date-released` in `CITATION.cff`, and add `docs/releases/v<version>.md` (the
-release notes). When that lands on `main`, `.github/workflows/release.yml` builds and
-smoke-tests the macOS app, creates the `v<version>` tag and the GitHub Release from those notes,
-and attaches the app. Apps on the stable channel pick the release up at their next launch.
+release notes). When that lands on `main`, `.github/workflows/release.yml` builds the macOS
+app for Intel and Apple Silicon and smoke-tests it, natively, under Rosetta and from the
+mounted disk image. It then creates the `v<version>` tag and the GitHub Release from those
+notes, and attaches the `.dmg` and the `.zip`. With the signing secrets set, the app is also
+signed and notarized ([docs/SIGNING.md](docs/SIGNING.md)). Apps on the stable channel pick the release up at their next launch.
 Nobody pushes tags by hand. Notes drafted for a version the code does not carry yet wait until
 the version bump lands with them.
 

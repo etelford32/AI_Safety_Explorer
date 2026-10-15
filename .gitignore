@@ -38,3 +38,4 @@ build/
 # Desktop app build artifacts (py2app) — build/ and dist/ are covered above
 packaging/icon.icns
 packaging/icon.iconset/
+data/*.log

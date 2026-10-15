@@ -35,7 +35,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from . import metrics, probes
+from . import analysis, metrics, probes
 
 #: Bumped when the segmenter changes shape. Stored with each label so a label made
 #: against an older cut can be found again.
@@ -234,7 +234,7 @@ def assemble(conn, run_id: str) -> dict[str, Any] | None:
               if run.get("context_depth_tokens") else "")) if n)},
         {"role": "assistant", "kind": "response", "text": run["response"] or "",
          "spans": [asdict(s) for s in spans],
-         "note": ("truncated at max_tokens" if run.get("finish_reason") == "max_tokens"
+         "note": ("truncated at max_tokens" if analysis.is_truncated(run.get("finish_reason"))
                   else "")},
     ]
 

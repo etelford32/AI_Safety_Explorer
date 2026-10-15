@@ -262,6 +262,8 @@ def _overrides(cell: RunPlan) -> dict[str, Any]:
     return {
         "vector": v.vector, "repeat_index": cell.repeat_index,
         "family_id": v.family_id, "language": v.language,
+        # Read only by the mock, whose API stop is set per family and rung (A1.9).
+        "variant": v.variant,
         # The mock uses this to answer only what the prompt asked for. A live provider
         # ignores it - it reads the prompt, which is where the constraint really lives.
         "answer_key_cover": v.answer_key_cover,

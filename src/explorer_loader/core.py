@@ -14,10 +14,11 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import DEFAULT_REPO, LOADER_VERSION, github, launch
+from . import DEFAULT_REPO, LOADER_VERSION, appupdate, github, launch
 from .store import BUNDLED_ID, Store, VerifyError, read_version, verify
 
 Emit = Callable[[str, str, str], None]
+_HERE = object()                            # "the app this process runs from"
 
 
 class Cancelled(Exception):
@@ -35,6 +36,7 @@ class Loader:
         self.stop = threading.Event()       # ends the background checks
         self.running: dict | None = None
         self.pending_update: dict | None = None
+        self._app_lock = threading.Lock()
 
     # -- settings --------------------------------------------------------------------------
 
@@ -157,6 +159,90 @@ class Loader:
             self.emit("start", "done", f"v{info['version']} · {label}")
             return info
         raise launch.StartError("no installed version would start:\n" + "\n".join(failures))
+
+    # -- the app itself (appupdate.py) --------------------------------------------------------
+
+    @property
+    def app_update_dir(self) -> Path:
+        return self.store.dir / "app-update"
+
+    def check_app(self, stage: bool = True, app=_HERE) -> dict:
+        """Is a newer app released? If this copy can be replaced, download and stage it.
+
+        Returns {'status': 'none' | 'staged' | 'available' | 'manual' | 'unsupported' |
+        'offline' | 'failed' | 'source', ...}. 'source' means this is a checkout, not an app,
+        so there is nothing to replace. Never raises: the Explorer runs whatever happens."""
+        app = appupdate.running_app() if app is _HERE else app
+        if app is None:
+            return {"status": "source", "reason": appupdate.installable(None)}
+        with self._app_lock:
+            try:
+                upd = appupdate.find(self.repo, self.token(), api=self.api)
+            except github.UpdateError as e:
+                return {"status": "offline", "error": str(e)}
+            if upd is None:
+                return {"status": "none", "version": LOADER_VERSION}
+            base = {"version": upd.version, "tag": upd.tag, "page": upd.page,
+                    "download": appupdate.download_page(self.repo), "from": LOADER_VERSION}
+            why = appupdate.supported_here(upd)
+            if why:
+                return {**base, "status": "unsupported", "reason": why}
+            why = appupdate.installable(app)
+            if why:
+                return {**base, "status": "manual", "reason": why}
+            staged = self.store.state.get("app_update") or {}
+            if staged.get("version") == upd.version and Path(staged.get("path") or "/-").is_dir():
+                return {**base, "status": "staged", "path": staged["path"]}
+            if not stage:
+                return {**base, "status": "available"}
+            work = self.app_update_dir
+            try:
+                z = appupdate.download(upd, work / "download.zip", self.token())
+                path = appupdate.stage(z, work / "staged", upd, current=app)
+            except github.UpdateError as e:
+                return {**base, "status": "failed", "error": str(e)}
+            finally:
+                (work / "download.zip").unlink(missing_ok=True)
+            self.store.state["app_update"] = {"version": upd.version, "tag": upd.tag,
+                                              "path": str(path), "page": upd.page}
+            self.store.save()
+            return {**base, "status": "staged", "path": str(path)}
+
+    def install_app_update(self, relaunch: bool, app=_HERE, spawn=None) -> dict:
+        """Hand a staged app update to the installer script; the caller then quits.
+
+        If a check is still downloading or staging, this does nothing rather than make the
+        user wait at quit. The next quit installs it."""
+        app = appupdate.running_app() if app is _HERE else app
+        if not self._app_lock.acquire(blocking=False):
+            return {"status": "busy"}
+        try:
+            return self._install_app_update(relaunch, app, spawn)
+        finally:
+            self._app_lock.release()
+
+    def _install_app_update(self, relaunch: bool, app, spawn) -> dict:
+        staged = self.store.state.get("app_update") or {}
+        path = Path(staged.get("path") or "/-")
+        if not staged or not path.is_dir() or (
+                appupdate.parse_version(staged.get("version", "")) <=
+                appupdate.parse_version(LOADER_VERSION)):
+            if staged:
+                self.store.state["app_update"] = None
+                self.store.save()
+            return {"status": "none"}
+        why = appupdate.installable(app)
+        if why:
+            return {"status": "manual", "reason": why}
+        kwargs = {"spawn": spawn} if spawn else {}
+        appupdate.install(path, app, self.app_update_dir / "status", relaunch, **kwargs)
+        self.store.state["app_update"] = None
+        self.store.save()
+        return {"status": "installing", "version": staged.get("version"), "relaunch": relaunch}
+
+    def last_app_install(self) -> str | None:
+        """What the last app install left behind, read once: "installed" or "failed: …"."""
+        return appupdate.read_status(self.app_update_dir / "status")
 
     def background_checks(self, every_s: float, on_ready: Callable[[dict], None]) -> None:
         """While the app runs, look for updates now and then; download and verify them, and

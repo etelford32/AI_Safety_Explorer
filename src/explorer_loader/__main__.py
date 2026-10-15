@@ -3,6 +3,9 @@
     python -m explorer_loader                  the window (what the .app runs)
     python -m explorer_loader --headless       check, update, start; print the URL; serve
     python -m explorer_loader --check-only     check and install an update, then exit
+    python -m explorer_loader --self-test      import what the app carries; print JSON; exit
+    python -m explorer_loader --update-app     replace this app with the latest release's, if
+                                               newer; the swap happens as this process exits
 
 Options for trying channels and for tests: --channel stable|dev|branch:<name>, --repo
 owner/name, --data-dir PATH, --api URL (a stand-in for api.github.com), --bundled DIR.
@@ -59,6 +62,46 @@ def bundled_dir() -> Path | None:
     return None
 
 
+# What the app carries that must import on every architecture it claims to run on. A package
+# the build did not include reads "absent", which is not a failure; one that is present and
+# will not import (a missing slice, a missing library) is.
+CARRIED = ("ssl", "sqlite3", "zlib", "ctypes", "certifi", "webview", "objc", "Foundation",
+           "AppKit", "WebKit", "pydantic_core", "jiter", "anthropic", "openai")
+
+
+def self_test() -> dict:
+    """Import each package the app carries, in this process, on this architecture."""
+    import importlib
+    import importlib.util
+    import platform
+
+    imports: dict[str, str] = {}
+    for name in CARRIED:
+        try:
+            if importlib.util.find_spec(name) is None:
+                imports[name] = "absent"
+                continue
+            importlib.import_module(name)
+            imports[name] = "ok"
+        except Exception as e:  # noqa: BLE001 - the report is the point
+            imports[name] = f"{type(e).__name__}: {e}"
+    tls = "ok"
+    try:
+        import ssl
+        try:
+            import certifi
+            ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            ssl.create_default_context()
+    except Exception as e:  # noqa: BLE001
+        tls = f"{type(e).__name__}: {e}"
+    failed = sorted(n for n, v in imports.items() if v not in ("ok", "absent"))
+    if tls != "ok":
+        failed.append("tls")
+    return {"machine": platform.machine(), "python": platform.python_version(),
+            "loader": LOADER_VERSION, "imports": imports, "tls": tls, "failed": failed}
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="explorer_loader")
     p.add_argument("--headless", action="store_true")
@@ -69,9 +112,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--api", default=github.API)
     p.add_argument("--bundled")
     p.add_argument("--no-update", action="store_true", help="start what is installed")
+    p.add_argument("--self-test", action="store_true",
+                   help="import what the app carries, print JSON, exit 1 if any fails")
+    p.add_argument("--update-app", action="store_true",
+                   help="install a newer app from the latest release, if there is one")
     p.add_argument("--version", action="version", version=f"explorer-loader {LOADER_VERSION}")
     a = p.parse_args(argv)
     ensure_utf8()
+    if a.self_test:
+        report = self_test()
+        print(json.dumps(report), flush=True)
+        return 1 if report["failed"] else 0
 
     store = Store(Path(a.data_dir) if a.data_dir else None)
     if a.channel:
@@ -81,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     store.save()
     bundled = Path(a.bundled) if a.bundled else bundled_dir()
 
-    if not (a.headless or a.check_only):
+    if not (a.headless or a.check_only or a.update_app):
         from .app import run_window
         return run_window(store, bundled, api=a.api)
 
@@ -89,6 +140,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"step": step, "state": state, "detail": detail}), flush=True)
 
     loader = Loader(store, bundled, emit, api=a.api)
+    if a.update_app:
+        res = loader.check_app()
+        if res.get("status") == "staged":
+            res["install"] = loader.install_app_update(relaunch=False)
+        print(json.dumps({"app_update": res}), flush=True)
+        return 0 if res.get("status") in ("none", "staged") else 1
     result = {"check": None}
     if not a.no_update:
         result["check"] = loader.check()

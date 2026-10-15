@@ -30,26 +30,9 @@ fi
 rm -rf build dist
 python packaging/setup_app.py py2app
 
-# Smoke test the bundle before calling it built: start it without a window, on the baseline
-# copy it carries, and ask the server it starts whether it is up.
+# Smoke test the bundle before calling it built: its self-test, then the server it starts.
 APP="dist/AI Safety Explorer.app"
-SMOKE_DIR="$(mktemp -d)"
-"$APP/Contents/MacOS/AI Safety Explorer" --headless --no-update --data-dir "$SMOKE_DIR" \
-  > "$SMOKE_DIR/smoke.log" 2>&1 &
-PID=$!
-OK=""
-for _ in $(seq 1 60); do
-  URL=$(grep -o '"url": "[^"]*"' "$SMOKE_DIR/smoke.log" | head -1 | cut -d'"' -f4 || true)
-  if [[ -n "$URL" ]] && curl -fsS "$URL/api/status" > /dev/null 2>&1; then OK=1; break; fi
-  sleep 1
-done
-kill "$PID" 2>/dev/null || true
-if [[ -z "$OK" ]]; then
-  echo "SMOKE TEST FAILED — the bundled app did not start the Explorer:"
-  cat "$SMOKE_DIR/smoke.log"
-  exit 1
-fi
-echo "smoke test passed: the bundle starts the Explorer ($URL)"
+bash packaging/smoke.sh "$APP"
 
 echo
 echo "built: $APP"

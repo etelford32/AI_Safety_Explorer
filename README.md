@@ -5,14 +5,14 @@
 <p align="center">
   <a href="https://github.com/etelford32/AI_Safety_Explorer/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/etelford32/AI_Safety_Explorer?label=release&color=3987e5"></a>
   <a href="https://github.com/etelford32/AI_Safety_Explorer/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/etelford32/AI_Safety_Explorer/actions/workflows/tests.yml/badge.svg"></a>
-  <img alt="macOS app" src="https://img.shields.io/badge/macOS-Apple%20Silicon-1b2a47">
+  <a href="https://github.com/etelford32/AI_Safety_Explorer/releases/latest/download/AI-Safety-Explorer-macOS.dmg"><img alt="macOS app: Intel and Apple Silicon" src="https://img.shields.io/badge/macOS%2011%2B-Intel%20%7C%20Apple%20Silicon-1b2a47"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-1b2a47">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-f2a65a"></a>
 </p>
 
 <p align="center">
   <b>Created by Elliot Telford</b> ·
-  <a href="https://github.com/etelford32/AI_Safety_Explorer/releases/latest">Download the app</a> ·
+  <a href="https://github.com/etelford32/AI_Safety_Explorer/releases/latest/download/AI-Safety-Explorer-macOS.dmg">Download for Mac</a> ·
   <a href="docs/INSTALL.md">Install guide</a> ·
   <a href="#citing">Cite</a>
 </p>
@@ -55,10 +55,12 @@ information, because the information is identical on both sides of the compariso
 
 ## Install
 
-**Testers:** download **AI Safety Explorer.app** from [Releases](https://github.com/etelford32/AI_Safety_Explorer/releases) — it keeps
-itself up to date from this repository, verifying each new version before switching to it and
-falling back to the last one that worked. Steps, channels and where your data lives:
-[`docs/INSTALL.md`](docs/INSTALL.md).
+**Testers: [download AI Safety Explorer for Mac](https://github.com/etelford32/AI_Safety_Explorer/releases/latest/download/AI-Safety-Explorer-macOS.dmg)** (`.dmg`, macOS 11 or later,
+Intel or Apple Silicon). Open it, drag the app to Applications, and approve it once on first
+launch ([how](docs/INSTALL.md#the-first-launch)). It keeps itself up to date from this
+repository: the Explorer code on every launch, and the app itself when a release ships a newer
+one. It checks each new version before switching to it, and falls back to the last one that
+worked. For channels and where your data lives, see [`docs/INSTALL.md`](docs/INSTALL.md).
 
 **Developers:** clone and `pip install -e '.[dev]'` — the quick start is below.
 
@@ -1148,7 +1150,7 @@ is the model versus the harness around it.
 explorer lint                     validate the corpus (rank correlations, twin matching)
 explorer init                     create the database, snapshot the corpus
 explorer apicheck                 prove caching, pre-warm and batches on the live API, for cents
-explorer power [--noise-from C]   power by simulation for the confirmatory tests (Amendment A1.6)
+explorer power [--stops-from C]   power by simulation, with the API stop (A1.6, A1.9)
 explorer paper --campaign C       every number, table and figure for the paper, from the database
 explorer preflight                validate credentials + parameters, cost a campaign
 explorer corpus [--show ID]       list or print prompts
@@ -1179,6 +1181,7 @@ explorer serve                    the Explorer UI (POST /api/session/turn to str
 explorer app                      the same UI in a native desktop window
 explorer demo [--stream|--clear]  seed demo data (mock), stream a simulated agent, or remove it
 explorer export                   JSONL export (escalated responses withheld)
+explorer summary [--prefix P]     campaigns side by side: run health, then the readings (aggregates only, safe to share)
 ```
 
 ## Design notes

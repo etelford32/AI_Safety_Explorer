@@ -43,3 +43,29 @@ def test_a_version_with_release_notes_is_cited_as_that_version():
     cff = (ROOT / "CITATION.cff").read_text(encoding="utf-8")
     assert re.search(r"^version:\s*\"?([^\s\"]+)", cff, re.M).group(1) == __version__
     assert "Elliot Telford" in NOTES.read_text(encoding="utf-8")
+
+
+def test_every_download_link_in_the_docs_is_a_file_the_release_carries():
+    # releases/latest/download/<file> always serves the newest release's <file>, so a link to
+    # a file the workflow stopped uploading would 404 on the README and in every paper.
+    app = (ROOT / ".github" / "workflows" / "app.yml").read_text(encoding="utf-8")
+    upload = app[app.index("gh release upload"):]
+    uploaded = set(re.findall(r"dist/([\w.-]+)", upload[:upload.index("--clobber")]))
+    assert {"AI-Safety-Explorer-macOS.dmg", "AI-Safety-Explorer-macOS.zip"} <= uploaded
+    docs = [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
+    linked = {}
+    for doc in docs:
+        for name in re.findall(r"releases/latest/download/([\w.-]+)", doc.read_text("utf-8")):
+            linked.setdefault(name, doc.relative_to(ROOT).as_posix())
+    assert "AI-Safety-Explorer-macOS.dmg" in linked       # the README's download button
+    missing = {n: d for n, d in linked.items() if n not in uploaded}
+    assert not missing, f"linked but never uploaded: {missing}"
+
+
+def test_the_app_updater_reads_files_the_release_carries_and_the_manifest_goes_last():
+    from explorer_loader import appupdate
+    app = (ROOT / ".github" / "workflows" / "app.yml").read_text(encoding="utf-8")
+    uploads = re.findall(r"dist/([\w.-]+)", app[app.index("gh release upload"):])
+    assert appupdate.ZIP in uploads and appupdate.MANIFEST in uploads
+    # An installed app acts on app.json at once, so what it names must already be there.
+    assert uploads.index(appupdate.MANIFEST) > uploads.index(appupdate.ZIP)

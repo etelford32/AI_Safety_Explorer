@@ -6,10 +6,15 @@ it. Two menus stay available while you work: **Updates** (check now, switch betw
 releases and development code, restart) and **Data** (open the data folder, use another
 database). An update found while you work is downloaded and verified in the background and
 announced in the Explorer; it is applied at the next launch, never under a running session.
+
+The app itself is kept current the same way (appupdate.py). A newer app in the latest
+release is downloaded and checked in the background, and installed when you quit, or at
+once with Updates → Restart.
 """
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import subprocess
@@ -18,12 +23,13 @@ import threading
 import time
 from pathlib import Path
 
-from . import LOADER_VERSION, github, launch
+from . import LOADER_VERSION, appupdate, github, launch
 from .core import Loader
 from .store import Store
 
 STEPS = ("check", "download", "verify", "start")
 UPDATE_EVERY_S = 30 * 60
+APP_CHECK_AFTER_S = 20                       # after the Explorer is up, not during the launch
 
 
 class Controller:
@@ -34,6 +40,7 @@ class Controller:
         self.error: str | None = None
         self.window = None
         self.loader = Loader(store, bundled, self.on_emit, api=api)
+        self.app_told: set[str] = set()     # app-update versions already announced
 
     # -- progress --------------------------------------------------------------------------
 
@@ -62,6 +69,7 @@ class Controller:
 
     def sequence(self) -> None:
         self.error = None
+        last_install = self.loader.last_app_install()
         for k in STEPS:
             self.on_emit(k, "pending", "")
         try:
@@ -81,11 +89,58 @@ class Controller:
         self.window.set_title(f"AI Safety Explorer {info['version']} — by Elliot Telford")
         self.window.load_url(info["url"])
         self.loader.background_checks(UPDATE_EVERY_S, self.update_ready)
+        if last_install:
+            threading.Timer(4.0, self.report_app_install, args=(last_install,)).start()
+        self.background_app_checks()
 
-    def toast(self, html: str, tone: str = "") -> None:
+    # -- the app itself ----------------------------------------------------------------------
+
+    def background_app_checks(self) -> None:
+        def loop() -> None:
+            wait = APP_CHECK_AFTER_S
+            while not self.loader.stop.wait(wait):
+                wait = UPDATE_EVERY_S
+                if self.store.state.get("auto_update", True):
+                    self.app_update_found(self.loader.check_app())
+        threading.Thread(target=loop, name="loader-app-updates", daemon=True).start()
+
+    def app_update_found(self, res: dict, asked: bool = False) -> None:
+        """Say what a check for a newer app found: once per version, unless asked."""
+        s, v = res.get("status"), html.escape(str(res.get("version")))
+        reason = html.escape(str(res.get("reason") or res.get("error") or s))
+        if s in ("none", "offline", "unsupported", "failed", "source") and not asked:
+            return
+        if not asked and f"{s}:{v}" in self.app_told:
+            return
+        self.app_told.add(f"{s}:{v}")
+        if s == "staged":
+            self.toast(f"App update ready: <b>{v}</b> (this app is {LOADER_VERSION}). It "
+                       "installs when you quit, or now from <b>Updates → Restart</b>.", "good", 12000)
+        elif s == "manual":
+            self.toast(f"A new version of the app is available ({v}), but this copy can't "
+                       f"replace itself: {reason} "
+                       f"<a href=\"{res.get('download')}\" target=\"_blank\">Download it</a>.", "", 15000)
+        elif s == "none":
+            self.toast(f"The app is up to date ({LOADER_VERSION}).", "good")
+        elif s == "source":
+            return                              # a checkout: the code check below says enough
+        elif s == "unsupported":
+            self.toast(f"A new version of the app ({v}) is out, but {reason}.")
+        else:
+            self.toast(f"Could not check for a new app: {reason}.", "bad")
+
+    def report_app_install(self, note: str) -> None:
+        if note == "installed":
+            self.toast(f"The app was updated to <b>{LOADER_VERSION}</b>.", "good")
+        else:
+            self.toast(f"The app update could not be installed ({html.escape(note)}). Your app is "
+                       f"unchanged. <a href=\"{appupdate.download_page(self.loader.repo)}\" "
+                       "target=\"_blank\">Download the new version</a>.", "bad", 15000)
+
+    def toast(self, html: str, tone: str = "", ms: int = 3200) -> None:
         if self.window:
-            self.window.evaluate_js(
-                f"typeof toast === 'function' && toast({json.dumps(html)}, {json.dumps(tone)})")
+            self.window.evaluate_js(f"typeof toast === 'function' && "
+                                    f"toast({json.dumps(html)}, {json.dumps(tone)}, {int(ms)})")
 
     def update_ready(self, res: dict) -> None:
         self.toast(f"Update ready: <b>{res.get('target')}</b> (v{res.get('version')}). "
@@ -95,6 +150,7 @@ class Controller:
 
     def check_now(self) -> None:
         def run() -> None:
+            self.app_update_found(self.loader.check_app(), asked=True)
             res = self.loader.check(install=True)
             s = res.get("status")
             if s == "installed":
@@ -129,8 +185,13 @@ class Controller:
         return None
 
     def relaunch(self) -> None:
-        """Start a fresh copy of the app, then close this one."""
+        """Start a fresh copy of the app, then close this one. A staged app update is
+        installed on the way: the installer opens the new app once this one has quit."""
         self.loader.stop.set()
+        if self.loader.install_app_update(relaunch=True).get("status") == "installing":
+            if self.window:
+                self.window.destroy()
+            return
         res = os.environ.get("RESOURCEPATH")
         if res and sys.platform == "darwin":
             bundle = Path(res).parents[1]               # …/X.app/Contents/Resources -> X.app
@@ -207,4 +268,6 @@ def run_window(store: Store, bundled: Path | None, api: str = github.API) -> int
     storage.mkdir(parents=True, exist_ok=True)
     webview.start(ctl.sequence, menu=menu, private_mode=False, storage_path=str(storage))
     ctl.loader.stop.set()
+    # Quitting is when a staged app update goes in (a no-op if Restart already did it).
+    ctl.loader.install_app_update(relaunch=False)
     return 0

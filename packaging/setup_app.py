@@ -34,7 +34,7 @@ from setuptools import setup
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from explorer_loader import LOADER_VERSION  # noqa: E402
+from explorer_loader import LOADER_VERSION, MIN_MACOS  # noqa: E402
 
 ICON = ROOT / "packaging" / "icon.icns"
 
@@ -73,7 +73,7 @@ OPTIONS = {
         # The app's own version is the loader's: the Explorer inside updates itself.
         "CFBundleShortVersionString": LOADER_VERSION,
         "CFBundleVersion": LOADER_VERSION,
-        "LSMinimumSystemVersion": "11.0",
+        "LSMinimumSystemVersion": MIN_MACOS,
         "NSHighResolutionCapable": True,
         "LSUIElement": False,
         "CFBundleGetInfoString": f"AI Safety Explorer {LOADER_VERSION} — by Elliot Telford",
