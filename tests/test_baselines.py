@@ -9,6 +9,7 @@ from safety_explorer import baselines, sessions
 @pytest.fixture
 def conn():
     db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
     sessions.ensure(db)
     yield db
