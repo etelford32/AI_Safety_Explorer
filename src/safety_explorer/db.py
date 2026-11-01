@@ -120,6 +120,9 @@ def init_db(path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
     conn.executescript(SCHEMA_PATH.read_text())
     migrate(conn)
     upgrade_indexes(conn)
+    # Experimental baselines extend the existing session store, not a parallel database.
+    from . import baselines
+    baselines.ensure(conn)
     conn.commit()
     return conn
 
